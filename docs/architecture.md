@@ -49,9 +49,11 @@ CLI flags; resolved into `AppConfig` (config) → `AppState` (runtime).
   `kind ∈ {lichess, chesscom, master, own}`. Search scope for a user is *their*
   databases ∪ all global databases.
 
-Planned (feature epics): `games`, `players`, `events`, a **position index**
-`(zobrist, game_id, ply, move)` for "find games reaching this position", `studies`
-(serialized `MoveTree`), `users`/auth, and MCP/AI-assistant tables.
+Planned (feature epics): `games` (carrying `variant` + nullable `start_fen` so
+Chess960 / set-up positions are first-class — see ADR 0010), `players`, `events`, a
+**position index** `(zobrist, game_id, ply, move)` for "find games reaching this
+position", `studies` (serialized `MoveTree`), `users`/auth, and MCP/AI-assistant
+tables.
 
 ### Position search
 
