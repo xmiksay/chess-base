@@ -14,6 +14,7 @@ async fn health_endpoint_reports_ok_and_mode() {
     let app = build_router(AppState {
         db,
         mode: Mode::Local,
+        engine: None,
     });
 
     let resp = app

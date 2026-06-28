@@ -1,12 +1,28 @@
 //! UCI engine integration.
 //!
 //! Engines (Stockfish, Lc0 + Maia weights) are external binaries spoken to over
-//! the UCI protocol on stdin/stdout. The scaffold defines the engine
-//! configuration model and a thin parse helper over `vampirc-uci`; the process
-//! manager and analysis streaming land in the Epic 5 issues.
+//! the UCI protocol on stdin/stdout. This module is split into:
+//!
+//! - [`command`] — pure builders for the UCI commands we send (`position`, `go`,
+//!   `setoption`) plus the [`command::Limits`] search-limit model;
+//! - [`analysis`] — pure conversion of parsed `info`/`bestmove` messages into the
+//!   serializable [`analysis::AnalysisEvent`] streamed to the frontend;
+//! - [`manager`] — the [`manager::Engine`] process manager: spawns a child,
+//!   performs the UCI handshake, configures options, and streams analysis.
+//!
+//! `command` and `analysis` are I/O-free and unit-tested; `manager` is the thin
+//! async adapter, integration-tested behind an engine-path env var.
+
+pub mod analysis;
+pub mod command;
+pub mod manager;
 
 use std::path::PathBuf;
 use vampirc_uci::{parse_one, UciMessage};
+
+pub use analysis::{AnalysisEvent, AnalysisInfo, Score};
+pub use command::Limits;
+pub use manager::Engine;
 
 /// A configured, runnable engine.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -19,8 +19,8 @@ commented PGN studies, and integrates UCI engines.
 | `openings` | ECO classification: embedded lichess `chess-openings` dataset → O(1) `zobrist -> (eco, name)` lookup; classifies a game by the longest match along its mainline (`eco_of_position`, `classify_mainline`) | none (pure) |
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
-| `engine` | UCI engine config + message parsing (Stockfish, Lc0/Maia) | process |
-| `server` | Axum router, app state, request identity, MCP `/mcp` endpoint, embedded SPA, browser launch, lifecycle | HTTP |
+| `engine` | UCI engine config + message parsing (`command`/`analysis` pure) and the `manager::Engine` process manager: spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis (Stockfish, Lc0/Maia) | process |
+| `server` | Axum router, app state, request identity, MCP `/mcp` endpoint, engine analysis WebSocket, embedded SPA, browser launch, lifecycle | HTTP |
 
 The **pure** modules (`position`, `pgn_tree`, `openings`) carry the chess logic and are unit-tested without any
 runtime. Everything else is a thin adapter with dependencies injected, so the
@@ -64,6 +64,28 @@ ownership model (ADR 0007) in one place: `scope(owner_col, user)` (the
 Unknown method → `-32601`, unknown tool → `-32602`. A built-in `echo` stub
 proves dispatch; the Epic 9 services (engine #27, DB #28, interactive #33)
 register their real tools into the registry.
+
+## Engine analysis (ADR 0012)
+
+The `engine` module is split so the chess-specific parts stay pure and unit-tested
+while process I/O is a thin adapter:
+
+- `engine/command.rs` — builds the UCI command text (`position`, `go`, `setoption`)
+  from a `Limits` model; no I/O.
+- `engine/analysis.rs` — maps parsed `vampirc-uci` messages into the flat,
+  serializable `AnalysisEvent` (`info` / `bestmove`) the SPA consumes; no I/O.
+- `engine/manager.rs` — `Engine` owns a Tokio child process, runs the
+  `uci`/`isready` handshake on spawn (`kill_on_drop`, so a dropped handle never
+  leaks a process), applies `setoption`, drives `position`/`go`/`stop`, and yields
+  `AnalysisEvent`s one at a time via `next_event`. Callers own the read loop.
+
+`server/engine_ws.rs` exposes `GET /api/engine/analyse`, an authenticated
+(`CurrentUser`) WebSocket. It spawns the engine configured on `AppState.engine`
+(set from `--engine` / `CHESS_BASE_ENGINE`; absent ⇒ `503`) for the socket's
+lifetime and `select!`s between client control messages
+(`{"type":"analyse",…}` / `{"type":"stop"}`) and streamed engine events, restarting
+cleanly (stop → drain → re-`go`) when a new position arrives mid-search. A real
+engine is integration-tested behind `CHESS_BASE_TEST_ENGINE` (skipped if unset).
 
 ## Data model
 

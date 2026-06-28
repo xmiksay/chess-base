@@ -16,6 +16,7 @@ async fn rpc(body: Value) -> (StatusCode, Value) {
     let app = build_router(AppState {
         db,
         mode: Mode::Local,
+        engine: None,
     });
 
     let resp = app

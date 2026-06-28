@@ -3,6 +3,7 @@
 //! live object handlers use.
 
 use crate::db::DbConfig;
+use crate::engine::EngineConfig;
 use std::net::IpAddr;
 
 /// Deployment mode. Local = single-user, embedded SQLite, auto-open browser.
@@ -22,4 +23,6 @@ pub struct AppConfig {
     /// Auto-open the browser after binding (local mode only).
     pub open_browser: bool,
     pub db: DbConfig,
+    /// Engine the analysis WebSocket spawns, if configured (`--engine` path).
+    pub engine: Option<EngineConfig>,
 }
