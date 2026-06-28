@@ -192,8 +192,12 @@ impl PositionSearchService {
     }
 
     /// The database ids visible to the caller (own ∪ global). Search filters the
-    /// denormalized `position_index.database_id` against this set.
-    async fn visible_database_ids(&self, user: &CurrentUser) -> Result<Vec<i32>, SearchError> {
+    /// denormalized `position_index.database_id` against this set. Shared with the
+    /// pre-chewed report layer ([`crate::search::report`]) so scope is computed once.
+    pub(crate) async fn visible_database_ids(
+        &self,
+        user: &CurrentUser,
+    ) -> Result<Vec<i32>, SearchError> {
         Ok(databases::Entity::find()
             .filter(scope(databases::Column::OwnerId, user))
             .select_only()
