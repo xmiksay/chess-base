@@ -19,7 +19,7 @@ commented PGN studies, and integrates UCI engines.
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
 | `engine` | UCI engine config + message parsing (Stockfish, Lc0/Maia) | process |
-| `server` | Axum router, app state, embedded SPA, browser launch, lifecycle | HTTP |
+| `server` | Axum router, app state, request identity, embedded SPA, browser launch, lifecycle | HTTP |
 
 The two **pure** modules carry the chess logic and are unit-tested without any
 runtime. Everything else is a thin adapter with dependencies injected, so the
@@ -40,6 +40,17 @@ In dev, Vite serves the SPA and proxies `/api` to the backend on `:3030`.
 `Mode::Local` → SQLite + auto-open browser + single implicit admin user.
 `Mode::Server` → Postgres + multi-user. Selected in `src/bin/chess-base.rs` from
 CLI flags; resolved into `AppConfig` (config) → `AppState` (runtime).
+
+## Request identity (ADR 0011)
+
+`server/identity.rs` defines `CurrentUser { id, is_admin }` — the one identity
+type every service takes — produced by an Axum extractor. Resolution is the only
+mode-dependent part and lives in `AppState::resolve_current_user`: local mode is
+always the implicit admin (`local-admin`); server mode resolves from session /
+Bearer auth (wired in #14, until then `401`). Two shared helpers enforce the
+ownership model (ADR 0007) in one place: `scope(owner_col, user)` (the
+`owner == caller OR owner IS NULL` read filter) and `assert_admin(user)`. The
+`/api/whoami` route exposes the resolved caller to the SPA.
 
 ## Data model
 
