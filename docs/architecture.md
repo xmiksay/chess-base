@@ -18,6 +18,7 @@ commented PGN studies, and integrates UCI engines.
 | `pgn_tree` | Study move-tree: variations, comments, NAGs; `pgn` submodule streams standard PGN ⇄ `MoveTree` (`from_pgn`/`to_pgn`, SAN validated via `position`) | none (pure) |
 | `openings` | ECO classification: embedded lichess `chess-openings` dataset → O(1) `zobrist -> (eco, name)` lookup; classifies a game by the longest match along its mainline (`eco_of_position`, `classify_mainline`) | none (pure) |
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
+| `studies` | Transport-agnostic `StudyService`: study CRUD + `MoveTree` edits (`add_move` SAN-validated via `position::legal_sans`, `annotate`); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — the HTTP routes and MCP tools are thin callers | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
 | `engine` | UCI engine config + message parsing (`command`/`analysis` pure) and the `manager::Engine` process manager: spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis (Stockfish, Lc0/Maia) | process |
 | `ai/llm` | Provider-agnostic LLM client: `LlmProvider` trait + Anthropic Messages API client (ADR 0013); HTTP behind an injectable `Transport` seam | HTTP |
