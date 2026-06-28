@@ -218,6 +218,177 @@ async fn unauthenticated_search_is_rejected() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
+/// A PGN carrying the header roster header search filters on.
+fn header_game(
+    white: &str,
+    black: &str,
+    event: &str,
+    eco: &str,
+    date: &str,
+    result: &str,
+) -> String {
+    format!(
+        "[Event \"{event}\"]\n[White \"{white}\"]\n[Black \"{black}\"]\n[ECO \"{eco}\"]\n[Date \"{date}\"]\n[Result \"{result}\"]\n\n1. e4 e5 {result}\n"
+    )
+}
+
+/// Fetch a JSON endpoint, returning (status, parsed body).
+async fn get_json(app: &Router, uri: &str, token: &str) -> (StatusCode, Value) {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    (status, body)
+}
+
+#[tokio::test]
+async fn header_search_filters_and_resolves_names() {
+    let (app, db) = app_with_db().await;
+    let (alice, alice_id) = register(&app, "alice").await;
+    seed(
+        &db,
+        &alice_id,
+        &[
+            &header_game("Carlsen", "Nepo", "Tata Steel", "B90", "2021.01.16", "1-0"),
+            &header_game("Nepo", "Carlsen", "Candidates", "C42", "2021.04.20", "0-1"),
+            &header_game(
+                "Ding",
+                "Nakamura",
+                "Tata Steel",
+                "B33",
+                "2022.01.20",
+                "1/2-1/2",
+            ),
+        ],
+    )
+    .await;
+
+    // Player on the white side only matches the single Carlsen-white game.
+    let (status, body) = get_json(
+        &app,
+        "/api/search/headers?player=Carlsen&color=white",
+        &alice,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["games"].as_array().unwrap().len(), 1);
+    assert_eq!(body["games"][0]["white"], "Carlsen");
+    assert_eq!(body["games"][0]["black"], "Nepo");
+    assert!(body["next_cursor"].is_null());
+
+    // ECO prefix + event combine.
+    let (_, body) = get_json(&app, "/api/search/headers?eco=B&event=Tata", &alice).await;
+    assert_eq!(body["games"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn header_search_paginates_with_keyset_cursor() {
+    let (app, db) = app_with_db().await;
+    let (alice, alice_id) = register(&app, "alice").await;
+    let games: Vec<String> = (0..5)
+        .map(|i| header_game("A", "B", "E", "C00", &format!("2020.01.0{}", i + 1), "1-0"))
+        .collect();
+    let refs: Vec<&str> = games.iter().map(String::as_str).collect();
+    seed(&db, &alice_id, &refs).await;
+
+    let mut seen = Vec::new();
+    let mut uri = "/api/search/headers?limit=2".to_string();
+    loop {
+        let (status, body) = get_json(&app, &uri, &alice).await;
+        assert_eq!(status, StatusCode::OK);
+        for g in body["games"].as_array().unwrap() {
+            seen.push(g["id"].as_i64().unwrap());
+        }
+        match body["next_cursor"].as_str() {
+            Some(c) => uri = format!("/api/search/headers?limit=2&cursor={c}"),
+            None => break,
+        }
+    }
+    // Every game exactly once, newest-date first.
+    assert_eq!(seen.len(), 5);
+    let mut sorted = seen.clone();
+    sorted.sort_unstable();
+    sorted.reverse();
+    assert_eq!(seen, sorted);
+}
+
+#[tokio::test]
+async fn header_search_scope_excludes_other_users() {
+    let (app, db) = app_with_db().await;
+    let (_alice, alice_id) = register(&app, "alice").await; // first user → admin
+    let (bob_token, bob_id) = register(&app, "bob").await;
+    seed(
+        &db,
+        &alice_id,
+        &[&header_game(
+            "Carlsen",
+            "Nepo",
+            "E",
+            "C00",
+            "2021.01.01",
+            "1-0",
+        )],
+    )
+    .await;
+    seed(
+        &db,
+        &bob_id,
+        &[&header_game(
+            "Ding",
+            "Nakamura",
+            "E",
+            "C00",
+            "2021.02.02",
+            "0-1",
+        )],
+    )
+    .await;
+
+    // Bob can only see his own game, never alice's private database.
+    let (status, body) = get_json(&app, "/api/search/headers?player=Carlsen", &bob_token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["games"].as_array().unwrap().len(), 0);
+
+    let (_, body) = get_json(&app, "/api/search/headers", &bob_token).await;
+    assert_eq!(body["games"].as_array().unwrap().len(), 1);
+    assert_eq!(body["games"][0]["white"], "Ding");
+}
+
+#[tokio::test]
+async fn header_search_rejects_bad_cursor_and_params() {
+    let (app, _db) = app_with_db().await;
+    let (alice, _alice_id) = register(&app, "alice").await;
+    let (status, _) = get_json(&app, "/api/search/headers?cursor=not-valid", &alice).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = get_json(&app, "/api/search/headers?sort=elo", &alice).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn header_search_requires_auth() {
+    let (app, _db) = app_with_db().await;
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/search/headers")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
 /// Minimal percent-encoding for the FEN query parameter (spaces and `/`).
 fn urlencoding(s: &str) -> String {
     s.chars()
