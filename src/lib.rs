@@ -13,4 +13,6 @@ pub mod position;
 pub mod server;
 
 pub use pgn_tree::{MoveTree, Node};
-pub use position::{legal_sans, position_from_fen, zobrist_of_fen, PositionError, STARTPOS_FEN};
+pub use position::{
+    legal_sans, position_from_fen, zobrist_of_fen, CastlingMode, PositionError, STARTPOS_FEN,
+};
