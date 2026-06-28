@@ -16,12 +16,13 @@ commented PGN studies, and integrates UCI engines.
 |---|---|---|
 | `position` | FEN/SAN/UCI parsing, legal moves, move application & game replay, Zobrist hashing (shakmaty); variant-aware via threaded `CastlingMode` (Standard / Chess960) | none (pure) |
 | `pgn_tree` | Study move-tree: variations, comments, NAGs | none (pure) |
+| `openings` | ECO classification: embedded lichess `chess-openings` dataset → O(1) `zobrist -> (eco, name)` lookup; classifies a game by the longest match along its mainline (`eco_of_position`, `classify_mainline`) | none (pure) |
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
 | `engine` | UCI engine config + message parsing (Stockfish, Lc0/Maia) | process |
 | `server` | Axum router, app state, request identity, embedded SPA, browser launch, lifecycle | HTTP |
 
-The two **pure** modules carry the chess logic and are unit-tested without any
+The **pure** modules (`position`, `pgn_tree`, `openings`) carry the chess logic and are unit-tested without any
 runtime. Everything else is a thin adapter with dependencies injected, so the
 business logic stays testable and reusable across transports (HTTP today, an MCP
 endpoint next).
