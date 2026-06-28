@@ -20,6 +20,7 @@ commented PGN studies, and integrates UCI engines.
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
 | `engine` | UCI engine config + message parsing (`command`/`analysis` pure) and the `manager::Engine` process manager: spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis (Stockfish, Lc0/Maia) | process |
+| `ai/llm` | Provider-agnostic LLM client: `LlmProvider` trait + Anthropic Messages API client (ADR 0013); HTTP behind an injectable `Transport` seam | HTTP |
 | `server` | Axum router, app state, request identity, MCP `/mcp` endpoint, engine analysis WebSocket, embedded SPA, browser launch, lifecycle | HTTP |
 
 The **pure** modules (`position`, `pgn_tree`, `openings`) carry the chess logic and are unit-tested without any
@@ -86,6 +87,20 @@ lifetime and `select!`s between client control messages
 (`{"type":"analyse",…}` / `{"type":"stop"}`) and streamed engine events, restarting
 cleanly (stop → drain → re-`go`) when a new position arrives mid-search. A real
 engine is integration-tested behind `CHESS_BASE_TEST_ENGINE` (skipped if unset).
+
+## LLM provider (ADR 0013)
+
+`ai/llm` is the provider-agnostic Claude client shared by the batch annotation
+pass (Epic 9) and the interactive assistant (Epic 7). `LlmProvider::complete`
+takes provider-agnostic `Message`s (user / assistant-with-tool-calls /
+tool-results) plus optional `ToolSpec`s and returns text and/or `ToolCall`s — the
+same surface the interactive assistant reuses for tool-calling. The only concrete
+provider today is `anthropic::AnthropicProvider` over `POST /v1/messages`; a small
+trait keeps room for others. The HTTP boundary is the `Transport` trait, so wire
+encoding and response parsing are unit-tested against a stub with no network (the
+one live test is gated behind `ANTHROPIC_API_KEY`). The model id is configurable —
+default Sonnet-class for cost, Opus by override. **The API key is server-side
+only**: it travels in the `x-api-key` header and never reaches the SPA.
 
 ## Data model
 

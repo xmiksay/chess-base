@@ -18,3 +18,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0010 | Per-game variant + start position (Chess960-ready) |
 | 0011 | Request identity: one `CurrentUser` context, two resolution modes |
 | 0012 | UCI engine manager + analysis streamed over a WebSocket |
+| 0013 | LLM provider client: `LlmProvider` trait + Anthropic Messages API |
