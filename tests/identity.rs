@@ -14,7 +14,11 @@ use chess_base::server::{build_router, AppState, Mode};
 
 async fn whoami(mode: Mode) -> (axum::http::StatusCode, serde_json::Value) {
     let db = connect(&DbConfig::in_memory()).await.unwrap();
-    let app = build_router(AppState { db, mode });
+    let app = build_router(AppState {
+        db,
+        mode,
+        engine: None,
+    });
 
     let resp = app
         .oneshot(

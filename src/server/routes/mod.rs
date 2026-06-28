@@ -9,7 +9,7 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::server::{embed::Assets, identity::CurrentUser, state::AppState};
+use crate::server::{embed::Assets, engine_ws, identity::CurrentUser, state::AppState};
 
 mod mcp;
 
@@ -18,6 +18,7 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/api/health", get(health))
         .route("/api/whoami", get(whoami))
+        .route("/api/engine/analyse", get(engine_ws::analyse))
         .fallback(static_handler)
         .with_state(state.clone());
 

@@ -5,6 +5,7 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use chess_base::db::DbConfig;
+use chess_base::engine::EngineConfig;
 use chess_base::server::{self, AppConfig, Mode};
 
 #[derive(Parser, Debug)]
@@ -33,6 +34,15 @@ struct Cli {
     /// Do not auto-open the browser in local mode.
     #[arg(long)]
     no_open: bool,
+
+    /// Path to a UCI engine binary (e.g. Stockfish) to enable the analysis
+    /// WebSocket. May also be set via CHESS_BASE_ENGINE.
+    #[arg(long, env = "CHESS_BASE_ENGINE")]
+    engine: Option<std::path::PathBuf>,
+
+    /// Optional neural-net weights file for the engine (Lc0/Maia `WeightsFile`).
+    #[arg(long, requires = "engine", env = "CHESS_BASE_ENGINE_WEIGHTS")]
+    engine_weights: Option<std::path::PathBuf>,
 }
 
 #[tokio::main]
@@ -58,12 +68,25 @@ async fn main() -> Result<()> {
         (Mode::Local, db)
     };
 
+    let engine = cli.engine.map(|path| {
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "engine".to_string());
+        let cfg = EngineConfig::new(name, path);
+        match cli.engine_weights {
+            Some(weights) => cfg.with_weights(weights),
+            None => cfg,
+        }
+    });
+
     let cfg = AppConfig {
         mode,
         host: cli.host,
         port: cli.port,
         open_browser: mode == Mode::Local && !cli.no_open,
         db,
+        engine,
     };
 
     server::serve(cfg).await

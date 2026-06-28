@@ -22,7 +22,7 @@ pgn-reader = "0.29"
 
 # Async / web
 tokio = { version = "1", features = ["full"] }
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "rustls-native-certs", "stream"] }

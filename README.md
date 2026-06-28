@@ -21,6 +21,10 @@ AI-assisted studies.
 | Local | SQLite (file) | single (admin) | auto-opens | `make run` |
 | Server | Postgres | multi-user | no | `chess-base --server --database-url postgres://…` |
 
+Point `--engine <path>` (or `CHESS_BASE_ENGINE`) at a UCI engine binary (e.g.
+Stockfish) to enable live analysis over the `/api/engine/analyse` WebSocket;
+`--engine-weights` supplies an Lc0/Maia net. Without it the route returns `503`.
+
 ## Quick start (local)
 
 ```sh

@@ -3,6 +3,7 @@
 pub mod browser;
 pub mod config;
 pub mod embed;
+pub mod engine_ws;
 pub mod identity;
 pub mod routes;
 pub mod state;
@@ -22,7 +23,11 @@ pub fn build_router(state: AppState) -> axum::Router {
 /// Connect the database, bind, optionally open the browser, and serve until shutdown.
 pub async fn serve(cfg: AppConfig) -> Result<()> {
     let db = crate::db::connect(&cfg.db).await?;
-    let state = AppState { db, mode: cfg.mode };
+    let state = AppState {
+        db,
+        mode: cfg.mode,
+        engine: cfg.engine,
+    };
     let app = build_router(state);
 
     let addr = SocketAddr::new(cfg.host, cfg.port);
