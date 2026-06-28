@@ -41,6 +41,13 @@ client-side move legality via **chess.js**. Built to `frontend/dist` and embedde
 into the binary with `rust-embed` (`src/server/embed.rs`). `build.rs` guarantees
 the folder exists so the crate always compiles even before the SPA is built.
 
+`App.vue` is a thin nav/layout shell around a `<router-view>`; **vue-router**
+(`router/index.js`, HTML5 history) maps each top-level surface to a lazily-loaded
+view in `views/`: `AnalysisView` (`/`, the board + analysis panel) plus stubs for
+`collections`, `games`, `search`, `settings` and `login`. Deep links work because
+the server's `static_handler` falls back to `index.html` for unknown paths
+(`src/server/routes/mod.rs`).
+
 State lives in Pinia stores: `stores/game.js` (chess.js-backed position,
 legal-move `dests`, play-vs-engine moves), `stores/engine.js` (the
 `/api/engine/analyse` WebSocket — folds streamed `info`/`bestmove` events into
