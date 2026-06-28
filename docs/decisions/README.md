@@ -15,3 +15,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0007 | Databases are ownable; NULL owner = global |
 | 0008 | MCP via hand-rolled JSON-RPC `/mcp` endpoint |
 | 0009 | LLM as annotator: the study generation pipeline |
+| 0010 | Per-game variant + start position (Chess960-ready) |
