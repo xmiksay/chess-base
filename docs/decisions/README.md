@@ -23,3 +23,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0015 | Server-mode auth: opaque sessions (Bearer/cookie) + first-user-is-admin |
 | 0016 | MCP auth & scoping: OAuth 2.1 (server) + service token (local) |
 | 0017 | Plan trajectories: pure `plans` module, thin WS/MCP callers |
+| 0018 | Pre-chewed DB query layer: ECO + frequency/score + transpositions + references |
