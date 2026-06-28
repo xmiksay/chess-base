@@ -1,12 +1,22 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import Board from './components/Board.vue'
-import { STARTPOS_FEN } from './lib/fen.js'
+import AnalysisPanel from './components/AnalysisPanel.vue'
+import { useGameStore } from './stores/game.js'
 import { api } from './api.js'
 
-const fen = ref(STARTPOS_FEN)
+const game = useGameStore()
 const backend = ref(null)
 const error = ref(null)
+
+// In play mode only the human's side may move (and only while the game is live).
+const movable = computed(() =>
+  game.mode === 'analyse' ? true : game.turnColor === game.playColor && !game.gameOver,
+)
+
+function onMove({ from, to }) {
+  game.playMove({ from, to })
+}
 
 onMounted(async () => {
   try {
@@ -30,29 +40,23 @@ onMounted(async () => {
 
     <main class="mx-auto flex max-w-5xl flex-col gap-6 p-6 md:flex-row">
       <section>
-        <Board :fen="fen" />
-      </section>
-
-      <aside class="flex-1 space-y-3">
-        <h2 class="font-medium">
-          Status
-        </h2>
+        <Board
+          :fen="game.fen"
+          :orientation="game.orientation"
+          :dests="game.legalDests"
+          :movable="movable"
+          @move="onMove"
+        />
         <p
           v-if="error"
-          class="text-sm text-red-600"
+          class="mt-2 text-sm text-red-600"
         >
           Backend offline: {{ error }}
         </p>
-        <pre
-          v-else-if="backend"
-          class="rounded bg-neutral-100 p-3 text-xs"
-        >{{ JSON.stringify(backend, null, 2) }}</pre>
-        <p
-          v-else
-          class="text-sm text-neutral-500"
-        >
-          Connecting…
-        </p>
+      </section>
+
+      <aside class="flex-1">
+        <AnalysisPanel />
       </aside>
     </main>
   </div>

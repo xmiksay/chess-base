@@ -3,8 +3,10 @@ import { mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 
-// Avoid mounting the real chessground board (needs layout) and the network.
+// Avoid mounting the real chessground board (needs layout), the engine
+// WebSocket, and the network.
 vi.mock('./components/Board.vue', () => ({ default: { template: '<div class="board-stub" />' } }))
+vi.mock('./components/AnalysisPanel.vue', () => ({ default: { template: '<div class="panel-stub" />' } }))
 vi.mock('./api.js', () => ({ api: { health: vi.fn().mockResolvedValue({ status: 'ok', mode: 'local' }) } }))
 
 describe('App', () => {
