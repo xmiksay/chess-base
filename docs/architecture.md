@@ -20,12 +20,12 @@ commented PGN studies, and integrates UCI engines.
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
 | `engine` | UCI engine config + message parsing (Stockfish, Lc0/Maia) | process |
-| `server` | Axum router, app state, request identity, embedded SPA, browser launch, lifecycle | HTTP |
+| `server` | Axum router, app state, request identity, MCP `/mcp` endpoint, embedded SPA, browser launch, lifecycle | HTTP |
 
 The **pure** modules (`position`, `pgn_tree`, `openings`) carry the chess logic and are unit-tested without any
 runtime. Everything else is a thin adapter with dependencies injected, so the
-business logic stays testable and reusable across transports (HTTP today, an MCP
-endpoint next).
+business logic stays testable and reusable across transports (HTTP and the MCP
+`/mcp` endpoint).
 
 ### Frontend (`frontend/`)
 
@@ -52,6 +52,18 @@ Bearer auth (wired in #14, until then `401`). Two shared helpers enforce the
 ownership model (ADR 0007) in one place: `scope(owner_col, user)` (the
 `owner == caller OR owner IS NULL` read filter) and `assert_admin(user)`. The
 `/api/whoami` route exposes the resolved caller to the SPA.
+
+## MCP endpoint (ADR 0008)
+
+`server/routes/mcp.rs` is a hand-rolled JSON-RPC 2.0 endpoint at `POST /mcp`
+(protocol `2025-03-26`), no MCP server crate. It is transport/dispatch plumbing:
+`initialize` (serverInfo + capabilities + instructions), `tools/list`,
+`tools/call`, and the `notifications/initialized` ack. A `ToolRegistry` holds
+`Tool`s (name + JSON input schema + async handler); each handler returns a
+`ToolOutcome` the dispatcher wraps into the MCP `content`/`isError` envelope.
+Unknown method → `-32601`, unknown tool → `-32602`. A built-in `echo` stub
+proves dispatch; the Epic 9 services (engine #27, DB #28, interactive #33)
+register their real tools into the registry.
 
 ## Data model
 

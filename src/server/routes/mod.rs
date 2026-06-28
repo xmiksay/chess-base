@@ -11,13 +11,19 @@ use serde_json::json;
 
 use crate::server::{embed::Assets, identity::CurrentUser, state::AppState};
 
+mod mcp;
+
 /// Build the application router.
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let api = Router::new()
         .route("/api/health", get(health))
         .route("/api/whoami", get(whoami))
         .fallback(static_handler)
-        .with_state(state)
+        .with_state(state.clone());
+
+    // The MCP endpoint carries its own state (app + tool registry), so it is
+    // resolved independently and merged in.
+    api.merge(mcp::router(state))
 }
 
 /// Report the resolved caller: the implicit admin in local mode, the
