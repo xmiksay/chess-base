@@ -8,7 +8,10 @@
 //!   and `{"type":"stop"}`. A new `analyse` while a search runs reconfigures and
 //!   restarts cleanly (stop → drain → re-`go`).
 //! - server → client: `{"type":"ready",…}`, the streamed `info`/`bestmove`
-//!   events from [`AnalysisEvent`], and `{"type":"error",…}`.
+//!   events from [`AnalysisEvent`], a `{"type":"planline",…}` frame enriching
+//!   each PV with per-piece [`Trajectory`]s for the Plans overlay (ADR-0017),
+//!   and `{"type":"error",…}`. The `planline` frame is additive: the bare `info`
+//!   event is still sent unchanged, so existing eval/PV consumers are untouched.
 //!
 //! The handler is the one place that interleaves the engine read loop with
 //! client control messages; everything chess-specific lives in the pure engine
@@ -27,7 +30,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
-use crate::engine::{AnalysisEvent, Engine, EngineConfig, Limits};
+use crate::engine::{AnalysisEvent, AnalysisInfo, Engine, EngineConfig, Limits, Score};
+use crate::plans::{plan_from_pv, Trajectory, DEFAULT_MAX_MOVES};
+use crate::position::CastlingMode;
 use crate::server::{identity::CurrentUser, state::AppState};
 
 /// Client → server control messages.
@@ -47,8 +52,9 @@ enum ClientMsg {
     Stop,
 }
 
-/// Server → client envelope for non-analysis messages. Analysis updates are sent
-/// as bare [`AnalysisEvent`]s (`{"type":"info"|"bestmove",…}`).
+/// Server → client envelope for non-`info`/`bestmove` messages. Raw analysis
+/// updates are sent as bare [`AnalysisEvent`]s (`{"type":"info"|"bestmove",…}`);
+/// each `info` carrying a PV is additionally enriched with a [`ServerMsg::PlanLine`].
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum ServerMsg {
@@ -56,10 +62,27 @@ enum ServerMsg {
     Ready {
         name: String,
     },
+    /// One MultiPV line enriched with the per-piece trajectories the Plans
+    /// overlay draws. Emitted alongside (not instead of) the bare `info` event;
+    /// `trajectories` is empty when the plan could not be computed.
+    PlanLine {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        multipv: Option<u16>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        depth: Option<u8>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        score: Option<Score>,
+        pv: Vec<String>,
+        trajectories: Vec<Trajectory>,
+    },
     Error {
         message: String,
     },
 }
+
+/// Server-side default for `MultiPV` when the client omits it: the Plans overlay
+/// wants the top few candidate lines, not just the best move.
+const DEFAULT_MULTIPV: &str = "3";
 
 /// How long to wait for a search to wind down after `stop` before reconfiguring.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -119,12 +142,14 @@ async fn session(mut socket: WebSocket, cfg: EngineConfig) {
     }
 
     let mut analysing = false;
+    // FEN (and thus traced side) of the in-flight search; drives plan trajectories.
+    let mut current_fen: Option<String> = None;
     loop {
         tokio::select! {
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
-                        if !handle_client_msg(&mut socket, &mut engine, &mut analysing, text.as_str()).await {
+                        if !handle_client_msg(&mut socket, &mut engine, &mut analysing, &mut current_fen, text.as_str()).await {
                             break;
                         }
                     }
@@ -140,6 +165,14 @@ async fn session(mut socket: WebSocket, cfg: EngineConfig) {
                         let terminal = matches!(event, AnalysisEvent::BestMove { .. });
                         if send_json(&mut socket, &event).await.is_err() {
                             break;
+                        }
+                        // Additively enrich each PV-bearing info line with trajectories.
+                        if let (AnalysisEvent::Info(info), Some(fen)) = (&event, &current_fen) {
+                            if !info.pv.is_empty()
+                                && send_json(&mut socket, &plan_line(fen, info)).await.is_err()
+                            {
+                                break;
+                            }
                         }
                         if terminal {
                             analysing = false;
@@ -166,25 +199,30 @@ async fn handle_client_msg(
     socket: &mut WebSocket,
     engine: &mut Engine,
     analysing: &mut bool,
+    current_fen: &mut Option<String>,
     text: &str,
 ) -> bool {
     match serde_json::from_str::<ClientMsg>(text) {
         Ok(ClientMsg::Analyse {
             fen,
             limits,
-            options,
-        }) => match start_analysis(engine, *analysing, &fen, &limits, &options).await {
-            Ok(()) => {
-                *analysing = true;
-                true
+            mut options,
+        }) => {
+            apply_default_options(&mut options);
+            match start_analysis(engine, *analysing, &fen, &limits, &options).await {
+                Ok(()) => {
+                    *analysing = true;
+                    *current_fen = Some(fen);
+                    true
+                }
+                Err(e) => {
+                    // A bad FEN / option is recoverable: report it, keep the socket.
+                    *analysing = false;
+                    send_error(socket, format!("could not start analysis: {e}")).await;
+                    true
+                }
             }
-            Err(e) => {
-                // A bad FEN / option is recoverable: report it, keep the socket.
-                *analysing = false;
-                send_error(socket, format!("could not start analysis: {e}")).await;
-                true
-            }
-        },
+        }
         Ok(ClientMsg::Stop) => {
             if *analysing {
                 let _ = engine.stop().await;
@@ -223,6 +261,33 @@ async fn start_analysis(
     engine.go(limits).await
 }
 
+/// Fill in server-side option defaults the client may omit. Currently only
+/// `MultiPV`: the Plans overlay wants the top few lines, so default it when unset
+/// without overriding an explicit client value.
+fn apply_default_options(options: &mut BTreeMap<String, String>) {
+    options
+        .entry("MultiPV".to_string())
+        .or_insert_with(|| DEFAULT_MULTIPV.to_string());
+}
+
+/// Build the [`ServerMsg::PlanLine`] enriching one PV-bearing `info` line.
+///
+/// `fen` is the analysed position (it fixes which side's pieces are traced).
+/// A plan-computation failure (only an invalid FEN) degrades to empty
+/// `trajectories` rather than dropping the line — the eval/PV still reach the UI.
+fn plan_line(fen: &str, info: &AnalysisInfo) -> ServerMsg {
+    let trajectories = plan_from_pv(fen, &info.pv, DEFAULT_MAX_MOVES, CastlingMode::Standard)
+        .map(|plan| plan.trajectories)
+        .unwrap_or_default();
+    ServerMsg::PlanLine {
+        multipv: info.multipv,
+        depth: info.depth,
+        score: info.score,
+        pv: info.pv.clone(),
+        trajectories,
+    }
+}
+
 /// Consume engine output up to and including the terminal `bestmove`.
 async fn drain_to_bestmove(engine: &mut Engine) -> Result<()> {
     loop {
@@ -251,4 +316,68 @@ async fn send_error(socket: &mut WebSocket, message: impl Into<String>) {
         },
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::position::STARTPOS_FEN;
+    use serde_json::Value;
+
+    fn info_with_pv(pv: &[&str]) -> AnalysisInfo {
+        AnalysisInfo {
+            depth: Some(12),
+            multipv: Some(2),
+            score: Some(Score::Cp { value: 31 }),
+            pv: pv.iter().map(|s| s.to_string()).collect(),
+            ..AnalysisInfo::default()
+        }
+    }
+
+    #[test]
+    fn default_multipv_added_when_omitted() {
+        let mut options = BTreeMap::new();
+        apply_default_options(&mut options);
+        assert_eq!(options.get("MultiPV").map(String::as_str), Some("3"));
+    }
+
+    #[test]
+    fn explicit_multipv_is_preserved() {
+        let mut options = BTreeMap::from([("MultiPV".to_string(), "1".to_string())]);
+        apply_default_options(&mut options);
+        assert_eq!(options.get("MultiPV").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn plan_line_carries_trajectories_and_echoes_info_fields() {
+        // g1f3 (White), e7e5 (Black reply), f3g5 (White) → one chained knight path.
+        let info = info_with_pv(&["g1f3", "e7e5", "f3g5"]);
+        let line = plan_line(STARTPOS_FEN, &info);
+        let json = serde_json::to_value(&line).unwrap();
+
+        assert_eq!(json["type"], "planline");
+        assert_eq!(json["multipv"], 2);
+        assert_eq!(json["depth"], 12);
+        assert_eq!(json["score"]["type"], "cp");
+        assert_eq!(json["pv"], Value::from(vec!["g1f3", "e7e5", "f3g5"]));
+        let trajectories = json["trajectories"].as_array().unwrap();
+        assert_eq!(trajectories.len(), 1);
+        assert_eq!(trajectories[0]["piece"], "N");
+        assert_eq!(
+            trajectories[0]["squares"],
+            Value::from(vec!["g1", "f3", "g5"])
+        );
+    }
+
+    #[test]
+    fn plan_line_degrades_to_empty_trajectories_on_bad_fen() {
+        // An unparseable FEN must not drop the line: eval/PV survive, plan empties.
+        let info = info_with_pv(&["g1f3"]);
+        let line = plan_line("not a fen", &info);
+        let json = serde_json::to_value(&line).unwrap();
+
+        assert_eq!(json["type"], "planline");
+        assert_eq!(json["pv"][0], "g1f3");
+        assert!(json["trajectories"].as_array().unwrap().is_empty());
+    }
 }
