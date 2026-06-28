@@ -43,3 +43,12 @@ constant.
   arbitrary initial positions — plus minimal UI to display the variant.
 - Until implemented, importing a 960 game is rejected/flagged rather than silently
   mis-parsed as standard, avoiding corrupt castling data in the index.
+
+**Status (issue #39).** The data-model and ingest/replay paths have landed:
+`games.variant` + `games.start_fen` (migration `m0002`), `position.rs` threading
+`CastlingMode`, and `ingest.rs` honoring `[Variant "Chess960"]` / `[SetUp]` /
+`[FEN]` — replaying from `start_fen` under the right mode and indexing the
+variant-agnostic Zobrist key. The guard holds naturally: a 960 array imported
+without a `[Variant]` tag fails to parse under standard mode rather than being
+mis-indexed. Frontend rendering of the stored start array + a variant label is
+tracked separately in #8.

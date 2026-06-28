@@ -451,4 +451,83 @@ mod tests {
         let (conn, database_id) = db_with_own_collection().await;
         assert!(ingest_pgn(&conn, database_id, "   \n  ").await.is_err());
     }
+
+    // A real Chess960 start array (king e1 between rooks on b1/g1, bishops on
+    // opposite colors). The `KQkq` rights reference those rook files, so this FEN
+    // only parses under Chess960 castling mode (ADR-0010).
+    const CHESS960_FEN: &str = "nrbqkbrn/pppppppp/8/8/8/8/PPPPPPPP/NRBQKBRN w KQkq - 0 1";
+
+    #[tokio::test]
+    async fn ingests_chess960_game_honoring_variant_and_setup() {
+        let (conn, database_id) = db_with_own_collection().await;
+        let pgn = format!(
+            "[Event \"Casual Chess960\"]\n[White \"Carlsen, Magnus\"]\n[Black \"Nakamura, Hikaru\"]\n[Result \"*\"]\n[Variant \"Chess960\"]\n[SetUp \"1\"]\n[FEN \"{CHESS960_FEN}\"]\n\n1. d4 d5 *\n"
+        );
+
+        let result = ingest_pgn(&conn, database_id, &pgn).await.unwrap();
+        assert_eq!(result.indexed_plies, 2);
+
+        let game = games::Entity::find_by_id(result.game_id)
+            .one(&conn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(game.variant, "chess960");
+        assert_eq!(game.start_fen.as_deref(), Some(CHESS960_FEN));
+
+        // Ply 0 indexes the start array under Chess960 mode (variant-agnostic key).
+        let start = zobrist_of_fen(CHESS960_FEN, CastlingMode::Chess960).unwrap();
+        let hit = position_index::Entity::find()
+            .filter(position_index::Column::GameId.eq(result.game_id))
+            .filter(position_index::Column::Ply.eq(0))
+            .one(&conn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(position_index::from_i64(hit.zobrist), start);
+        assert_eq!(hit.r#move, "d4");
+    }
+
+    #[tokio::test]
+    async fn setup_position_game_replays_from_fen() {
+        let (conn, database_id) = db_with_own_collection().await;
+        // A standard set-up (study) position, not the startpos.
+        let setup_fen = "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1";
+        let pgn = format!("[Event \"Study\"]\n[SetUp \"1\"]\n[FEN \"{setup_fen}\"]\n\n1. e4 *\n");
+
+        let result = ingest_pgn(&conn, database_id, &pgn).await.unwrap();
+        assert_eq!(result.indexed_plies, 1);
+
+        let game = games::Entity::find_by_id(result.game_id)
+            .one(&conn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(game.variant, "standard");
+        assert_eq!(game.start_fen.as_deref(), Some(setup_fen));
+
+        let start = zobrist_of_fen(setup_fen, CastlingMode::Standard).unwrap();
+        let hit = position_index::Entity::find()
+            .filter(position_index::Column::GameId.eq(result.game_id))
+            .filter(position_index::Column::Ply.eq(0))
+            .one(&conn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(position_index::from_i64(hit.zobrist), start);
+        assert_eq!(hit.r#move, "e4");
+    }
+
+    #[tokio::test]
+    async fn chess960_position_without_variant_tag_is_rejected() {
+        let (conn, database_id) = db_with_own_collection().await;
+        // Same 960 array but no `[Variant]`: it defaults to standard, where the
+        // `KQkq` rights have no a1/h1 rook layout. shakmaty rejects it rather than
+        // letting it be silently mis-parsed as standard (ADR-0010 guard).
+        let pgn = format!("[SetUp \"1\"]\n[FEN \"{CHESS960_FEN}\"]\n\n1. d4 d5 *\n");
+        assert!(ingest_pgn(&conn, database_id, &pgn).await.is_err());
+
+        // Nothing was written: the transaction never opened.
+        assert!(games::Entity::find().all(&conn).await.unwrap().is_empty());
+    }
 }
