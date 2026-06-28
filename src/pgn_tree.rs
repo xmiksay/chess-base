@@ -75,6 +75,30 @@ impl MoveTree {
         self.nodes[id].comment = Some(comment.into());
     }
 
+    /// Append a Numeric Annotation Glyph to a node.
+    pub fn add_nag(&mut self, id: usize, nag: u8) {
+        self.nodes[id].nags.push(nag);
+    }
+
+    /// SAN moves from the root down to `id` (inclusive), or `None` if `id` is not
+    /// a node in this tree. Lets a caller replay to a node's position to validate
+    /// the next move. The root contributes no SAN, so the root yields `Some([])`.
+    pub fn line_to(&self, id: usize) -> Option<Vec<String>> {
+        let mut node = self.nodes.get(id)?;
+        let mut sans = Vec::new();
+        loop {
+            if let Some(san) = &node.san {
+                sans.push(san.clone());
+            }
+            match node.parent {
+                Some(p) => node = &self.nodes[p],
+                None => break,
+            }
+        }
+        sans.reverse();
+        Some(sans)
+    }
+
     /// The mainline as a sequence of SAN strings, from the root.
     pub fn mainline(&self) -> Vec<String> {
         let mut out = Vec::new();
@@ -105,6 +129,31 @@ mod tests {
         assert_eq!(t.mainline(), vec!["e4", "c5", "Nf3"]);
         assert_eq!(t.nodes[e4].children.len(), 2, "e4 has a variation");
         assert_eq!(t.nodes[nf3].comment.as_deref(), Some("Open Sicilian"));
+    }
+
+    #[test]
+    fn line_to_collects_sans_along_a_variation() {
+        let mut t = MoveTree::new();
+        let e4 = t.add_move(t.root, "e4");
+        let c5 = t.add_move(e4, "c5");
+        let _e5 = t.add_move(e4, "e5"); // sibling variation, off the c5 line
+        let nf3 = t.add_move(c5, "Nf3");
+
+        assert_eq!(t.line_to(t.root), Some(vec![]));
+        assert_eq!(
+            t.line_to(nf3),
+            Some(vec!["e4".into(), "c5".into(), "Nf3".into()])
+        );
+        assert_eq!(t.line_to(999), None);
+    }
+
+    #[test]
+    fn add_nag_appends_glyphs() {
+        let mut t = MoveTree::new();
+        let e4 = t.add_move(t.root, "e4");
+        t.add_nag(e4, 1);
+        t.add_nag(e4, 22);
+        assert_eq!(t.nodes[e4].nags, vec![1, 22]);
     }
 
     #[test]
