@@ -3,10 +3,12 @@
 pub mod browser;
 pub mod config;
 pub mod embed;
+pub mod identity;
 pub mod routes;
 pub mod state;
 
 pub use config::{AppConfig, Mode};
+pub use identity::{assert_admin, scope, AuthError, CurrentUser};
 pub use state::AppState;
 
 use anyhow::Result;

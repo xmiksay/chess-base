@@ -9,14 +9,22 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::server::{embed::Assets, state::AppState};
+use crate::server::{embed::Assets, identity::CurrentUser, state::AppState};
 
 /// Build the application router.
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
+        .route("/api/whoami", get(whoami))
         .fallback(static_handler)
         .with_state(state)
+}
+
+/// Report the resolved caller: the implicit admin in local mode, the
+/// authenticated user in server mode (once #14 wires auth). Exercises the
+/// [`CurrentUser`] extractor and lets the SPA gate admin-only UI.
+async fn whoami(user: CurrentUser) -> impl IntoResponse {
+    Json(json!({ "id": user.id, "is_admin": user.is_admin }))
 }
 
 async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> impl IntoResponse {
