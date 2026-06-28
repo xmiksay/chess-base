@@ -73,3 +73,13 @@ features are individual issues. Epic 7 adds an MCP JSON-RPC endpoint (mirroring
 the `site` project's `routes/mcp.rs`) exposing a transport-agnostic `StudyService`
 so an external AI client — or, later, an embedded Claude assistant — can build and
 annotate studies.
+
+**Epic 9 — LLM study generation pipeline** is the AI-studies design proper
+(see [ADR-0009](decisions/0009-llm-study-pipeline.md)): the LLM is an *annotator*,
+with the engine and database as the sole source of chess truth. Code-orchestrated
+preprocessing *stages* (variation-tree builder; a pawn-structure/key-square
+**feature extractor** — the project's center of gravity) produce a finished, tagged
+tree; the LLM annotates it; every concrete claim is verified against engine/DB
+before commit. Engine eval/PV never enters the model context in batch mode. The
+engine/DB service is exposed both as MCP tools (interactive) and as direct
+in-process calls (batch).
