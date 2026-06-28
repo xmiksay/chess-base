@@ -23,6 +23,14 @@ pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}
 
+/// The four collection kinds a database may have (`databases.kind`).
+pub const KINDS: [&str; 4] = ["lichess", "chesscom", "master", "own"];
+
+/// Whether `kind` is one of the four known collection kinds (`KINDS`).
+pub fn is_valid_kind(kind: &str) -> bool {
+    KINDS.contains(&kind)
+}
+
 /// Default `index_depth` cap for a `master`/global database — the opening and
 /// early middlegame, where opening-explorer value concentrates (ADR-0003).
 pub const MASTER_INDEX_DEPTH: i32 = 36;

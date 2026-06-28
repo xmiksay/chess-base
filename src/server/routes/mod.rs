@@ -25,6 +25,7 @@ pub fn router(state: AppState) -> Router {
     // Auth endpoints (register/login/logout) carry their own state; inert in
     // local mode. The MCP endpoint likewise resolves independently. Merge both.
     api.merge(crate::auth::router(state.clone()))
+        .merge(crate::databases::routes::router(state.clone()))
         .merge(mcp::router(state))
 }
 
