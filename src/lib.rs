@@ -5,6 +5,7 @@
 //! - [`db`], [`collectors`], [`engine`] and [`server`] are thin, dependency-injected
 //!   adapters around that core.
 
+pub mod ai;
 pub mod collectors;
 pub mod db;
 pub mod engine;

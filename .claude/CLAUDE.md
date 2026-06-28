@@ -25,6 +25,7 @@ src/
   db/              SeaORM: config (SQLite/Postgres), entities, migrations
   collectors/      GameSource trait + Lichess / Chess.com adapters
   engine.rs        UCI engine config + parsing (Stockfish, Lc0/Maia)
+  ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
   server/          Axum app: routes, state, embedded SPA, browser launch
   bin/chess-base.rs  CLI entry (clap)
 frontend/          Vue 3 + Vite + Pinia + Tailwind v4 + chessground
