@@ -145,8 +145,14 @@ while process I/O is a thin adapter:
 (or a `?engine=<name>` override; absent/none ⇒ `503`) and spawns it for the
 socket's lifetime, `select!`ing between client control messages
 (`{"type":"analyse",…}` / `{"type":"stop"}`) and streamed engine events, restarting
-cleanly (stop → drain → re-`go`) when a new position arrives mid-search. A real
-engine is integration-tested behind `CHESS_BASE_TEST_ENGINE` (skipped if unset).
+cleanly (stop → drain → re-`go`) when a new position arrives mid-search. It defaults
+`MultiPV` to `3` when the client omits it, and additively enriches each PV-bearing
+`info` with a `{"type":"planline",…}` frame (`multipv`/`depth`/`score`/`pv` plus
+`plan_from_pv` `trajectories`, ADR 0017) for the Plans overlay — the bare `info`
+event is still sent unchanged, and a plan-computation failure degrades to empty
+`trajectories` rather than dropping the line. A real engine is integration-tested
+behind `CHESS_BASE_TEST_ENGINE` (skipped if unset); the `planline` wiring and its
+fallback are unit-tested without a process.
 
 ### Engine registry — persisted multi-engine config (ADR 0005 amendment)
 

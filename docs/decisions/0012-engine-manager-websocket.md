@@ -34,3 +34,10 @@ reconfigure support. The manager is one search at a time — concurrent multi-en
 or multi-board analysis would need a registry of `Engine`s keyed per session,
 layered on top without changing the pure core. Engine auto-download (ADR 0005)
 still owns discovering and registering the binary path this manager runs.
+
+**Addendum (Plans overlay).** The handler defaults `MultiPV` to `3` when omitted
+and emits an additive `{"type":"planline",…}` frame per PV-bearing `info`, wrapping
+`plan_from_pv` trajectories (ADR 0017) alongside the unchanged `info`/`bestmove`
+framing. A plan-computation failure degrades to empty `trajectories`, never
+dropping the line. The wrapper lives in the server layer; `engine/analysis.rs`
+stays untouched.
