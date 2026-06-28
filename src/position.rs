@@ -11,7 +11,7 @@ use shakmaty::{Chess, EnPassantMode, Move, Position};
 // Re-exported so callers select the variant without depending on `shakmaty`
 // directly: `Standard` for normal chess, `Chess960` for Fischer Random (where
 // castling rights reference rook files, X-FEN / Shredder-FEN). The same
-// `shakmaty::Chess` type backs both (per ADR-0009).
+// `shakmaty::Chess` type backs both (per ADR-0010).
 pub use shakmaty::CastlingMode;
 
 /// Standard chess starting position in FEN.
