@@ -21,12 +21,19 @@ AI-assisted studies.
 | Local | SQLite (file) | single (admin) | auto-opens | `make run` |
 | Server | Postgres | multi-user | no | `chess-base --server --database-url postgres://…` |
 
-Point `--engine <path>` (or `CHESS_BASE_ENGINE`) at a UCI engine binary (e.g.
-Stockfish) to enable live analysis over the `/api/engine/analyse` WebSocket;
-`--engine-weights` supplies an Lc0/Maia net. The flag seeds a persisted **engine
-registry**: manage several engines and pick the default from the Settings panel
-or the `/api/engines` API (each engine takes an optional `runner` wrapper, e.g.
-`wine`). With no engine configured the route returns `503`.
+On first run, with no engine configured, chess-base **auto-downloads** Stockfish
+(and Lc0 + Maia weights where available) into `engines/` — verifying each file's
+checksum — so live analysis works out of the box. Override the directory with
+`--engines-dir` / `CHESS_BASE_ENGINES_DIR`, or disable it with
+`--no-engine-download` (downloads are best-effort; a failure is logged, not fatal).
+
+To use an engine you already have, point `--engine <path>` (or `CHESS_BASE_ENGINE`)
+at a UCI engine binary (e.g. Stockfish) for live analysis over the
+`/api/engine/analyse` WebSocket; `--engine-weights` supplies an Lc0/Maia net. The
+flag seeds a persisted **engine registry**: manage several engines and pick the
+default from the Settings panel or the `/api/engines` API (each engine takes an
+optional `runner` wrapper, e.g. `wine`). A user-set engine always wins over an
+auto-downloaded one; with nothing configured at all the route returns `503`.
 
 ## Quick start (local)
 
@@ -68,9 +75,11 @@ docker compose up --build
 This builds the SPA, compiles the release binary with it embedded, starts
 Postgres, **runs migrations automatically** on startup, and serves the app at
 `http://localhost:${APP_PORT}` (default `3030`). Game data persists in the
-`pgdata` volume. To enable live engine analysis, mount a UCI engine into the
-`app` container and set `CHESS_BASE_ENGINE`; otherwise the analysis route
-returns `503`. See [ADR-0016](docs/decisions/0016-server-deployment-docker-compose.md).
+`pgdata` volume. For live engine analysis the app auto-downloads Stockfish on
+first start (persist it by mounting a volume at the container's `engines/`), or
+mount your own UCI engine and set `CHESS_BASE_ENGINE`; with nothing available the
+analysis route returns `503`. See
+[ADR-0016](docs/decisions/0016-server-deployment-docker-compose.md).
 
 ## Development
 

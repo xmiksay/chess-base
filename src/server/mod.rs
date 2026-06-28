@@ -17,7 +17,7 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use crate::engine::{EngineRegistry, EngineService};
+use crate::engine::{download_default_engines, EngineRegistry, EngineService};
 
 /// Engines in the pooled facade. One keeps batch + MCP analysis serialized so a
 /// multi-threaded engine isn't oversubscribed against itself on a shared host.
@@ -38,6 +38,25 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
     let registry = EngineRegistry::new(db.clone());
     if let Some(engine) = cfg.engine.clone() {
         registry.seed_default(engine).await?;
+    }
+    // First-run auto-download (ADR 0005 / #11): when enabled and nothing is
+    // configured yet, fetch Stockfish + Maia into the engines dir and register
+    // them in the lowest-priority resolution slot. Best-effort — a download or
+    // checksum failure is logged and the server still starts (just without a
+    // default engine), never panics.
+    if cfg.download_engines && registry.resolve_default().await?.is_none() {
+        match download_default_engines(&cfg.engines_dir).await {
+            Ok(engines) if !engines.is_empty() => {
+                tracing::info!(count = engines.len(), "auto-downloaded engines");
+                if let Err(e) = registry.set_downloaded(&engines).await {
+                    tracing::warn!(error = %e, "could not record auto-downloaded engines");
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "engine auto-download failed; continuing without a default engine")
+            }
+        }
     }
     let default_engine = registry.resolve_default().await?;
 

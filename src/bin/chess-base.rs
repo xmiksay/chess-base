@@ -43,6 +43,14 @@ struct Cli {
     /// Optional neural-net weights file for the engine (Lc0/Maia `WeightsFile`).
     #[arg(long, requires = "engine", env = "CHESS_BASE_ENGINE_WEIGHTS")]
     engine_weights: Option<std::path::PathBuf>,
+
+    /// Directory the engine auto-download manager installs into.
+    #[arg(long, default_value = "engines", env = "CHESS_BASE_ENGINES_DIR")]
+    engines_dir: std::path::PathBuf,
+
+    /// Disable first-run auto-download of Stockfish + Maia.
+    #[arg(long)]
+    no_engine_download: bool,
 }
 
 #[tokio::main]
@@ -87,6 +95,8 @@ async fn main() -> Result<()> {
         open_browser: mode == Mode::Local && !cli.no_open,
         db,
         engine,
+        engines_dir: cli.engines_dir,
+        download_engines: !cli.no_engine_download,
     };
 
     server::serve(cfg).await

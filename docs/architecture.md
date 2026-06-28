@@ -24,7 +24,7 @@ commented PGN studies, and integrates UCI engines.
 | `auth` | Server-mode auth (ADR 0015): `users`/`sessions` tables, Argon2 hashing, transport-agnostic `AuthService` (register/login/logout/authenticate), `/api/auth/*` routes. Inert in local mode | DB |
 | `ingest` | Shared game-ingest path (`ingest_pgn`): parses a PGN, dedups players/event, stores the game, replays the mainline via `position::replay`, and bulk-inserts the `position_index` rows (one per ply, capped by the database's `index_depth`; ADR-0003). One transaction per game; every collector funnels through it | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
-| `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis) and the pooled `service::EngineService` facade — one-shot `analyse` for batch + MCP (ADR 0014) (Stockfish, Lc0/Maia) | process |
+| `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis), the pooled `service::EngineService` facade — one-shot `analyse` for batch + MCP (ADR 0014) — and the `download` auto-download manager (platform catalog → fetch + checksum + register, #11) (Stockfish, Lc0/Maia) | process / HTTP |
 | `ai/llm` | Provider-agnostic LLM client: `LlmProvider` trait + Anthropic Messages API client (ADR 0013); HTTP behind an injectable `Transport` seam | HTTP |
 | `server` | Axum router, app state, request identity, MCP `/mcp` endpoint + its auth (OAuth 2.1 / service token, ADR 0016), engine analysis WebSocket, embedded SPA, browser launch, lifecycle | HTTP |
 
@@ -146,14 +146,35 @@ persists several `EngineConfig`s plus a `default_engine` selector in the key/val
 a launch wrapper (script, `wine`, `docker exec` shim) prepended to the binary, so
 the engine spawns as `<runner> <path> …`. `resolve_default` applies the resolution
 order (first wins): a user-configured registry default → the embedded
-`bundled-stockfish` build → an auto-downloaded binary (#11); the latter two are
-seams returning `None` until those features land. `server/routes/engines.rs`
+`bundled-stockfish` build (still a seam returning `None`) → an auto-downloaded
+binary (#11, persisted under the `downloaded_engines` settings key, kept apart
+from the user-facing `engines` list). `server/routes/engines.rs`
 exposes the CRUD (`GET/POST /api/engines`, `DELETE /api/engines/{name}`,
 `GET/PUT /api/engines/default`); reads are open to any caller, writes are
 admin-gated. `AppState` resolves through `state.engines()` rather than holding an
 engine field; `--engine` / `CHESS_BASE_ENGINE` seeds the registry at startup
 without clobbering a persisted selection. The WebSocket and MCP tools are thin
 callers. The frontend `EnginesSettings.vue` panel (Settings toggle) drives the CRUD.
+
+### Engine auto-download manager (ADR 0005 / #11)
+
+`engine/download.rs` fetches the default engines so the app works out of the box
+without manual paths. `Platform::detect()` reads `std::env::consts` (`os`/`arch`);
+`catalog(platform)` maps it to a `Plan` — the Stockfish binary plus, where Lc0 is
+available, the Lc0 binary and Maia-1100 `.pb.gz` weights (which Lc0 reads natively,
+so no extraction). `Manager<F: Fetch>` installs a plan into the engines dir:
+download → SHA-256 `verify_checksum` (mismatch rejected, nothing installed) →
+temp-file + atomic rename, marking binaries executable on Unix. It is idempotent —
+an asset already on disk with a matching checksum is not re-fetched — and every
+failure is an `Err`, never a panic. The network is the `Fetch` trait seam
+(`HttpFetcher` over `reqwest` in prod; a synthetic fetcher in tests, mirroring the
+LLM `Transport` seam), so no real downloads run in the suite. At startup `serve`
+calls `download_default_engines(engines_dir)` **best-effort** when
+`--no-engine-download` is unset and no engine already resolves, persisting the
+result via `EngineRegistry::set_downloaded`; a failure is logged and the server
+still starts. The engines dir is `--engines-dir` / `CHESS_BASE_ENGINES_DIR`
+(default `engines/`); individual engine paths remain overridable through the
+registry settings.
 
 ### Engine facade — one pool, two consumption paths (ADR 0014)
 

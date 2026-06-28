@@ -18,6 +18,7 @@
 
 pub mod analysis;
 pub mod command;
+pub mod download;
 pub mod manager;
 pub mod registry;
 pub mod service;
@@ -28,6 +29,9 @@ use vampirc_uci::{parse_one, UciMessage};
 
 pub use analysis::{AnalysisEvent, AnalysisInfo, Score};
 pub use command::Limits;
+pub use download::{
+    catalog, download_default_engines, Asset, Fetch, HttpFetcher, Manager, Plan, Platform,
+};
 pub use manager::Engine;
 pub use registry::{resolve, EngineRegistry, RegistryError};
 pub use service::{Analysis, EngineService};
