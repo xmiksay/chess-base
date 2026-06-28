@@ -8,6 +8,7 @@
 pub mod ai;
 pub mod auth;
 pub mod collectors;
+pub mod databases;
 pub mod db;
 pub mod engine;
 pub mod openings;
