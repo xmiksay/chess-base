@@ -18,6 +18,7 @@ async fn whoami(mode: Mode) -> (axum::http::StatusCode, serde_json::Value) {
         db,
         mode,
         engine: None,
+        engine_service: None,
     });
 
     let resp = app

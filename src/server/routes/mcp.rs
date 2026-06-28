@@ -7,6 +7,7 @@
 //! this layer wraps into the MCP content/`isError` envelope. Mirrors the
 //! `site` project's proven pattern; no MCP server crate.
 
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -21,6 +22,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::engine::Limits;
 use crate::server::state::AppState;
 
 const SERVER_NAME: &str = "chess-base";
@@ -139,11 +141,12 @@ impl ToolRegistry {
     }
 }
 
-/// The default registry. A single `echo` stub proves dispatch end-to-end; the
-/// Epic 9 services append their real tools here.
+/// The default registry. An `echo` stub proves dispatch end-to-end; the engine
+/// facade (#27) registers `engine_analyse`. Later Epic 9 services append theirs.
 fn default_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(echo_tool());
+    registry.register(engine_analyse_tool());
     registry
 }
 
@@ -168,6 +171,72 @@ fn echo_tool() -> Tool {
             }
         },
     )
+}
+
+/// Interactive analysis tool. The MCP facade over the pooled [`EngineService`]:
+/// it routes through the **same** `analyse` the batch pipeline calls in-process,
+/// so one engine pool backs both paths.
+///
+/// [`EngineService`]: crate::engine::EngineService
+fn engine_analyse_tool() -> Tool {
+    Tool::new(
+        "engine_analyse",
+        "Analyse a chess position with the configured UCI engine (Stockfish/Lc0). \
+         Returns the evaluation (centipawns or mate), the principal variation and \
+         the best move — use it as ground truth when annotating positions. \
+         Requires the server to be started with an engine configured.",
+        json!({
+            "type": "object",
+            "properties": {
+                "fen": { "type": "string", "description": "Position to analyse, in FEN." },
+                "depth": {
+                    "type": "integer", "minimum": 1,
+                    "description": "Search depth in plies. Defaults to a fixed depth if omitted."
+                },
+                "movetime_ms": {
+                    "type": "integer", "minimum": 1,
+                    "description": "Search time budget in milliseconds (optional)."
+                }
+            },
+            "required": ["fen"]
+        }),
+        |app, args| async move { engine_analyse(app, args).await },
+    )
+}
+
+/// Run the `engine_analyse` tool: validate args, call the pooled service, and
+/// return the [`Analysis`] as pretty JSON. Errors (no engine, bad FEN, engine
+/// failure) come back as `isError` outcomes, never panics.
+///
+/// [`Analysis`]: crate::engine::Analysis
+async fn engine_analyse(app: AppState, args: Value) -> ToolOutcome {
+    let service = match &app.engine_service {
+        Some(service) => service.clone(),
+        None => {
+            return ToolOutcome::error(
+                "No engine configured: start chess-base with --engine / CHESS_BASE_ENGINE.",
+            )
+        }
+    };
+
+    let fen = match args.get("fen").and_then(Value::as_str) {
+        Some(fen) if !fen.trim().is_empty() => fen.to_string(),
+        _ => return ToolOutcome::error("Invalid arguments: missing string field `fen`."),
+    };
+
+    let limits = Limits {
+        depth: args.get("depth").and_then(Value::as_u64).map(|d| d as u32),
+        movetime_ms: args.get("movetime_ms").and_then(Value::as_u64),
+        nodes: None,
+    };
+
+    match service.analyse(&fen, &limits, &BTreeMap::new()).await {
+        Ok(analysis) => match serde_json::to_string_pretty(&analysis) {
+            Ok(text) => ToolOutcome::ok(text),
+            Err(e) => ToolOutcome::error(format!("failed to serialise analysis: {e}")),
+        },
+        Err(e) => ToolOutcome::error(format!("engine analysis failed: {e}")),
+    }
 }
 
 // --- JSON-RPC framing ----------------------------------------------------
@@ -333,6 +402,18 @@ mod tests {
         let tools = list["tools"].as_array().expect("tools array");
         assert!(tools.iter().any(|t| t["name"] == "echo"));
         assert_eq!(list["tools"][0]["inputSchema"]["type"], "object");
+    }
+
+    #[test]
+    fn engine_tool_is_registered_with_fen_input() {
+        let registry = default_registry();
+        let tools = registry.list();
+        let tools = tools["tools"].as_array().expect("tools array");
+        let engine = tools
+            .iter()
+            .find(|t| t["name"] == "engine_analyse")
+            .expect("engine_analyse tool registered");
+        assert_eq!(engine["inputSchema"]["required"][0], "fen");
     }
 
     #[test]
