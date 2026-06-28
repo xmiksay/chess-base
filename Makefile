@@ -29,6 +29,10 @@ frontend: ## Build the Vue SPA into frontend/dist (embedded by the binary)
 build: frontend ## Build the release binary (with embedded frontend)
 	cargo build --release
 
+.PHONY: release
+release: frontend ## Build the locked, self-contained release binary for this host
+	cargo build --release --locked
+
 .PHONY: run
 run: frontend ## Run locally (SQLite, opens a browser)
 	cargo run --

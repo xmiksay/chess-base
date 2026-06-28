@@ -27,12 +27,30 @@ Stockfish) to enable live analysis over the `/api/engine/analyse` WebSocket;
 
 ## Quick start (local)
 
+### Download a release (no toolchain needed)
+
+Grab the archive for your platform from the
+[latest release](https://github.com/xmiksay/chess-base/releases/latest)
+(linux x86_64, macOS arm64/x86_64, Windows x86_64), extract it, and run the
+single self-contained binary — it starts in **local mode**, creates the SQLite
+database, and opens your browser:
+
+```sh
+./chess-base          # Windows: chess-base.exe
+```
+
+### Build from source
+
 ```sh
 # Node 22 (frontend) + Rust toolchain required
 nvm use            # in frontend/, honors frontend/.nvmrc
 make deps          # install frontend deps (first time)
 make run           # builds the SPA, runs locally, opens your browser
+make release       # build the locked, self-contained release binary
 ```
+
+Tagging `vX.Y.Z` runs the [release workflow](.github/workflows/release.yml),
+which builds the SPA, embeds it, and publishes a binary per platform.
 
 ## Development
 
