@@ -24,7 +24,7 @@ commented PGN studies, and integrates UCI engines.
 | `settings` | Transport-agnostic `SettingsService`: per-user UI preferences (theme, board theme, piece set, default database) stored as one JSON blob per user under a `user_settings:{id}` key in the key/value `settings` table — no new entity. Validates the theme value and that `default_database_id` is visible to the caller (own ∪ global). HTTP routes (`settings/routes.rs`, `GET/PUT /api/settings`) are thin callers | DB |
 | `auth` | Server-mode auth (ADR 0015): `users`/`sessions` tables, Argon2 hashing, transport-agnostic `AuthService` (register/login/logout/authenticate), `/api/auth/*` routes. Inert in local mode | DB |
 | `ingest` | Shared game-ingest path (`ingest_pgn`): parses a PGN, dedups players/event, stores the game, replays the mainline via `position::replay`, and bulk-inserts the `position_index` rows (one per ply, capped by the database's `index_depth`; ADR-0003). One transaction per game; every collector funnels through it | DB |
-| `search` | Transport-agnostic `PositionSearchService` (ADR-0003): the headline "find games reaching this position" (`games_with_position`) and the opening tree of aggregated per-continuation stats (`opening_tree`: count + W/D/L), both keyed on the Zobrist `position_index`. Scope follows ownership (own ∪ global) via the denormalized `position_index.database_id`, so no join is needed for scoping. HTTP routes (`search/routes.rs`, `GET /api/search/{tree,games}`) stream rows as NDJSON; thin callers of the service | DB |
+| `search` | Transport-agnostic search services. `PositionSearchService` (ADR-0003): "find games reaching this position" (`games_with_position`) and the opening tree of aggregated per-continuation stats (`opening_tree`: count + W/D/L), both keyed on the Zobrist `position_index`. `HeaderSearchService` (issue #6, `search/headers.rs`): query games by player/color/event/ECO-prefix/date-range/result, keyset-paginated on a stable `(sort, id)` cursor. Both scope to own ∪ global databases via `databases.owner_id`. HTTP routes (`search/routes.rs`): `GET /api/search/{tree,games}` stream NDJSON, `GET /api/search/headers` returns a `{ games, next_cursor }` JSON page; thin callers of the services | DB |
 | `games` | Transport-agnostic `GameService` (issue #68): keyset-paginated `list` of the games in a database (`GameSummary` rows, ordered by id; cursor + clamped `limit`) and single-game `get` (`GameDetail` with PGN movetext + `variant`/`start_fen` for board playback). Visibility follows ownership (own ∪ global). HTTP routes (`games/routes.rs`, `GET /api/games?database_id=…&after=…&limit=…` and `GET /api/games/{id}`) are thin callers | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
 | `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis), the pooled `service::EngineService` facade — one-shot `analyse` for batch + MCP (ADR 0014) — and the `download` auto-download manager (platform catalog → fetch + checksum + register, #11) (Stockfish, Lc0/Maia) | process / HTTP |
@@ -332,6 +332,18 @@ per-continuation stats (occurrence `count` plus W/D/L from the owning game's
 resolves their player names. `server/routes`'s `GET /api/search/tree?fen=…` and
 `GET /api/search/games?fen=…&limit=…` stream the result rows as NDJSON
 (`application/x-ndjson`, one JSON object per line).
+
+`search::HeaderSearchService` (issue #6) is the metadata query side: it filters
+`games` by player (resolved through the `players`/`events` name tables, optionally
+pinned to white/black), ECO prefix, `Date` range, `Result` and event, scoped the
+same way (own ∪ global `databases`). Results are **keyset-paginated** rather than
+`OFFSET`-paginated: each page is ordered by a chosen sort column (`date`, NULLs
+coalesced to `''`, or `id`) plus the unique `id` tiebreaker, and the last row's
+`(sort, id)` key is handed back as an opaque base64url `next_cursor`. The next
+request seeks strictly past that key, so page depth costs nothing — page N+1 is a
+single indexed range scan. `GET /api/search/headers?player=…&color=…&event=…&eco=…
+&date_from=…&date_to=…&result=…&sort=…&dir=…&limit=…&cursor=…` returns one
+`{ games, next_cursor }` JSON page (`next_cursor` is `null` once exhausted).
 
 ## Build & CI
 

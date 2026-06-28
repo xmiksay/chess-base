@@ -14,6 +14,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::search::headers::{HeaderParams, HeaderQuery, HeaderSearchError, HeaderSearchService};
 use crate::search::position::{PositionSearchService, SearchError};
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
@@ -23,6 +24,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/search/tree", get(tree))
         .route("/api/search/games", get(games))
+        .route("/api/search/headers", get(headers))
         .with_state(state)
 }
 
@@ -56,6 +58,22 @@ async fn games(
     ndjson(hits)
 }
 
+/// `GET /api/search/headers?player=…&color=…&event=…&eco=…&date_from=…&date_to=…
+/// &result=…&sort=…&dir=…&limit=…&cursor=…` — keyset-paginated header search. Unlike
+/// the position endpoints this returns a single JSON page `{ games, next_cursor }`
+/// so the opaque cursor travels with its rows.
+async fn headers(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(params): Query<HeaderParams>,
+) -> Result<Response, HeaderSearchError> {
+    let query = HeaderQuery::try_from(params)?;
+    let page = HeaderSearchService::new(state.db.clone())
+        .search(&user, &query)
+        .await?;
+    Ok((StatusCode::OK, Json(page)).into_response())
+}
+
 /// Build an NDJSON streaming response: each item is serialized to its own line
 /// and emitted as a separate body chunk (`application/x-ndjson`).
 fn ndjson<T: Serialize>(items: Vec<T>) -> Result<Response, SearchError> {
@@ -85,6 +103,26 @@ impl IntoResponse for SearchError {
         let status = match &self {
             SearchError::InvalidFen(_) => StatusCode::BAD_REQUEST,
             SearchError::Serialize(_) | SearchError::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let message = match status {
+            StatusCode::INTERNAL_SERVER_ERROR => "internal error".to_string(),
+            _ => self.to_string(),
+        };
+        (status, Json(json!({ "error": message }))).into_response()
+    }
+}
+
+/// Map header-search failures onto HTTP status + a JSON error envelope. Bad
+/// filters / cursors are client errors; DB / serialization faults stay internal.
+impl IntoResponse for HeaderSearchError {
+    fn into_response(self) -> Response {
+        let status = match &self {
+            HeaderSearchError::BadRequest(_) | HeaderSearchError::InvalidCursor => {
+                StatusCode::BAD_REQUEST
+            }
+            HeaderSearchError::Serialize(_) | HeaderSearchError::Db(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         };
         let message = match status {
             StatusCode::INTERNAL_SERVER_ERROR => "internal error".to_string(),
