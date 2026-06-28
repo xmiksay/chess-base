@@ -12,7 +12,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://127.0.0.1:3030',
+      // `ws: true` so the engine-analysis WebSocket (/api/engine/analyse) is
+      // proxied through to the backend in dev, not just plain HTTP requests.
+      '/api': { target: 'http://127.0.0.1:3030', ws: true },
     },
   },
   test: {

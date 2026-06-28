@@ -3,9 +3,16 @@ import { ref, onMounted, watch } from 'vue'
 import { Chessground } from 'chessground'
 import { STARTPOS_FEN, sideToMove } from '../lib/fen.js'
 
+// Presentational board: the parent owns position/legality and supplies the
+// legal-move `dests`; the board emits the user's drag as a `move` event.
 const props = defineProps({
   fen: { type: String, default: STARTPOS_FEN },
+  orientation: { type: String, default: 'white' },
+  dests: { type: Object, default: null }, // Map: from-square → [to-squares]
+  movable: { type: Boolean, default: false },
+  lastMove: { type: Array, default: null }, // [from, to]
 })
+const emit = defineEmits(['move'])
 
 const el = ref(null)
 let cg = null
@@ -15,17 +22,30 @@ function placementFen(fen) {
   return fen.split(/\s+/)[0]
 }
 
-onMounted(() => {
-  cg = Chessground(el.value, {
+function config() {
+  return {
     fen: placementFen(props.fen),
     turnColor: sideToMove(props.fen),
+    orientation: props.orientation,
+    lastMove: props.lastMove || undefined,
     coordinates: true,
-  })
+    movable: {
+      free: false,
+      color: props.movable ? sideToMove(props.fen) : undefined,
+      dests: props.dests || new Map(),
+      events: { after: (from, to) => emit('move', { from, to }) },
+    },
+  }
+}
+
+onMounted(() => {
+  cg = Chessground(el.value, config())
 })
 
 watch(
-  () => props.fen,
-  (fen) => cg && cg.set({ fen: placementFen(fen), turnColor: sideToMove(fen) }),
+  () => [props.fen, props.orientation, props.dests, props.movable, props.lastMove],
+  () => cg && cg.set(config()),
+  { deep: true },
 )
 </script>
 

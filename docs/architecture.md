@@ -36,7 +36,17 @@ client-side move legality via **chess.js**. Built to `frontend/dist` and embedde
 into the binary with `rust-embed` (`src/server/embed.rs`). `build.rs` guarantees
 the folder exists so the crate always compiles even before the SPA is built.
 
-In dev, Vite serves the SPA and proxies `/api` to the backend on `:3030`.
+State lives in two Pinia stores: `stores/game.js` (chess.js-backed position,
+legal-move `dests`, play-vs-engine moves) and `stores/engine.js` (the
+`/api/engine/analyse` WebSocket — folds streamed `info`/`bestmove` events into
+reactive eval/PV state; the socket factory is injectable for tests). The
+WebSocket protocol parsing/formatting is isolated in the pure, unit-tested
+`lib/engineStream.js` (and `lib/pv.js` for UCI→SAN). `components/AnalysisPanel.vue`
+(+ `EvalBar.vue`) renders the eval bar, MultiPV lines, depth/nps, engine options
+and play-vs-engine controls; `Board.vue` is presentational and emits user moves.
+
+In dev, Vite serves the SPA and proxies `/api` (with `ws: true` for the engine
+WebSocket) to the backend on `:3030`.
 
 ## Run modes
 
