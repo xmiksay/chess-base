@@ -105,16 +105,34 @@ only**: it travels in the `x-api-key` header and never reaches the SPA.
 ## Data model
 
 - `settings(key, value)` — app/user key-value settings.
-- `databases(id, owner_id?, name, kind)` — an ownable collection of games.
-  `owner_id IS NULL` ⇒ a **global**, admin-managed database visible to all users;
-  `kind ∈ {lichess, chesscom, master, own}`. Search scope for a user is *their*
-  databases ∪ all global databases.
+- `databases(id, owner_id?, name, kind, index_depth?)` — an ownable collection of
+  games. `owner_id IS NULL` ⇒ a **global**, admin-managed database visible to all
+  users; `kind ∈ {lichess, chesscom, master, own}`. Search scope for a user is
+  *their* databases ∪ all global databases. `index_depth` is the per-DB position-index
+  policy (ADR 0003): `NULL` ⇒ index every ply (the default for own DBs);
+  `Some(n)` ⇒ cap `position_index` to the first `n` plies (`entities::databases::
+  default_index_depth` returns `Some(36)` for `master`).
+- `players(id, name unique)` / `events(id, name unique)` — deduplicated header names.
+- `games(id, database_id, white_player_id?, black_player_id?, event_id?, site?,
+  round?, date?, result?, eco?, white_elo?, black_elo?, variant, start_fen?,
+  ply_count?, pgn?)` — one game with its PGN header roster. `variant` (default
+  `standard`) + nullable `start_fen` make Chess960 / set-up positions first-class
+  (ADR 0010); `date` is verbatim PGN text (may be partial, `1992.??.??`).
+- `position_index(id, zobrist, game_id, ply, move, database_id)` — one row per
+  indexed mainline ply (ADR 0003); indexed on `zobrist` for "find games reaching
+  this position". `database_id` is denormalized so search filters by scope without a
+  join. The Zobrist `u64` is stored as `i64` by a **bit-preserving reinterpret**
+  (`u64 as i64`, reversible — see `entities::position_index::{to_i64, from_i64}`),
+  since neither backend has an unsigned 64-bit integer.
+- `studies(id, database_id, owner_id?, name, tree_json, created_at)` — a named,
+  serialized `pgn_tree::MoveTree` (JSON in `tree_json`); `owner_id IS NULL` mirrors
+  the global-collection rule.
 
-Planned (feature epics): `games` (carrying `variant` + nullable `start_fen` so
-Chess960 / set-up positions are first-class — see ADR 0010), `players`, `events`, a
-**position index** `(zobrist, game_id, ply, move)` for "find games reaching this
-position", `studies` (serialized `MoveTree`), `users`/auth, and MCP/AI-assistant
-tables.
+Indices cover `zobrist`, the games header columns (`database_id`, player/event FKs,
+`date`, `eco`, `result`) and `database_id`/`owner_id` scoping. Migration `m0002_core_schema`
+adds all of the above and runs on both SQLite and Postgres.
+
+Planned (feature epics): `users`/auth and MCP/AI-assistant tables.
 
 ### Position search
 
