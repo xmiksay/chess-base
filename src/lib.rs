@@ -17,6 +17,7 @@ pub mod pgn_tree;
 pub mod plans;
 pub mod position;
 pub mod server;
+pub mod settings;
 pub mod studies;
 
 pub use ingest::{ingest_pgn, Ingested};
