@@ -16,6 +16,7 @@ use sea_orm::{
 pub mod routes;
 
 use crate::db::entities::studies;
+use crate::pgn_tree::pgn::{self, PgnError};
 use crate::pgn_tree::{MoveTree, TreeError};
 use crate::position::{legal_sans, replay, CastlingMode, PositionError, STARTPOS_FEN};
 use crate::server::identity::{assert_admin, scope, CurrentUser};
@@ -46,6 +47,9 @@ pub enum StudyError {
     /// The stored `tree_json` could not be (de)serialized — a corrupt tree.
     #[error("corrupt study tree: {0}")]
     Tree(#[from] serde_json::Error),
+    /// PGN import/export failed (malformed input or an illegal move in it).
+    #[error(transparent)]
+    Pgn(#[from] PgnError),
     /// Replaying the tree to the target node hit an illegal position/move.
     #[error(transparent)]
     Position(#[from] PositionError),
@@ -88,13 +92,50 @@ impl StudyService {
         name: impl Into<String>,
         global: bool,
     ) -> Result<studies::Model, StudyError> {
+        self.insert(user, database_id, name, global, &MoveTree::new())
+            .await
+    }
+
+    /// Import a PGN game as a new study. The first game's mainline, variations,
+    /// comments and NAGs are parsed into a [`MoveTree`] (every SAN validated for
+    /// legality); ownership/`global` follow [`create`](Self::create).
+    pub async fn import_pgn(
+        &self,
+        user: &CurrentUser,
+        database_id: i32,
+        name: impl Into<String>,
+        pgn: &str,
+        global: bool,
+    ) -> Result<studies::Model, StudyError> {
+        let tree = pgn::from_pgn(pgn)?;
+        self.insert(user, database_id, name, global, &tree).await
+    }
+
+    /// Export a study the caller may read as standard PGN movetext (no headers).
+    pub async fn export_pgn(&self, user: &CurrentUser, id: i32) -> Result<String, StudyError> {
+        let study = self.get(user, id).await?;
+        let tree: MoveTree = serde_json::from_str(&study.tree_json)?;
+        Ok(pgn::to_pgn(&tree)?)
+    }
+
+    /// Insert a new study row with the given tree, resolving ownership: `global`
+    /// stores `owner_id NULL` (requires admin), otherwise the caller owns it.
+    /// Shared body of [`create`](Self::create) and [`import_pgn`](Self::import_pgn).
+    async fn insert(
+        &self,
+        user: &CurrentUser,
+        database_id: i32,
+        name: impl Into<String>,
+        global: bool,
+        tree: &MoveTree,
+    ) -> Result<studies::Model, StudyError> {
         let owner_id = if global {
             assert_admin(user).map_err(|_| StudyError::Forbidden)?;
             None
         } else {
             Some(user.id.clone())
         };
-        let tree_json = serde_json::to_string(&MoveTree::new())?;
+        let tree_json = serde_json::to_string(tree)?;
         let model = studies::ActiveModel {
             database_id: Set(database_id),
             owner_id: Set(owner_id),
@@ -124,6 +165,20 @@ impl StudyService {
             .one(&self.db)
             .await?
             .ok_or(StudyError::NotFound)
+    }
+
+    /// Rename a study the caller may write. Returns the updated row.
+    pub async fn rename(
+        &self,
+        user: &CurrentUser,
+        id: i32,
+        name: impl Into<String>,
+    ) -> Result<studies::Model, StudyError> {
+        let study = self.load_writable(user, id).await?;
+        let mut active: studies::ActiveModel = study.into();
+        active.name = Set(name.into());
+        let model = active.update(&self.db).await?;
+        Ok(model)
     }
 
     /// Delete a study the caller may write.

@@ -214,6 +214,74 @@ async fn cannot_write_global_study_unless_admin() {
 }
 
 #[tokio::test]
+async fn rename_updates_name_and_respects_write_guard() {
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+    let bob = user("bob");
+    let study = svc.create(&alice, db_id, "Old name", false).await.unwrap();
+
+    let renamed = svc.rename(&alice, study.id, "New name").await.unwrap();
+    assert_eq!(renamed.name, "New name");
+    assert_eq!(svc.get(&alice, study.id).await.unwrap().name, "New name");
+
+    // Bob may not rename Alice's study; a missing study is a 404.
+    assert!(matches!(
+        svc.rename(&bob, study.id, "Hijacked").await.unwrap_err(),
+        StudyError::Forbidden
+    ));
+    assert!(matches!(
+        svc.rename(&alice, 999, "Ghost").await.unwrap_err(),
+        StudyError::NotFound
+    ));
+}
+
+#[tokio::test]
+async fn pgn_import_export_round_trips() {
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+    let pgn = "1. e4 e5 (1... c5 2. Nf3) 2. Nf3 {develops} *";
+
+    let study = svc
+        .import_pgn(&alice, db_id, "Imported", pgn, false)
+        .await
+        .unwrap();
+    let tree = tree_of(&svc, &alice, study.id).await;
+    assert_eq!(tree.mainline(), vec!["e4", "e5", "Nf3"]);
+
+    // Export, re-import, and confirm the mainline survives the round trip.
+    let exported = svc.export_pgn(&alice, study.id).await.unwrap();
+    let again = svc
+        .import_pgn(&alice, db_id, "Reimported", &exported, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        tree_of(&svc, &alice, again.id).await.mainline(),
+        vec!["e4", "e5", "Nf3"]
+    );
+}
+
+#[tokio::test]
+async fn import_rejects_malformed_pgn_and_illegal_moves() {
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+
+    // An illegal move in otherwise well-formed PGN is a PGN error, not a 500.
+    assert!(matches!(
+        svc.import_pgn(&alice, db_id, "Bad", "1. e4 e4 *", false)
+            .await
+            .unwrap_err(),
+        StudyError::Pgn(_)
+    ));
+    // Empty input has no game.
+    assert!(matches!(
+        svc.import_pgn(&alice, db_id, "Empty", "", false)
+            .await
+            .unwrap_err(),
+        StudyError::Pgn(_)
+    ));
+}
+
+#[tokio::test]
 async fn list_scopes_to_own_plus_global() {
     let (svc, db_id) = setup().await;
     let alice = user("alice");

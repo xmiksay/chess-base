@@ -35,4 +35,18 @@ export const api = {
     setDefault: (name) => send('PUT', '/api/engines/default', { name }),
     remove: (name) => send('DELETE', `/api/engines/${encodeURIComponent(name)}`),
   },
+
+  // Study lifecycle CRUD + PGN import/export (issue #9). `list` returns
+  // summaries; `get` / `create` / `importPgn` / `rename` return the full move tree.
+  studies: {
+    list: () => getJson('/api/studies'),
+    get: (id) => getJson(`/api/studies/${id}`),
+    create: (databaseId, name, global = false) =>
+      send('POST', '/api/studies', { database_id: databaseId, name, global }),
+    importPgn: (databaseId, name, pgn, global = false) =>
+      send('POST', '/api/studies/import', { database_id: databaseId, name, pgn, global }),
+    exportPgn: (id) => getJson(`/api/studies/${id}/export`).then((r) => r.pgn),
+    rename: (id, name) => send('PATCH', `/api/studies/${id}`, { name }),
+    remove: (id) => send('DELETE', `/api/studies/${id}`),
+  },
 }

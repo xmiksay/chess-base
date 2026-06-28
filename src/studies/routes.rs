@@ -1,8 +1,9 @@
-//! HTTP surface for study mutation (issue #18): read a study, add SAN-validated
-//! moves/variations, annotate (comment/NAG) and promote / reorder / delete
-//! variations. Thin callers of [`StudyService`] that translate JSON ⇄ models;
-//! all SAN validation and ownership/admin gating lives in the service (so the
-//! Epic 9 batch annotation pass reuses the same code, per ADR-0009).
+//! HTTP surface for studies: lifecycle CRUD + PGN import/export (issue #9) and
+//! node mutation — add SAN-validated moves/variations, annotate (comment/NAG),
+//! promote / reorder / delete variations (issue #18). Thin callers of
+//! [`StudyService`] that translate JSON ⇄ models; all SAN validation and
+//! ownership/admin gating lives in the service (so the Epic 9 batch annotation
+//! pass reuses the same code, per ADR-0009).
 
 use axum::{
     extract::{Path, State},
@@ -15,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::db::entities::studies;
+use crate::pgn_tree::pgn::PgnError;
 use crate::pgn_tree::MoveTree;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
@@ -24,7 +26,12 @@ use crate::studies::{StudyError, StudyService};
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/studies", get(list).post(create))
-        .route("/api/studies/{id}", get(get_one).delete(delete))
+        .route("/api/studies/import", post(import))
+        .route(
+            "/api/studies/{id}",
+            get(get_one).patch(rename).delete(delete),
+        )
+        .route("/api/studies/{id}/export", get(export))
         .route("/api/studies/{id}/moves", post(add_move))
         .route(
             "/api/studies/{id}/nodes/{node_id}",
@@ -90,6 +97,22 @@ struct CreateBody {
 }
 
 #[derive(Deserialize)]
+struct RenameBody {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct ImportBody {
+    database_id: i32,
+    name: String,
+    /// PGN movetext (first game) to parse into the new study's tree.
+    pgn: String,
+    /// Create a global (admin-owned) study; requires admin. Defaults to false.
+    #[serde(default)]
+    global: bool,
+}
+
+#[derive(Deserialize)]
 struct AddMoveBody {
     /// Node to branch from; the move becomes a child of it (a variation when the
     /// node already has children).
@@ -128,12 +151,44 @@ async fn create(
     Ok((StatusCode::CREATED, Json(StudyView::try_from(model)?)).into_response())
 }
 
+/// Import a PGN game as a new study (`POST /api/studies/import`).
+async fn import(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(body): Json<ImportBody>,
+) -> Result<Response, StudyError> {
+    let model = service(&state)
+        .import_pgn(&user, body.database_id, body.name, &body.pgn, body.global)
+        .await?;
+    Ok((StatusCode::CREATED, Json(StudyView::try_from(model)?)).into_response())
+}
+
 async fn get_one(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(id): Path<i32>,
 ) -> Result<Response, StudyError> {
     let model = service(&state).get(&user, id).await?;
+    Ok((StatusCode::OK, Json(StudyView::try_from(model)?)).into_response())
+}
+
+/// Export a study as PGN movetext (`GET /api/studies/{id}/export`).
+async fn export(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+) -> Result<Response, StudyError> {
+    let pgn = service(&state).export_pgn(&user, id).await?;
+    Ok((StatusCode::OK, Json(json!({ "pgn": pgn }))).into_response())
+}
+
+async fn rename(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+    Json(body): Json<RenameBody>,
+) -> Result<Response, StudyError> {
+    let model = service(&state).rename(&user, id, body.name).await?;
     Ok((StatusCode::OK, Json(StudyView::try_from(model)?)).into_response())
 }
 
@@ -234,6 +289,10 @@ impl IntoResponse for StudyError {
             StudyError::InvalidNode(_)
             | StudyError::IllegalMove { .. }
             | StudyError::InvalidEdit(_) => StatusCode::BAD_REQUEST,
+            // Malformed PGN or an illegal move in submitted PGN is client error;
+            // a missing SAN means our own stored tree is corrupt (500).
+            StudyError::Pgn(PgnError::MissingSan(_)) => StatusCode::INTERNAL_SERVER_ERROR,
+            StudyError::Pgn(_) => StatusCode::BAD_REQUEST,
             StudyError::Tree(_) | StudyError::Position(_) | StudyError::Db(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
