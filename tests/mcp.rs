@@ -29,7 +29,6 @@ async fn rpc_with_engine(
     let app = build_router(AppState {
         db,
         mode: Mode::Local,
-        engine: None,
         engine_service,
     });
 

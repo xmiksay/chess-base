@@ -108,12 +108,29 @@ while process I/O is a thin adapter:
   `AnalysisEvent`s one at a time via `next_event`. Callers own the read loop.
 
 `server/engine_ws.rs` exposes `GET /api/engine/analyse`, an authenticated
-(`CurrentUser`) WebSocket. It spawns the engine configured on `AppState.engine`
-(set from `--engine` / `CHESS_BASE_ENGINE`; absent ⇒ `503`) for the socket's
-lifetime and `select!`s between client control messages
+(`CurrentUser`) WebSocket. It resolves the engine through the registry default
+(or a `?engine=<name>` override; absent/none ⇒ `503`) and spawns it for the
+socket's lifetime, `select!`ing between client control messages
 (`{"type":"analyse",…}` / `{"type":"stop"}`) and streamed engine events, restarting
 cleanly (stop → drain → re-`go`) when a new position arrives mid-search. A real
 engine is integration-tested behind `CHESS_BASE_TEST_ENGINE` (skipped if unset).
+
+### Engine registry — persisted multi-engine config (ADR 0005 amendment)
+
+`engine/registry.rs` adds `EngineRegistry`, a transport-agnostic service that
+persists several `EngineConfig`s plus a `default_engine` selector in the key/value
+`settings` store (no new entity). `EngineConfig` carries an optional `runner` —
+a launch wrapper (script, `wine`, `docker exec` shim) prepended to the binary, so
+the engine spawns as `<runner> <path> …`. `resolve_default` applies the resolution
+order (first wins): a user-configured registry default → the embedded
+`bundled-stockfish` build → an auto-downloaded binary (#11); the latter two are
+seams returning `None` until those features land. `server/routes/engines.rs`
+exposes the CRUD (`GET/POST /api/engines`, `DELETE /api/engines/{name}`,
+`GET/PUT /api/engines/default`); reads are open to any caller, writes are
+admin-gated. `AppState` resolves through `state.engines()` rather than holding an
+engine field; `--engine` / `CHESS_BASE_ENGINE` seeds the registry at startup
+without clobbering a persisted selection. The WebSocket and MCP tools are thin
+callers. The frontend `EnginesSettings.vue` panel (Settings toggle) drives the CRUD.
 
 ### Engine facade — one pool, two consumption paths (ADR 0014)
 
@@ -127,8 +144,8 @@ eval/PV/bestmove). The same pooled service backs **two facades**:
 - the **MCP endpoint** registers an `engine_analyse` tool that routes through the
   *same* `analyse`, for interactive analysis by a connected client.
 
-`AppState.engine_service` holds an `Arc<EngineService>` built from the same
-`EngineConfig` (`None` ⇒ both facades disabled; the MCP tool answers an
+`AppState.engine_service` holds an `Arc<EngineService>` built at startup from the
+registry's resolved default (`None` ⇒ both facades disabled; the MCP tool answers an
 `isError` outcome, batch callers get nothing to call). The pool spawns engines
 lazily, reuses idle ones, and caps live processes with a semaphore. The
 streaming WebSocket keeps its own per-socket engine: it needs incremental `info`

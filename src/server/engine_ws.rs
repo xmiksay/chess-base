@@ -20,7 +20,7 @@ use std::time::Duration;
 use anyhow::Result;
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -64,18 +64,37 @@ enum ServerMsg {
 /// How long to wait for a search to wind down after `stop` before reconfiguring.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// `GET /api/engine/analyse` — upgrade to a WebSocket if an engine is configured.
+/// Optional `?engine=<name>` query selecting a specific registered engine; absent
+/// ⇒ the registry's resolved default drives the search.
+#[derive(Debug, Default, Deserialize)]
+pub struct AnalyseParams {
+    engine: Option<String>,
+}
+
+/// `GET /api/engine/analyse` — upgrade to a WebSocket if an engine resolves.
 /// Gated by [`CurrentUser`] so only an authorized caller can spawn a process.
+/// The engine is the registry default unless `?engine=<name>` overrides it.
 pub async fn analyse(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
+    Query(params): Query<AnalyseParams>,
     _user: CurrentUser,
 ) -> Response {
-    match state.engine.clone() {
-        Some(cfg) => ws.on_upgrade(move |socket| session(socket, cfg)),
-        None => (
+    let registry = state.engines();
+    let resolved = match &params.engine {
+        Some(name) => registry.get(name).await,
+        None => registry.resolve_default().await,
+    };
+    match resolved {
+        Ok(Some(cfg)) => ws.on_upgrade(move |socket| session(socket, cfg)),
+        Ok(None) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            "no engine configured (set --engine / CHESS_BASE_ENGINE)",
+            "no engine configured (add one via /api/engines or --engine)",
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not resolve engine configuration",
         )
             .into_response(),
     }

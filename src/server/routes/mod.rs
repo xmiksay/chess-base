@@ -11,6 +11,7 @@ use serde_json::json;
 
 use crate::server::{embed::Assets, engine_ws, identity::CurrentUser, state::AppState};
 
+mod engines;
 mod mcp;
 
 /// Build the application router.
@@ -23,9 +24,11 @@ pub fn router(state: AppState) -> Router {
         .with_state(state.clone());
 
     // Auth endpoints (register/login/logout) carry their own state; inert in
-    // local mode. The MCP endpoint likewise resolves independently. Merge both.
+    // local mode. The engine-registry and MCP endpoints likewise resolve
+    // independently. Merge them all onto the base API router.
     api.merge(crate::auth::router(state.clone()))
         .merge(crate::databases::routes::router(state.clone()))
+        .merge(engines::router(state.clone()))
         .merge(mcp::router(state))
 }
 

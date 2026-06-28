@@ -17,7 +17,6 @@ async fn server_app() -> Router {
     build_router(AppState {
         db,
         mode: Mode::Server,
-        engine: None,
         engine_service: None,
     })
 }
