@@ -11,6 +11,7 @@ const props = defineProps({
   dests: { type: Object, default: null }, // Map: from-square → [to-squares]
   movable: { type: Boolean, default: false },
   lastMove: { type: Array, default: null }, // [from, to]
+  boardTheme: { type: String, default: 'brown' }, // see style.css `.board-*`
 })
 const emit = defineEmits(['move'])
 
@@ -53,5 +54,6 @@ watch(
   <div
     ref="el"
     class="aspect-square w-full max-w-[480px]"
+    :class="`board-${boardTheme}`"
   />
 </template>

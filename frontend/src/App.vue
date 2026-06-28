@@ -2,11 +2,13 @@
 import { computed, onMounted, ref } from 'vue'
 import Board from './components/Board.vue'
 import AnalysisPanel from './components/AnalysisPanel.vue'
-import EnginesSettings from './components/EnginesSettings.vue'
+import SettingsView from './components/SettingsView.vue'
 import { useGameStore } from './stores/game.js'
+import { useSettingsStore } from './stores/settings.js'
 import { api } from './api.js'
 
 const game = useGameStore()
+const settings = useSettingsStore()
 const backend = ref(null)
 const error = ref(null)
 const showSettings = ref(false)
@@ -21,6 +23,7 @@ function onMove({ from, to }) {
 }
 
 onMounted(async () => {
+  settings.load()
   try {
     backend.value = await api.health()
   } catch (e) {
@@ -52,7 +55,7 @@ onMounted(async () => {
       v-if="showSettings"
       class="mx-auto max-w-5xl p-6"
     >
-      <EnginesSettings />
+      <SettingsView />
     </div>
 
     <main class="mx-auto flex max-w-5xl flex-col gap-6 p-6 md:flex-row">
@@ -62,6 +65,7 @@ onMounted(async () => {
           :orientation="game.orientation"
           :dests="game.legalDests"
           :movable="movable"
+          :board-theme="settings.boardTheme"
           @move="onMove"
         />
         <p

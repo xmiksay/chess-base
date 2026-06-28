@@ -49,4 +49,15 @@ export const api = {
     rename: (id, name) => send('PATCH', `/api/studies/${id}`, { name }),
     remove: (id) => send('DELETE', `/api/studies/${id}`),
   },
+
+  // Ownable databases (issue #6): collections to search/import into.
+  databases: {
+    list: () => getJson('/api/databases'),
+  },
+
+  // Per-user settings (issue #13): theme, board theme, default database.
+  settings: {
+    get: () => getJson('/api/settings'),
+    set: (settings) => send('PUT', '/api/settings', settings),
+  },
 }

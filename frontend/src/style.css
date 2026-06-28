@@ -18,3 +18,29 @@ body {
   width: 100%;
   height: 100%;
 }
+
+/*
+ * Board themes (issue #13). `brown` uses the imported chessground SVG; the
+ * others override the board square colors with a CSS checkerboard gradient
+ * (one tile = two squares = 25% of the board). Applied as `.board-<theme>` on
+ * the board wrapper by Board.vue.
+ */
+.board-blue .cg-board,
+.board-green .cg-board {
+  background-image:
+    linear-gradient(45deg, var(--sq-dark) 25%, transparent 25%, transparent 75%, var(--sq-dark) 75%),
+    linear-gradient(45deg, var(--sq-dark) 25%, var(--sq-light) 25%, var(--sq-light) 75%, var(--sq-dark) 75%);
+  background-size: 25% 25%;
+  background-position: 0 0, 12.5% 12.5%;
+  background-color: var(--sq-light);
+}
+
+.board-blue .cg-board {
+  --sq-light: #dee3e6;
+  --sq-dark: #8ca2ad;
+}
+
+.board-green .cg-board {
+  --sq-light: #eeeed2;
+  --sq-dark: #769656;
+}

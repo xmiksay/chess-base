@@ -21,6 +21,7 @@ commented PGN studies, and integrates UCI engines.
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `databases` | Transport-agnostic `DatabaseService`: collection CRUD (create/list/get/rename/delete) over the `databases` table; `kind ∈ {lichess,chesscom,master,own}`, `index_depth` derived from `kind`. Ownership read scope + write guards (ADR 0007/0011) — global (`owner_id IS NULL`) create/mutate requires admin. HTTP routes (`databases/routes.rs`, `/api/databases`) are thin callers | DB |
 | `studies` | Transport-agnostic `StudyService`: study lifecycle CRUD (`create`/`list`/`get`/`rename`/`delete`) + PGN import/export (`import_pgn`/`export_pgn` via `pgn_tree::pgn`, issue #9) + node-level `MoveTree` mutations (`add_move`/variation SAN-validated via `position::legal_sans`, `annotate`, `promote_variation`/`reorder_variation`/`delete_node`, issue #18); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — both the HTTP routes (`studies/routes.rs`, `/api/studies`) and the scoped MCP study tools (`server/routes/mcp_tools.rs`, issue #17 / ADR-0016) are thin callers | DB |
+| `settings` | Transport-agnostic `SettingsService`: per-user UI preferences (theme, board theme, piece set, default database) stored as one JSON blob per user under a `user_settings:{id}` key in the key/value `settings` table — no new entity. Validates the theme value and that `default_database_id` is visible to the caller (own ∪ global). HTTP routes (`settings/routes.rs`, `GET/PUT /api/settings`) are thin callers | DB |
 | `auth` | Server-mode auth (ADR 0015): `users`/`sessions` tables, Argon2 hashing, transport-agnostic `AuthService` (register/login/logout/authenticate), `/api/auth/*` routes. Inert in local mode | DB |
 | `ingest` | Shared game-ingest path (`ingest_pgn`): parses a PGN, dedups players/event, stores the game, replays the mainline via `position::replay`, and bulk-inserts the `position_index` rows (one per ply, capped by the database's `index_depth`; ADR-0003). One transaction per game; every collector funnels through it | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
@@ -40,10 +41,12 @@ client-side move legality via **chess.js**. Built to `frontend/dist` and embedde
 into the binary with `rust-embed` (`src/server/embed.rs`). `build.rs` guarantees
 the folder exists so the crate always compiles even before the SPA is built.
 
-State lives in two Pinia stores: `stores/game.js` (chess.js-backed position,
-legal-move `dests`, play-vs-engine moves) and `stores/engine.js` (the
+State lives in Pinia stores: `stores/game.js` (chess.js-backed position,
+legal-move `dests`, play-vs-engine moves), `stores/engine.js` (the
 `/api/engine/analyse` WebSocket — folds streamed `info`/`bestmove` events into
-reactive eval/PV state; the socket factory is injectable for tests). The
+reactive eval/PV state; the socket factory is injectable for tests) and
+`stores/settings.js` (per-user UI preferences with a `localStorage` mirror for
+instant load; see "User settings" below). The
 WebSocket protocol parsing/formatting is isolated in the pure, unit-tested
 `lib/engineStream.js` (and `lib/pv.js` for UCI→SAN). `components/AnalysisPanel.vue`
 (+ `EvalBar.vue`) renders the eval bar, MultiPV lines, depth/nps, engine options
@@ -175,6 +178,23 @@ result via `EngineRegistry::set_downloaded`; a failure is logged and the server
 still starts. The engines dir is `--engines-dir` / `CHESS_BASE_ENGINES_DIR`
 (default `engines/`); individual engine paths remain overridable through the
 registry settings.
+
+### User settings — per-user UI preferences (issue #13)
+
+`settings/mod.rs` adds `SettingsService`, a transport-agnostic service that
+persists each user's UI preferences (theme, board theme, piece set, default
+database) as a single JSON blob under a `user_settings:{id}` key in the key/value
+`settings` table (no new entity), so local mode (single implicit admin) and
+server mode (many users) share one storage path. It validates the theme against
+a known set and that `default_database_id` is visible to the caller (own ∪
+global, via the shared `scope` helper); blank string fields normalize to absent.
+`server/routes/settings.rs` exposes `GET/PUT /api/settings` (the caller's own
+settings; gated by the standard identity extractor, so server mode requires
+auth). The frontend `stores/settings.js` Pinia store mirrors the server into
+`localStorage` so the last-known preferences render instantly on load, then
+reconciles with the backend (the source of truth); `components/SettingsView.vue`
+(Settings toggle, which also embeds `EnginesSettings.vue`) drives it, and the
+resolved theme/board theme are applied to the document and `Board.vue`.
 
 ### Engine facade — one pool, two consumption paths (ADR 0014)
 
