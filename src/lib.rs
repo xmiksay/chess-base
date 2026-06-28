@@ -8,10 +8,12 @@
 pub mod collectors;
 pub mod db;
 pub mod engine;
+pub mod openings;
 pub mod pgn_tree;
 pub mod position;
 pub mod server;
 
+pub use openings::{classify_mainline, eco_of_position, opening_of_zobrist, Opening};
 pub use pgn_tree::{MoveTree, Node};
 pub use position::{
     legal_sans, position_from_fen, zobrist_of_fen, CastlingMode, PositionError, STARTPOS_FEN,
