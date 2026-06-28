@@ -5,6 +5,7 @@
 use crate::db::DbConfig;
 use crate::engine::EngineConfig;
 use std::net::IpAddr;
+use std::path::PathBuf;
 
 /// Deployment mode. Local = single-user, embedded SQLite, auto-open browser.
 /// Server = multi-user, Postgres.
@@ -25,4 +26,8 @@ pub struct AppConfig {
     pub db: DbConfig,
     /// Engine the analysis WebSocket spawns, if configured (`--engine` path).
     pub engine: Option<EngineConfig>,
+    /// Directory the auto-download manager installs engines into (#11).
+    pub engines_dir: PathBuf,
+    /// Auto-download Stockfish + Maia on first run when no engine is configured.
+    pub download_engines: bool,
 }

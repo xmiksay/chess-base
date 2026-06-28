@@ -24,6 +24,10 @@ use super::EngineConfig;
 const ENGINES_KEY: &str = "engines";
 /// `settings` key holding the name of the selected default engine.
 const DEFAULT_KEY: &str = "default_engine";
+/// `settings` key holding the JSON array of auto-downloaded engines (#11). Kept
+/// apart from `engines` so the user's explicit list is never polluted by the
+/// download manager, and re-downloading stays idempotent.
+const DOWNLOADED_KEY: &str = "downloaded_engines";
 
 /// Why a registry operation failed. Transport-agnostic — the HTTP / MCP layer
 /// maps each variant onto its own status / error envelope.
@@ -80,8 +84,32 @@ impl EngineRegistry {
         Ok(resolve(
             self.default_entry().await?,
             bundled_engine(),
-            downloaded_engine(),
+            self.downloaded_entry().await?,
         ))
+    }
+
+    /// Every auto-downloaded engine, in catalog order (Stockfish first). Empty
+    /// until the download manager has run.
+    pub async fn downloaded(&self) -> Result<Vec<EngineConfig>, RegistryError> {
+        match self.read(DOWNLOADED_KEY).await? {
+            Some(json) => Ok(serde_json::from_str(&json)?),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Persist the engines the auto-download manager produced. Replaces the whole
+    /// set so it always mirrors what is on disk. Internal startup machinery — no
+    /// admin gate (the operator runs the process).
+    pub async fn set_downloaded(&self, engines: &[EngineConfig]) -> Result<(), RegistryError> {
+        self.write(DOWNLOADED_KEY, serde_json::to_string(engines)?)
+            .await?;
+        Ok(())
+    }
+
+    /// The lowest-priority resolution slot: the first auto-downloaded engine
+    /// (Stockfish), used only when no user or bundled engine is available.
+    async fn downloaded_entry(&self) -> Result<Option<EngineConfig>, RegistryError> {
+        Ok(self.downloaded().await?.into_iter().next())
     }
 
     /// Add or replace an engine (keyed by `name`). Admin-only.
@@ -205,12 +233,6 @@ pub fn resolve(
 /// A seam for the bundled-engine work tracked alongside this issue; until it
 /// lands there is no embedded binary, so this is always `None`.
 fn bundled_engine() -> Option<EngineConfig> {
-    None
-}
-
-/// An engine the auto-download manager (#11) has fetched and registered. A seam
-/// until that manager lands.
-fn downloaded_engine() -> Option<EngineConfig> {
     None
 }
 
@@ -378,6 +400,53 @@ mod tests {
             reg.remove(&plain(), "Stockfish").await.unwrap_err(),
             RegistryError::Forbidden
         ));
+    }
+
+    #[tokio::test]
+    async fn downloaded_engines_resolve_only_as_a_last_resort() {
+        let reg = registry().await;
+        // No engines at all ⇒ nothing resolves.
+        assert!(reg.resolve_default().await.unwrap().is_none());
+
+        // The download manager registers its engines in the dedicated slot.
+        reg.set_downloaded(&[
+            EngineConfig::new("Stockfish", "/engines/stockfish"),
+            EngineConfig::new("Maia 1100", "/engines/lc0").with_weights("/engines/maia-1100.pb.gz"),
+        ])
+        .await
+        .unwrap();
+        assert_eq!(reg.downloaded().await.unwrap().len(), 2);
+
+        // With no user engine, resolution falls back to the first downloaded one.
+        assert_eq!(
+            reg.resolve_default().await.unwrap().unwrap().name,
+            "Stockfish"
+        );
+        // The downloaded set stays out of the user-facing `engines` list.
+        assert!(reg.list().await.unwrap().is_empty());
+
+        // A user-configured engine still wins over the downloaded fallback.
+        reg.upsert(&admin(), EngineConfig::new("MyEngine", "/usr/bin/sf"))
+            .await
+            .unwrap();
+        assert_eq!(
+            reg.resolve_default().await.unwrap().unwrap().name,
+            "MyEngine"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_downloaded_replaces_the_whole_set() {
+        let reg = registry().await;
+        reg.set_downloaded(&[EngineConfig::new("Stockfish", "/old/sf")])
+            .await
+            .unwrap();
+        reg.set_downloaded(&[EngineConfig::new("Stockfish", "/new/sf")])
+            .await
+            .unwrap();
+        let all = reg.downloaded().await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].path, std::path::PathBuf::from("/new/sf"));
     }
 
     #[tokio::test]

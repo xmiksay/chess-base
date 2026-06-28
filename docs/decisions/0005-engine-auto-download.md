@@ -45,3 +45,24 @@ planned MCP tools call. The `runner` field allows an optional launch wrapper
 (e.g. a script, `wine`, `docker exec`) in front of the engine binary.
 
 Tracked by the Epic 5 / Epic 6 issues for the registry and the bundled feature.
+
+## Amendment (2026-06-28) — download manager implemented (#11)
+
+The auto-download manager now exists in `src/engine/download.rs`. `Platform::detect`
+chooses a per-platform `catalog` entry (Stockfish + Lc0/Maia where available);
+`Manager<F: Fetch>` downloads each asset, verifies a published SHA-256 (mismatch
+rejected, nothing installed), installs via temp-file + atomic rename with the
+executable bit on Unix, and is idempotent (a present, checksum-matching file is not
+re-fetched). The HTTP boundary is the `Fetch` trait (`HttpFetcher`/`reqwest` in
+prod, a synthetic fetcher in tests) so no real downloads run in the suite. Results
+persist under a dedicated `downloaded_engines` settings key — separate from the
+user-managed `engines` list — and feed the lowest-priority slot of the existing
+`resolve_default` order. `serve` runs the manager best-effort at startup
+(`--no-engine-download` to disable; `--engines-dir` / `CHESS_BASE_ENGINES_DIR`,
+default `engines/`); download/checksum failures are logged, not fatal.
+
+The `catalog` is the maintained per-platform data surface: it pins upstream
+direct-download URLs and (eventually) checksums. Where upstream ships only an
+archive, hosting a direct binary or adding archive extraction is follow-up
+maintenance; until a checksum is pinned, an asset has `sha256: None` and is
+installed unverified (logged).
