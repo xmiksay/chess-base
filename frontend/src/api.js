@@ -66,6 +66,19 @@ export const api = {
     remove: (id) => send('DELETE', `/api/databases/${id}`),
   },
 
+  // Game list + single-game fetch (issue #68). `list` is keyset-paginated:
+  // pass `{ after }` (the previous page's `next_cursor`) to fetch the next page.
+  // `get` returns the full game including PGN movetext for board playback.
+  games: {
+    list: (databaseId, { after, limit } = {}) => {
+      const params = new URLSearchParams({ database_id: String(databaseId) })
+      if (after != null) params.set('after', String(after))
+      if (limit != null) params.set('limit', String(limit))
+      return getJson(`/api/games?${params}`)
+    },
+    get: (id) => getJson(`/api/games/${id}`),
+  },
+
   // Per-user settings (issue #13): theme, board theme, default database.
   settings: {
     get: () => getJson('/api/settings'),

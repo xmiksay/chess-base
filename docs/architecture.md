@@ -25,6 +25,7 @@ commented PGN studies, and integrates UCI engines.
 | `auth` | Server-mode auth (ADR 0015): `users`/`sessions` tables, Argon2 hashing, transport-agnostic `AuthService` (register/login/logout/authenticate), `/api/auth/*` routes. Inert in local mode | DB |
 | `ingest` | Shared game-ingest path (`ingest_pgn`): parses a PGN, dedups players/event, stores the game, replays the mainline via `position::replay`, and bulk-inserts the `position_index` rows (one per ply, capped by the database's `index_depth`; ADR-0003). One transaction per game; every collector funnels through it | DB |
 | `search` | Transport-agnostic `PositionSearchService` (ADR-0003): the headline "find games reaching this position" (`games_with_position`) and the opening tree of aggregated per-continuation stats (`opening_tree`: count + W/D/L), both keyed on the Zobrist `position_index`. Scope follows ownership (own ∪ global) via the denormalized `position_index.database_id`, so no join is needed for scoping. HTTP routes (`search/routes.rs`, `GET /api/search/{tree,games}`) stream rows as NDJSON; thin callers of the service | DB |
+| `games` | Transport-agnostic `GameService` (issue #68): keyset-paginated `list` of the games in a database (`GameSummary` rows, ordered by id; cursor + clamped `limit`) and single-game `get` (`GameDetail` with PGN movetext + `variant`/`start_fen` for board playback). Visibility follows ownership (own ∪ global). HTTP routes (`games/routes.rs`, `GET /api/games?database_id=…&after=…&limit=…` and `GET /api/games/{id}`) are thin callers | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
 | `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis), the pooled `service::EngineService` facade — one-shot `analyse` for batch + MCP (ADR 0014) — and the `download` auto-download manager (platform catalog → fetch + checksum + register, #11) (Stockfish, Lc0/Maia) | process / HTTP |
 | `ai/llm` | Provider-agnostic LLM client: `LlmProvider` trait + Anthropic Messages API client (ADR 0013); HTTP behind an injectable `Transport` seam | HTTP |
@@ -44,21 +45,26 @@ the folder exists so the crate always compiles even before the SPA is built.
 
 `App.vue` is a thin nav/layout shell around a `<router-view>`; **vue-router**
 (`router/index.js`, HTML5 history) maps each top-level surface to a lazily-loaded
-view in `views/`: `AnalysisView` (`/`, the board + analysis panel) plus stubs for
-`collections`, `games`, `search`, `settings` and `login`. Deep links work because
-the server's `static_handler` falls back to `index.html` for unknown paths
-(`src/server/routes/mod.rs`).
+view in `views/`: `AnalysisView` (`/`, the board + analysis panel) and
+`GamesView` (`/games`, the game browser) plus stubs for `collections`, `search`,
+`settings` and `login`. Deep links work because the server's `static_handler`
+falls back to `index.html` for unknown paths (`src/server/routes/mod.rs`).
 
 State lives in Pinia stores: `stores/game.js` (chess.js-backed position,
-legal-move `dests`, play-vs-engine moves), `stores/engine.js` (the
+legal-move `dests`, play-vs-engine moves), `stores/games.js` (the game browser —
+keyset-paginated list for a selected database plus the opened game's replay state;
+backed by `/api/games`), `stores/engine.js` (the
 `/api/engine/analyse` WebSocket — folds streamed `info`/`bestmove` events into
 reactive eval/PV state; the socket factory is injectable for tests) and
 `stores/settings.js` (per-user UI preferences with a `localStorage` mirror for
 instant load; see "User settings" below). The
 WebSocket protocol parsing/formatting is isolated in the pure, unit-tested
-`lib/engineStream.js` (and `lib/pv.js` for UCI→SAN). `components/AnalysisPanel.vue`
+`lib/engineStream.js` (and `lib/pv.js` for UCI→SAN). Replaying a stored game's
+PGN into one board position per ply, plus the pure ply-navigation logic, lives in
+the unit-tested `lib/pgnViewer.js`. `components/AnalysisPanel.vue`
 (+ `EvalBar.vue`) renders the eval bar, MultiPV lines, depth/nps, engine options
-and play-vs-engine controls; `Board.vue` is presentational and emits user moves.
+and play-vs-engine controls; `Board.vue` is presentational (it also drives the
+read-only game viewer in `GamesView`) and emits user moves.
 
 In dev, Vite serves the SPA and proxies `/api` (with `ws: true` for the engine
 WebSocket) to the backend on `:3030`.
