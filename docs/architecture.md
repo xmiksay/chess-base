@@ -14,7 +14,7 @@ commented PGN studies, and integrates UCI engines.
 
 | Module | Responsibility | I/O |
 |---|---|---|
-| `position` | FEN/SAN parsing, legal moves, Zobrist hashing (shakmaty) | none (pure) |
+| `position` | FEN/SAN/UCI parsing, legal moves, move application & game replay, Zobrist hashing (shakmaty) | none (pure) |
 | `pgn_tree` | Study move-tree: variations, comments, NAGs | none (pure) |
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
