@@ -1,7 +1,8 @@
-//! Integration tests for the study mutation API (issue #18) over the HTTP layer
-//! in server mode: add SAN-validated moves/variations, annotate, promote /
-//! reorder / delete variations, and the ownership rules (own vs global-admin vs
-//! other-user), exercised end-to-end through real auth tokens.
+//! Integration tests for the studies HTTP API in server mode. Issue #9 covers the
+//! lifecycle CRUD and PGN import/export (create/list/rename/delete, round-trip a
+//! study through PGN); issue #18 covers node mutation (add SAN-validated
+//! moves/variations, annotate, promote / reorder / delete). Both exercise the
+//! ownership rules (own vs global-admin vs other-user) through real auth tokens.
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
@@ -341,6 +342,192 @@ async fn ownership_is_enforced_across_users_and_globals() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn lifecycle_crud_and_pgn_round_trip() {
+    let app = server_app().await;
+    let _admin = register(&app, "alice").await; // first user → admin
+    let bob = register(&app, "bob").await;
+    let db_id = make_database(&app, &bob).await;
+
+    // Import a PGN (mainline + variation + comment) into a new study.
+    let pgn = "1. e4 e5 (1... c5 2. Nf3) 2. Nf3 {develops} *";
+    let (status, study) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/import",
+            &bob,
+            json!({"database_id": db_id, "name": "Imported", "pgn": pgn}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let study_id = study["id"].as_i64().unwrap();
+    // root + e4, e5, c5, Nf3 (variation), Nf3 (mainline) = 6 nodes.
+    assert_eq!(study["tree"]["nodes"].as_array().unwrap().len(), 6);
+
+    // It shows up in the listing.
+    let (status, list) = send(&app, get_req("/api/studies", &bob)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list.as_array().unwrap().len(), 1);
+
+    // Rename it.
+    let (status, renamed) = send(
+        &app,
+        json_req(
+            "PATCH",
+            &format!("/api/studies/{study_id}"),
+            &bob,
+            json!({"name": "Ruy Lopez"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(renamed["name"], "Ruy Lopez");
+
+    // Export it and re-import the result: the mainline survives the round trip.
+    let (status, exported) = send(
+        &app,
+        get_req(&format!("/api/studies/{study_id}/export"), &bob),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let pgn_out = exported["pgn"].as_str().unwrap();
+    let (status, reimported) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/import",
+            &bob,
+            json!({"database_id": db_id, "name": "Reimported", "pgn": pgn_out}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let nodes = reimported["tree"]["nodes"].as_array().unwrap();
+    let mainline: Vec<_> = nodes
+        .iter()
+        .filter_map(|n| n["san"].as_str())
+        .filter(|san| ["e4", "e5", "Nf3"].contains(san))
+        .collect();
+    assert!(mainline.contains(&"e4") && mainline.contains(&"Nf3"));
+
+    // Malformed PGN is a client error, not a 500.
+    let (status, _) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/import",
+            &bob,
+            json!({"database_id": db_id, "name": "Bad", "pgn": "1. e4 e4 *"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Delete it.
+    let (status, _) = send(&app, delete_req(&format!("/api/studies/{study_id}"), &bob)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = send(&app, get_req(&format!("/api/studies/{study_id}"), &bob)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn lifecycle_scoping_across_users_and_globals() {
+    let app = server_app().await;
+    let admin = register(&app, "alice").await; // first user → admin
+    let bob = register(&app, "bob").await;
+    let bob_db = make_database(&app, &bob).await;
+
+    // Bob's private study, imported from PGN.
+    let (_, bob_study) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/import",
+            &bob,
+            json!({"database_id": bob_db, "name": "Mine", "pgn": "1. d4 d5 *"}),
+        ),
+    )
+    .await;
+    let bob_study_id = bob_study["id"].as_i64().unwrap();
+
+    // Admin can neither rename, export nor delete Bob's study (invisible → 404).
+    let (status, _) = send(
+        &app,
+        json_req(
+            "PATCH",
+            &format!("/api/studies/{bob_study_id}"),
+            &admin,
+            json!({"name": "Hijack"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = send(
+        &app,
+        get_req(&format!("/api/studies/{bob_study_id}/export"), &admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A non-admin cannot import a global study.
+    let (status, _) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/import",
+            &bob,
+            json!({"database_id": bob_db, "name": "Sneaky", "pgn": "1. e4 *", "global": true}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Bob may read (export) a global study but not rename it.
+    let (_, glob_db) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/databases",
+            &admin,
+            json!({"name": "Masters", "kind": "master", "global": true}),
+        ),
+    )
+    .await;
+    let glob_db_id = glob_db["id"].as_i64().unwrap();
+    let (status, glob_study) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/import",
+            &admin,
+            json!({"database_id": glob_db_id, "name": "Theory", "pgn": "1. c4 *", "global": true}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let glob_study_id = glob_study["id"].as_i64().unwrap();
+
+    let (status, _) = send(
+        &app,
+        get_req(&format!("/api/studies/{glob_study_id}/export"), &bob),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send(
+        &app,
+        json_req(
+            "PATCH",
+            &format!("/api/studies/{glob_study_id}"),
+            &bob,
+            json!({"name": "Bob's"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

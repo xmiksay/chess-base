@@ -19,7 +19,7 @@ commented PGN studies, and integrates UCI engines.
 | `openings` | ECO classification: embedded lichess `chess-openings` dataset → O(1) `zobrist -> (eco, name)` lookup; classifies a game by the longest match along its mainline (`eco_of_position`, `classify_mainline`) | none (pure) |
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `databases` | Transport-agnostic `DatabaseService`: collection CRUD (create/list/get/rename/delete) over the `databases` table; `kind ∈ {lichess,chesscom,master,own}`, `index_depth` derived from `kind`. Ownership read scope + write guards (ADR 0007/0011) — global (`owner_id IS NULL`) create/mutate requires admin. HTTP routes (`databases/routes.rs`, `/api/databases`) are thin callers | DB |
-| `studies` | Transport-agnostic `StudyService`: study CRUD + node-level `MoveTree` mutations (`add_move`/variation SAN-validated via `position::legal_sans`, `annotate`, `promote_variation`/`reorder_variation`/`delete_node`); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — both the HTTP routes (`studies/routes.rs`, `/api/studies`, issue #18) and the scoped MCP study tools (`server/routes/mcp_tools.rs`, issue #17 / ADR-0016) are thin callers | DB |
+| `studies` | Transport-agnostic `StudyService`: study lifecycle CRUD (`create`/`list`/`get`/`rename`/`delete`) + PGN import/export (`import_pgn`/`export_pgn` via `pgn_tree::pgn`, issue #9) + node-level `MoveTree` mutations (`add_move`/variation SAN-validated via `position::legal_sans`, `annotate`, `promote_variation`/`reorder_variation`/`delete_node`, issue #18); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — both the HTTP routes (`studies/routes.rs`, `/api/studies`) and the scoped MCP study tools (`server/routes/mcp_tools.rs`, issue #17 / ADR-0016) are thin callers | DB |
 | `auth` | Server-mode auth (ADR 0015): `users`/`sessions` tables, Argon2 hashing, transport-agnostic `AuthService` (register/login/logout/authenticate), `/api/auth/*` routes. Inert in local mode | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
 | `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis) and the pooled `service::EngineService` facade — one-shot `analyse` for batch + MCP (ADR 0014) (Stockfish, Lc0/Maia) | process |
@@ -267,10 +267,11 @@ See the epics in `.claude/CLAUDE.md`. Each epic is a GitHub milestone; concrete
 features are individual issues. Epic 7 adds an MCP JSON-RPC endpoint (mirroring
 the `site` project's `routes/mcp.rs`) exposing engine/database/interactive-analysis
 tools so an external AI client — or, later, an embedded Claude assistant — can read
-and analyse studies. Study *authoring* (node-level create/annotate/restructure) is
-a separate programmatic REST API (`/api/studies`, issue #18), **not** an MCP tool
-surface, per ADR-0009: the LLM annotates batches that are committed through that
-same `StudyService`, never via runtime MCP mutation.
+and analyse studies. Study *authoring* — lifecycle CRUD + PGN import/export
+(issue #9) and node-level create/annotate/restructure (issue #18) — is a separate
+programmatic REST API (`/api/studies`), **not** an MCP tool surface, per ADR-0009:
+the LLM annotates batches that are committed through that same `StudyService`,
+never via runtime MCP mutation.
 
 **Epic 9 — LLM study generation pipeline** is the AI-studies design proper
 (see [ADR-0009](decisions/0009-llm-study-pipeline.md)): the LLM is an *annotator*,
