@@ -22,6 +22,7 @@ src/
   position.rs      pure: FEN/SAN, legal moves, Zobrist hash (shakmaty)   ← unit-tested
   pgn_tree.rs      pure: study move-tree (variations/comments/NAGs)       ← unit-tested
   openings.rs      pure: ECO classification (embedded lichess dataset)     ← unit-tested
+  plans.rs         pure: engine-PV → per-piece trajectories (ADR 0017)      ← unit-tested
   db/              SeaORM: config (SQLite/Postgres), entities, migrations
   ingest.rs        ingest_pgn: parse PGN → store game → replay → position_index   ← shared by collectors
   collectors/      GameSource trait + Lichess / Chess.com adapters
@@ -34,7 +35,7 @@ src/
 frontend/          Vue 3 + Vite + Pinia + Tailwind v4 + chessground
 ```
 
-**Layering rule:** pure logic (`position`, `pgn_tree`, `openings`) is I/O-free and fully
+**Layering rule:** pure logic (`position`, `pgn_tree`, `openings`, `plans`) is I/O-free and fully
 unit-testable; `db`/`collectors`/`engine`/`server` are thin, DI'd adapters. Keep new
 tool/business logic in transport-agnostic services so HTTP **and** the planned MCP
 endpoint are both thin callers.

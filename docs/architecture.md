@@ -17,6 +17,7 @@ commented PGN studies, and integrates UCI engines.
 | `position` | FEN/SAN/UCI parsing, legal moves, move application & game replay, Zobrist hashing (shakmaty); variant-aware via threaded `CastlingMode` (Standard / Chess960) | none (pure) |
 | `pgn_tree` | Study move-tree: variations, comments, NAGs; `pgn` submodule streams standard PGN ⇄ `MoveTree` (`from_pgn`/`to_pgn`, SAN validated via `position`) | none (pure) |
 | `openings` | ECO classification: embedded lichess `chess-openings` dataset → O(1) `zobrist -> (eco, name)` lookup; classifies a game by the longest match along its mainline (`eco_of_position`, `classify_mainline`) | none (pure) |
+| `plans` | Engine-PV → per-piece trajectories (`plan_from_pv`, ADR 0017): traces only the start FEN's side-to-move, chaining moves by square continuity into `Trajectory{piece,squares}` paths (`g1→f3→g5`); opponent replies applied but not traced; `max_moves`-capped, panic-free | none (pure) |
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `databases` | Transport-agnostic `DatabaseService`: collection CRUD (create/list/get/rename/delete) over the `databases` table; `kind ∈ {lichess,chesscom,master,own}`, `index_depth` derived from `kind`. Ownership read scope + write guards (ADR 0007/0011) — global (`owner_id IS NULL`) create/mutate requires admin. HTTP routes (`databases/routes.rs`, `/api/databases`) are thin callers | DB |
 | `studies` | Transport-agnostic `StudyService`: study CRUD + node-level `MoveTree` mutations (`add_move`/variation SAN-validated via `position::legal_sans`, `annotate`, `promote_variation`/`reorder_variation`/`delete_node`); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — both the HTTP routes (`studies/routes.rs`, `/api/studies`, issue #18) and the scoped MCP study tools (`server/routes/mcp_tools.rs`, issue #17 / ADR-0016) are thin callers | DB |
@@ -27,7 +28,7 @@ commented PGN studies, and integrates UCI engines.
 | `ai/llm` | Provider-agnostic LLM client: `LlmProvider` trait + Anthropic Messages API client (ADR 0013); HTTP behind an injectable `Transport` seam | HTTP |
 | `server` | Axum router, app state, request identity, MCP `/mcp` endpoint + its auth (OAuth 2.1 / service token, ADR 0016), engine analysis WebSocket, embedded SPA, browser launch, lifecycle | HTTP |
 
-The **pure** modules (`position`, `pgn_tree`, `openings`) carry the chess logic and are unit-tested without any
+The **pure** modules (`position`, `pgn_tree`, `openings`, `plans`) carry the chess logic and are unit-tested without any
 runtime. Everything else is a thin adapter with dependencies injected, so the
 business logic stays testable and reusable across transports (HTTP and the MCP
 `/mcp` endpoint).
@@ -174,6 +175,21 @@ streaming WebSocket keeps its own per-socket engine: it needs incremental `info`
 updates and a mid-search `stop`, which the one-shot pool deliberately does not
 model. The event-folding is pure and unit-tested; the live pool and MCP tool are
 integration-tested behind `CHESS_BASE_TEST_ENGINE`.
+
+### Plan trajectories — engine PV → per-piece paths (ADR 0017)
+
+`plans.rs` (pure) turns a streamed principal variation into a **Plan**: the
+*idea* behind a line, drawn as per-piece arrows. `plan_from_pv(start_fen, pv_uci,
+max_moves, mode)` traces **only** the start FEN's side-to-move — opponent replies
+are applied to keep the board legal but never traced — and chains its moves by
+square continuity: a move whose origin is an existing trajectory's current square
+extends it (`g1→f3` then `f3→g5`), else it starts a new path. Captures keep the
+chain; castling traces the king's path (`e1→g1`). `max_moves` caps the side's own
+plies (default 4) for readable arrows, and the function is panic-free — only an
+invalid `start_fen` errors; a truncated or illegal PV returns what it could
+trace. Built on `position` (FEN/UCI parsing), it is unit-tested with no engine.
+The engine WebSocket emission and the future MCP endpoint are thin callers; the
+frontend only renders the `serde`-serialized `Plan`.
 
 ## LLM provider (ADR 0013)
 
