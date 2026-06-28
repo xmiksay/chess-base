@@ -6,7 +6,9 @@
 //!
 //!     CHESS_BASE_TEST_ENGINE=$(which stockfish) cargo test --test engine
 
-use chess_base::engine::{AnalysisEvent, Engine, EngineConfig, Limits};
+use std::collections::BTreeMap;
+
+use chess_base::engine::{AnalysisEvent, Engine, EngineConfig, EngineService, Limits};
 use chess_base::position::STARTPOS_FEN;
 
 fn engine_path() -> Option<String> {
@@ -92,4 +94,33 @@ async fn stop_ends_an_infinite_search() {
     assert!(got_bestmove, "stop should yield a final bestmove");
 
     engine.quit().await.unwrap();
+}
+
+/// The direct in-process facade the batch pipeline uses: `analyse` returns a
+/// flat eval/PV/bestmove with no LLM involvement, and the pool reuses its engine
+/// across calls.
+#[tokio::test]
+async fn service_analyses_a_position_and_reuses_the_pool() {
+    let Some(path) = engine_path() else { return };
+
+    let service = EngineService::new(EngineConfig::new("test", path), 1);
+    let limits = Limits::depth(10);
+    let opts = BTreeMap::new();
+
+    let first = service
+        .analyse(STARTPOS_FEN, &limits, &opts)
+        .await
+        .expect("batch analysis should succeed");
+    assert!(!first.bestmove.is_empty(), "a best move is required");
+    assert!(first.score.is_some(), "expected an evaluation");
+    assert!(first.depth.unwrap_or(0) >= 1, "expected a reported depth");
+
+    // A second call must reuse the pooled engine (no double-spawn) and still work.
+    let second = service
+        .analyse(STARTPOS_FEN, &limits, &opts)
+        .await
+        .expect("reused-engine analysis should succeed");
+    assert!(!second.bestmove.is_empty());
+
+    service.shutdown().await;
 }

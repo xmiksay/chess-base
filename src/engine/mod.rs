@@ -9,13 +9,17 @@
 //!   serializable [`analysis::AnalysisEvent`] streamed to the frontend;
 //! - [`manager`] — the [`manager::Engine`] process manager: spawns a child,
 //!   performs the UCI handshake, configures options, and streams analysis.
+//! - [`service`] — the [`service::EngineService`] pooled facade: one engine pool
+//!   behind a direct `analyse` API (batch) and the MCP `engine_analyse` tool.
 //!
-//! `command` and `analysis` are I/O-free and unit-tested; `manager` is the thin
-//! async adapter, integration-tested behind an engine-path env var.
+//! `command` and `analysis` are I/O-free and unit-tested; `manager` and
+//! `service` are thin async adapters, integration-tested behind an engine-path
+//! env var.
 
 pub mod analysis;
 pub mod command;
 pub mod manager;
+pub mod service;
 
 use std::path::PathBuf;
 use vampirc_uci::{parse_one, UciMessage};
@@ -23,6 +27,7 @@ use vampirc_uci::{parse_one, UciMessage};
 pub use analysis::{AnalysisEvent, AnalysisInfo, Score};
 pub use command::Limits;
 pub use manager::Engine;
+pub use service::{Analysis, EngineService};
 
 /// A configured, runnable engine.
 #[derive(Debug, Clone, PartialEq, Eq)]

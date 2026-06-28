@@ -19,7 +19,7 @@ commented PGN studies, and integrates UCI engines.
 | `openings` | ECO classification: embedded lichess `chess-openings` dataset → O(1) `zobrist -> (eco, name)` lookup; classifies a game by the longest match along its mainline (`eco_of_position`, `classify_mainline`) | none (pure) |
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
-| `engine` | UCI engine config + message parsing (`command`/`analysis` pure) and the `manager::Engine` process manager: spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis (Stockfish, Lc0/Maia) | process |
+| `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis) and the pooled `service::EngineService` facade — one-shot `analyse` for batch + MCP (ADR 0014) (Stockfish, Lc0/Maia) | process |
 | `ai/llm` | Provider-agnostic LLM client: `LlmProvider` trait + Anthropic Messages API client (ADR 0013); HTTP behind an injectable `Transport` seam | HTTP |
 | `server` | Axum router, app state, request identity, MCP `/mcp` endpoint, engine analysis WebSocket, embedded SPA, browser launch, lifecycle | HTTP |
 
@@ -63,8 +63,9 @@ ownership model (ADR 0007) in one place: `scope(owner_col, user)` (the
 `Tool`s (name + JSON input schema + async handler); each handler returns a
 `ToolOutcome` the dispatcher wraps into the MCP `content`/`isError` envelope.
 Unknown method → `-32601`, unknown tool → `-32602`. A built-in `echo` stub
-proves dispatch; the Epic 9 services (engine #27, DB #28, interactive #33)
-register their real tools into the registry.
+proves dispatch; the engine facade registers `engine_analyse` (#27, see ADR
+0014) and the later Epic 9 services (DB #28, interactive #33) register their real
+tools into the registry.
 
 ## Engine analysis (ADR 0012)
 
@@ -87,6 +88,27 @@ lifetime and `select!`s between client control messages
 (`{"type":"analyse",…}` / `{"type":"stop"}`) and streamed engine events, restarting
 cleanly (stop → drain → re-`go`) when a new position arrives mid-search. A real
 engine is integration-tested behind `CHESS_BASE_TEST_ENGINE` (skipped if unset).
+
+### Engine facade — one pool, two consumption paths (ADR 0014)
+
+`engine/service.rs` adds `EngineService`, a small bounded pool over `Engine` with
+one one-shot method, `analyse(fen, limits, options) -> Analysis` (flat
+eval/PV/bestmove). The same pooled service backs **two facades**:
+
+- the **batch pipeline** calls `analyse` directly in-process — the returned
+  eval/PV is plain Rust data and never enters any LLM context (the ADR-0009
+  guard);
+- the **MCP endpoint** registers an `engine_analyse` tool that routes through the
+  *same* `analyse`, for interactive analysis by a connected client.
+
+`AppState.engine_service` holds an `Arc<EngineService>` built from the same
+`EngineConfig` (`None` ⇒ both facades disabled; the MCP tool answers an
+`isError` outcome, batch callers get nothing to call). The pool spawns engines
+lazily, reuses idle ones, and caps live processes with a semaphore. The
+streaming WebSocket keeps its own per-socket engine: it needs incremental `info`
+updates and a mid-search `stop`, which the one-shot pool deliberately does not
+model. The event-folding is pure and unit-tested; the live pool and MCP tool are
+integration-tested behind `CHESS_BASE_TEST_ENGINE`.
 
 ## LLM provider (ADR 0013)
 

@@ -15,6 +15,7 @@ async fn health_endpoint_reports_ok_and_mode() {
         db,
         mode: Mode::Local,
         engine: None,
+        engine_service: None,
     });
 
     let resp = app
