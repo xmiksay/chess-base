@@ -22,6 +22,18 @@ pub struct Node {
     pub children: Vec<usize>,
 }
 
+/// Why a structural edit (promote / reorder / delete) could not be applied.
+/// Pure and transport-agnostic; the study service maps it onto its own error.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TreeError {
+    /// `id` is not a node in this tree.
+    #[error("node {0} not found")]
+    NoSuchNode(usize),
+    /// The root carries no move and cannot be reordered or deleted.
+    #[error("the root node has no parent")]
+    NoParent(usize),
+}
+
 /// An arena-allocated move tree. Node ids are indices into `nodes`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MoveTree {
@@ -111,6 +123,77 @@ impl MoveTree {
         }
         out
     }
+
+    /// Move `id` to position `index` among its siblings (its parent's children).
+    /// Index 0 is the mainline continuation, later indices are variations; the
+    /// index is clamped to the sibling count. Errors if `id` is absent or the
+    /// root (which has no siblings).
+    pub fn reorder(&mut self, id: usize, index: usize) -> Result<(), TreeError> {
+        let parent = self.parent_of(id)?;
+        let children = &mut self.nodes[parent].children;
+        // `parent_of` proved `id` is a child of `parent`, so this never fails.
+        let cur = children
+            .iter()
+            .position(|&c| c == id)
+            .ok_or(TreeError::NoSuchNode(id))?;
+        children.remove(cur);
+        let dest = index.min(children.len());
+        children.insert(dest, id);
+        Ok(())
+    }
+
+    /// Promote a variation to the mainline: move it to the front of its parent's
+    /// child list. Shorthand for `reorder(id, 0)`.
+    pub fn promote(&mut self, id: usize) -> Result<(), TreeError> {
+        self.reorder(id, 0)
+    }
+
+    /// Delete `id` and its whole subtree, detaching it from its parent. Node ids
+    /// are arena indices, so the surviving tree is rebuilt and **reindexed**
+    /// compactly — callers must reload to learn the new ids. Errors if `id` is
+    /// absent or the root.
+    pub fn delete(&mut self, id: usize) -> Result<(), TreeError> {
+        let parent = self.parent_of(id)?;
+        self.nodes[parent].children.retain(|&c| c != id);
+        // The detached subtree is now unreachable from the root, so rebuilding
+        // from the root naturally drops it.
+        self.compact();
+        Ok(())
+    }
+
+    /// The parent of `id`, erroring if `id` is absent (`NoSuchNode`) or the root
+    /// (`NoParent`). Shared precondition check for the structural edits.
+    fn parent_of(&self, id: usize) -> Result<usize, TreeError> {
+        let node = self.nodes.get(id).ok_or(TreeError::NoSuchNode(id))?;
+        node.parent.ok_or(TreeError::NoParent(id))
+    }
+
+    /// Rebuild the arena from the root in preorder, reassigning ids so they stay
+    /// dense indices after a deletion. Any node unreachable from the root is
+    /// dropped.
+    fn compact(&mut self) {
+        fn visit(old: &[Node], old_id: usize, parent: Option<usize>, out: &mut Vec<Node>) {
+            let new_id = out.len();
+            let src = &old[old_id];
+            out.push(Node {
+                id: new_id,
+                parent,
+                san: src.san.clone(),
+                comment: src.comment.clone(),
+                nags: src.nags.clone(),
+                children: Vec::with_capacity(src.children.len()),
+            });
+            for &child in &src.children {
+                let child_id = out.len();
+                out[new_id].children.push(child_id);
+                visit(old, child, Some(new_id), out);
+            }
+        }
+        let mut rebuilt = Vec::with_capacity(self.nodes.len());
+        visit(&self.nodes, self.root, None, &mut rebuilt);
+        self.nodes = rebuilt;
+        self.root = 0;
+    }
 }
 
 #[cfg(test)]
@@ -154,6 +237,74 @@ mod tests {
         t.add_nag(e4, 1);
         t.add_nag(e4, 22);
         assert_eq!(t.nodes[e4].nags, vec![1, 22]);
+    }
+
+    #[test]
+    fn promote_makes_a_variation_the_mainline() {
+        let mut t = MoveTree::new();
+        let e4 = t.add_move(t.root, "e4");
+        let c5 = t.add_move(e4, "c5"); // mainline
+        let e5 = t.add_move(e4, "e5"); // variation
+        assert_eq!(t.mainline(), vec!["e4", "c5"]);
+
+        t.promote(e5).unwrap();
+        assert_eq!(t.mainline(), vec!["e4", "e5"]);
+        assert_eq!(t.nodes[e4].children, vec![e5, c5]);
+    }
+
+    #[test]
+    fn reorder_moves_a_child_and_clamps_the_index() {
+        let mut t = MoveTree::new();
+        let e4 = t.add_move(t.root, "e4");
+        let a = t.add_move(e4, "c5");
+        let b = t.add_move(e4, "e5");
+        let c = t.add_move(e4, "Nf6");
+
+        t.reorder(c, 1).unwrap();
+        assert_eq!(t.nodes[e4].children, vec![a, c, b]);
+
+        // An out-of-range index lands the node last.
+        t.reorder(a, 99).unwrap();
+        assert_eq!(t.nodes[e4].children, vec![c, b, a]);
+    }
+
+    #[test]
+    fn reorder_and_promote_reject_the_root() {
+        let mut t = MoveTree::new();
+        assert_eq!(t.promote(t.root), Err(TreeError::NoParent(0)));
+        assert_eq!(t.reorder(0, 0), Err(TreeError::NoParent(0)));
+        assert_eq!(t.delete(0), Err(TreeError::NoParent(0)));
+        assert_eq!(t.promote(42), Err(TreeError::NoSuchNode(42)));
+    }
+
+    #[test]
+    fn delete_drops_a_subtree_and_reindexes() {
+        let mut t = MoveTree::new();
+        let e4 = t.add_move(t.root, "e4");
+        let c5 = t.add_move(e4, "c5"); // mainline, kept
+        let e5 = t.add_move(e4, "e5"); // variation, deleted with its child
+        let _e5_nf3 = t.add_move(e5, "Nf3");
+        let nf3 = t.add_move(c5, "Nf3");
+        t.set_comment(nf3, "Open Sicilian");
+
+        t.delete(e5).unwrap();
+
+        // The kept line survives with its comment; the dropped subtree is gone.
+        assert_eq!(t.mainline(), vec!["e4", "c5", "Nf3"]);
+        assert_eq!(t.nodes.len(), 4); // root, e4, c5, Nf3
+        assert!(t.nodes.iter().all(|n| n.san.as_deref() != Some("e5")));
+        // Ids are dense indices and self-consistent after the rebuild.
+        for (i, n) in t.nodes.iter().enumerate() {
+            assert_eq!(n.id, i);
+        }
+        assert_eq!(
+            t.nodes
+                .iter()
+                .find(|n| n.comment.is_some())
+                .unwrap()
+                .comment,
+            Some("Open Sicilian".to_string())
+        );
     }
 
     #[test]
