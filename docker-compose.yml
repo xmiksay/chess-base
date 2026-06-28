@@ -1,0 +1,39 @@
+# One-command server deployment: chess-base (server mode) + Postgres.
+#
+#   cp .env.example .env   # then edit the password
+#   docker compose up --build
+#
+# The app runs migrations on startup and is reachable at http://localhost:${APP_PORT}.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # The CLI reads DATABASE_URL (clap `env`); `db` is the compose service host.
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      RUST_LOG: ${RUST_LOG:-info}
+    command: ["--server", "--host", "0.0.0.0", "--port", "3030"]
+    ports:
+      - "${APP_PORT:-3030}:3030"
+
+volumes:
+  pgdata:

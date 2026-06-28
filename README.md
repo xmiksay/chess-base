@@ -55,6 +55,23 @@ make release       # build the locked, self-contained release binary
 Tagging `vX.Y.Z` runs the [release workflow](.github/workflows/release.yml),
 which builds the SPA, embeds it, and publishes a binary per platform.
 
+## Server deployment (Docker + Postgres)
+
+Server mode runs multi-user against Postgres. The repo ships a multi-stage
+`Dockerfile` and a Compose stack (app + Postgres + named volume):
+
+```sh
+cp .env.example .env     # set POSTGRES_PASSWORD (and optionally APP_PORT)
+docker compose up --build
+```
+
+This builds the SPA, compiles the release binary with it embedded, starts
+Postgres, **runs migrations automatically** on startup, and serves the app at
+`http://localhost:${APP_PORT}` (default `3030`). Game data persists in the
+`pgdata` volume. To enable live engine analysis, mount a UCI engine into the
+`app` container and set `CHESS_BASE_ENGINE`; otherwise the analysis route
+returns `503`. See [ADR-0016](docs/decisions/0016-server-deployment-docker-compose.md).
+
 ## Development
 
 ```sh

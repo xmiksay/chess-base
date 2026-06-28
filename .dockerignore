@@ -1,0 +1,21 @@
+# Build artifacts and local state — rebuilt inside the image, never copied in.
+target
+**/*.rs.bk
+*.pdb
+
+frontend/dist
+frontend/node_modules
+frontend/coverage
+
+# Local databases / downloaded engines
+*.db
+*.db-shm
+*.db-wal
+engines
+
+# VCS / env / editor / docs not needed in the image
+.git
+.github
+.env
+.DS_Store
+docs

@@ -218,6 +218,16 @@ key-value store while covering the self-hosted scale we target.
 (`.github/workflows/ci.yml`) builds the frontend, runs frontend tests, then
 rustfmt + clippy (`-D warnings`) + cargo build + tests.
 
+## Deployment
+
+- **Local** ships as a self-contained release binary (ADR 0004): the release
+  workflow embeds the SPA and publishes one binary per desktop platform.
+- **Server** ships as a container (ADR 0016): a multi-stage `Dockerfile` builds
+  the SPA, compiles the release binary with it embedded, and runs it from a slim
+  Debian image. `docker-compose.yml` runs that image against `postgres:16` with a
+  named `pgdata` volume; the app reads `DATABASE_URL`, binds `0.0.0.0:3030`, and
+  runs migrations on startup. Credentials/port come from `.env` (`.env.example`).
+
 ## Roadmap
 
 See the epics in `.claude/CLAUDE.md`. Each epic is a GitHub milestone; concrete
