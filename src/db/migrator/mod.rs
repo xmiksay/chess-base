@@ -6,6 +6,7 @@ use sea_orm_migration::prelude::*;
 mod m0001_init;
 mod m0002_core_schema;
 mod m0003_auth;
+mod m0004_oauth;
 
 pub struct Migrator;
 
@@ -16,6 +17,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0001_init::Migration),
             Box::new(m0002_core_schema::Migration),
             Box::new(m0003_auth::Migration),
+            Box::new(m0004_oauth::Migration),
         ]
     }
 }

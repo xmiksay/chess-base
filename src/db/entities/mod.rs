@@ -7,8 +7,12 @@
 pub mod databases;
 pub mod events;
 pub mod games;
+pub mod oauth_clients;
+pub mod oauth_codes;
+pub mod oauth_tokens;
 pub mod players;
 pub mod position_index;
+pub mod service_tokens;
 pub mod sessions;
 pub mod settings;
 pub mod studies;
