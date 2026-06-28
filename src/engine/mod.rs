@@ -19,25 +19,35 @@
 pub mod analysis;
 pub mod command;
 pub mod manager;
+pub mod registry;
 pub mod service;
 
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use vampirc_uci::{parse_one, UciMessage};
 
 pub use analysis::{AnalysisEvent, AnalysisInfo, Score};
 pub use command::Limits;
 pub use manager::Engine;
+pub use registry::{resolve, EngineRegistry, RegistryError};
 pub use service::{Analysis, EngineService};
 
-/// A configured, runnable engine.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A configured, runnable engine. `Serialize`/`Deserialize` so the
+/// [`EngineRegistry`] can persist a list of these in the `settings` store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EngineConfig {
-    /// Display name, e.g. "Stockfish 16" or "Maia 1100".
+    /// Display name, e.g. "Stockfish 16" or "Maia 1100". Also the registry key.
     pub name: String,
     /// Path to the engine binary.
     pub path: PathBuf,
     /// Optional neural-net weights file (Lc0/Maia `WeightsFile`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weights: Option<PathBuf>,
+    /// Optional launch wrapper prepended to the engine binary (a script,
+    /// `wine`, a `docker exec` shim). When set, the engine is spawned as
+    /// `<runner> <path> …` instead of `<path> …`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<PathBuf>,
 }
 
 impl EngineConfig {
@@ -46,11 +56,17 @@ impl EngineConfig {
             name: name.into(),
             path: path.into(),
             weights: None,
+            runner: None,
         }
     }
 
     pub fn with_weights(mut self, weights: impl Into<PathBuf>) -> Self {
         self.weights = Some(weights.into());
+        self
+    }
+
+    pub fn with_runner(mut self, runner: impl Into<PathBuf>) -> Self {
+        self.runner = Some(runner.into());
         self
     }
 }

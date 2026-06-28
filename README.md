@@ -23,7 +23,10 @@ AI-assisted studies.
 
 Point `--engine <path>` (or `CHESS_BASE_ENGINE`) at a UCI engine binary (e.g.
 Stockfish) to enable live analysis over the `/api/engine/analyse` WebSocket;
-`--engine-weights` supplies an Lc0/Maia net. Without it the route returns `503`.
+`--engine-weights` supplies an Lc0/Maia net. The flag seeds a persisted **engine
+registry**: manage several engines and pick the default from the Settings panel
+or the `/api/engines` API (each engine takes an optional `runner` wrapper, e.g.
+`wine`). With no engine configured the route returns `503`.
 
 ## Quick start (local)
 

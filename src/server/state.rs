@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::http::request::Parts;
 use sea_orm::DatabaseConnection;
 
-use crate::engine::{EngineConfig, EngineService};
+use crate::engine::{EngineRegistry, EngineService};
 use crate::server::config::Mode;
 use crate::server::identity::{AuthError, CurrentUser};
 
@@ -13,13 +13,19 @@ use crate::server::identity::{AuthError, CurrentUser};
 pub struct AppState {
     pub db: DatabaseConnection,
     pub mode: Mode,
-    /// The engine the analysis WebSocket spawns per socket, if one is
-    /// configured. `None` disables `/api/engine/analyse` (it answers `503`).
-    pub engine: Option<EngineConfig>,
     /// Pooled one-shot engine facade backing the batch `analyse` API and the MCP
-    /// `engine_analyse` tool. Built from the same `EngineConfig`; `None` ⇒ those
-    /// paths are disabled.
+    /// `engine_analyse` tool. Built at startup from the registry's resolved
+    /// default; `None` ⇒ those paths are disabled.
     pub engine_service: Option<Arc<EngineService>>,
+}
+
+impl AppState {
+    /// The persisted engine registry over this state's database connection. The
+    /// analysis WebSocket and the engine routes resolve the engine through it,
+    /// so engine selection is never duplicated on `AppState`.
+    pub fn engines(&self) -> EngineRegistry {
+        EngineRegistry::new(self.db.clone())
+    }
 }
 
 impl AppState {

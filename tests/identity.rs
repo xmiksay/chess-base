@@ -17,7 +17,6 @@ async fn whoami(mode: Mode) -> (axum::http::StatusCode, serde_json::Value) {
     let app = build_router(AppState {
         db,
         mode,
-        engine: None,
         engine_service: None,
     });
 

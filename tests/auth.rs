@@ -22,7 +22,6 @@ async fn server_app() -> (Router, sea_orm::DatabaseConnection) {
     let app = build_router(AppState {
         db: db.clone(),
         mode: Mode::Server,
-        engine: None,
         engine_service: None,
     });
     (app, db)
@@ -183,7 +182,6 @@ async fn auth_endpoints_are_disabled_in_local_mode() {
     let app = build_router(AppState {
         db,
         mode: Mode::Local,
-        engine: None,
         engine_service: None,
     });
     let (status, _) = register(&app, "alice", "password123").await;

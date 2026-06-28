@@ -39,7 +39,17 @@ impl Engine {
     /// `uciok`, optional `WeightsFile`, then `isready` → `readyok`). The child is
     /// killed on drop, so a dropped `Engine` never leaks a process.
     pub async fn spawn(config: EngineConfig) -> Result<Self> {
-        let mut child = Command::new(&config.path)
+        // A `runner` (script / `wine` / `docker exec` shim) wraps the binary:
+        // the program becomes the runner and the engine path its first argument.
+        let mut command = match &config.runner {
+            Some(runner) => {
+                let mut c = Command::new(runner);
+                c.arg(&config.path);
+                c
+            }
+            None => Command::new(&config.path),
+        };
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
