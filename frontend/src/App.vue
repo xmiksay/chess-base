@@ -1,34 +1,19 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import Board from './components/Board.vue'
-import AnalysisPanel from './components/AnalysisPanel.vue'
-import SettingsView from './components/SettingsView.vue'
-import { useGameStore } from './stores/game.js'
+import { onMounted } from 'vue'
+import { RouterLink, RouterView } from 'vue-router'
 import { useSettingsStore } from './stores/settings.js'
-import { api } from './api.js'
 
-const game = useGameStore()
 const settings = useSettingsStore()
-const backend = ref(null)
-const error = ref(null)
-const showSettings = ref(false)
 
-// In play mode only the human's side may move (and only while the game is live).
-const movable = computed(() =>
-  game.mode === 'analyse' ? true : game.turnColor === game.playColor && !game.gameOver,
-)
+const navLinks = [
+  { to: '/', label: 'Analysis' },
+  { to: '/collections', label: 'Collections' },
+  { to: '/games', label: 'Games' },
+  { to: '/search', label: 'Search' },
+]
 
-function onMove({ from, to }) {
-  game.playMove({ from, to })
-}
-
-onMounted(async () => {
+onMounted(() => {
   settings.load()
-  try {
-    backend.value = await api.health()
-  } catch (e) {
-    error.value = String(e)
-  }
 })
 </script>
 
@@ -39,46 +24,39 @@ onMounted(async () => {
         <h1 class="text-xl font-semibold">
           chess-base
         </h1>
-        <button
-          class="text-sm text-neutral-600 hover:underline"
-          @click="showSettings = !showSettings"
-        >
-          {{ showSettings ? 'Close settings' : 'Settings' }}
-        </button>
+        <nav class="flex items-center gap-4 text-sm">
+          <RouterLink
+            v-for="link in navLinks"
+            :key="link.to"
+            :to="link.to"
+            class="text-neutral-600 hover:underline"
+            active-class="font-semibold text-neutral-900"
+          >
+            {{ link.label }}
+          </RouterLink>
+          <RouterLink
+            to="/settings"
+            class="text-neutral-600 hover:underline"
+            active-class="font-semibold text-neutral-900"
+          >
+            Settings
+          </RouterLink>
+          <RouterLink
+            to="/login"
+            class="text-neutral-600 hover:underline"
+            active-class="font-semibold text-neutral-900"
+          >
+            Sign in
+          </RouterLink>
+        </nav>
       </div>
       <p class="text-sm text-neutral-500">
         Collect, store, search and study chess games.
       </p>
     </header>
 
-    <div
-      v-if="showSettings"
-      class="mx-auto max-w-5xl p-6"
-    >
-      <SettingsView />
-    </div>
-
-    <main class="mx-auto flex max-w-5xl flex-col gap-6 p-6 md:flex-row">
-      <section>
-        <Board
-          :fen="game.fen"
-          :orientation="game.orientation"
-          :dests="game.legalDests"
-          :movable="movable"
-          :board-theme="settings.boardTheme"
-          @move="onMove"
-        />
-        <p
-          v-if="error"
-          class="mt-2 text-sm text-red-600"
-        >
-          Backend offline: {{ error }}
-        </p>
-      </section>
-
-      <aside class="flex-1">
-        <AnalysisPanel />
-      </aside>
+    <main>
+      <RouterView />
     </main>
   </div>
 </template>

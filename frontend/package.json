@@ -16,7 +16,8 @@
     "chess.js": "^1.0.0",
     "chessground": "^9.1.1",
     "pinia": "^2.2.0",
-    "vue": "^3.5.0"
+    "vue": "^3.5.0",
+    "vue-router": "^4.6.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
