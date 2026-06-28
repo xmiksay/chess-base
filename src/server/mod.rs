@@ -1,5 +1,6 @@
 //! HTTP server: wiring the router, state, embedded SPA and lifecycle.
 
+pub mod auth;
 pub mod browser;
 pub mod config;
 pub mod embed;
@@ -43,7 +44,7 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
     // One pool backs both facades: the direct batch API and the MCP tool.
     let engine_service = default_engine.map(|c| Arc::new(EngineService::new(c, ENGINE_POOL_SIZE)));
     let state = AppState {
-        db,
+        db: db.clone(),
         mode: cfg.mode,
         engine_service,
     };
@@ -56,6 +57,22 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
 
     tracing::info!(%url, ?cfg.mode, "chess-base listening");
     println!("\n  chess-base → {url}\n");
+
+    // Local mode is gated by a printed service token: provision (or reuse) it and
+    // print the line that wires this instance into Claude over the MCP transport.
+    if cfg.mode == Mode::Local {
+        match auth::ensure_local_service_token(&db).await {
+            Ok(token) => {
+                println!("  MCP service token: {token}");
+                println!("  Connect Claude to this instance:");
+                println!(
+                    "    claude mcp add --transport http chess-base {url}mcp \
+                     --header \"Authorization: Bearer {token}\"\n"
+                );
+            }
+            Err(e) => tracing::warn!(error = %e, "could not provision local MCP service token"),
+        }
+    }
 
     if cfg.open_browser {
         browser::open(&url);

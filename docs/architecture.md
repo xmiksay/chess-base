@@ -19,12 +19,12 @@ commented PGN studies, and integrates UCI engines.
 | `openings` | ECO classification: embedded lichess `chess-openings` dataset → O(1) `zobrist -> (eco, name)` lookup; classifies a game by the longest match along its mainline (`eco_of_position`, `classify_mainline`) | none (pure) |
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `databases` | Transport-agnostic `DatabaseService`: collection CRUD (create/list/get/rename/delete) over the `databases` table; `kind ∈ {lichess,chesscom,master,own}`, `index_depth` derived from `kind`. Ownership read scope + write guards (ADR 0007/0011) — global (`owner_id IS NULL`) create/mutate requires admin. HTTP routes (`databases/routes.rs`, `/api/databases`) are thin callers | DB |
-| `studies` | Transport-agnostic `StudyService`: study CRUD + node-level `MoveTree` mutations (`add_move`/variation SAN-validated via `position::legal_sans`, `annotate`, `promote_variation`/`reorder_variation`/`delete_node`); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — HTTP routes (`studies/routes.rs`, `/api/studies`, issue #18) are thin callers; no MCP mutation surface (ADR-0009) | DB |
+| `studies` | Transport-agnostic `StudyService`: study CRUD + node-level `MoveTree` mutations (`add_move`/variation SAN-validated via `position::legal_sans`, `annotate`, `promote_variation`/`reorder_variation`/`delete_node`); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — both the HTTP routes (`studies/routes.rs`, `/api/studies`, issue #18) and the scoped MCP study tools (`server/routes/mcp_tools.rs`, issue #17 / ADR-0016) are thin callers | DB |
 | `auth` | Server-mode auth (ADR 0015): `users`/`sessions` tables, Argon2 hashing, transport-agnostic `AuthService` (register/login/logout/authenticate), `/api/auth/*` routes. Inert in local mode | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
 | `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis) and the pooled `service::EngineService` facade — one-shot `analyse` for batch + MCP (ADR 0014) (Stockfish, Lc0/Maia) | process |
 | `ai/llm` | Provider-agnostic LLM client: `LlmProvider` trait + Anthropic Messages API client (ADR 0013); HTTP behind an injectable `Transport` seam | HTTP |
-| `server` | Axum router, app state, request identity, MCP `/mcp` endpoint, engine analysis WebSocket, embedded SPA, browser launch, lifecycle | HTTP |
+| `server` | Axum router, app state, request identity, MCP `/mcp` endpoint + its auth (OAuth 2.1 / service token, ADR 0016), engine analysis WebSocket, embedded SPA, browser launch, lifecycle | HTTP |
 
 The **pure** modules (`position`, `pgn_tree`, `openings`) carry the chess logic and are unit-tested without any
 runtime. Everything else is a thin adapter with dependencies injected, so the
@@ -88,10 +88,31 @@ service signature changed.
 `tools/call`, and the `notifications/initialized` ack. A `ToolRegistry` holds
 `Tool`s (name + JSON input schema + async handler); each handler returns a
 `ToolOutcome` the dispatcher wraps into the MCP `content`/`isError` envelope.
-Unknown method → `-32601`, unknown tool → `-32602`. A built-in `echo` stub
-proves dispatch; the engine facade registers `engine_analyse` (#27, see ADR
-0014) and the later Epic 9 services (DB #28, interactive #33) register their real
-tools into the registry.
+Unknown method → `-32601`, unknown tool → `-32602`. The tool builders live in
+`server/routes/mcp_tools.rs`: an `echo` stub proves dispatch, the engine facade
+registers `engine_analyse` (#27, see ADR 0014), and the study tools
+(`study_create` / `study_add_move` / `study_annotate`, #17) edit the caller's
+studies through `StudyService`.
+
+Every `/mcp` call is **authenticated** (ADR 0016): `server/auth.rs::authenticate_mcp`
+resolves an OAuth access token then a service token to the one `CurrentUser`, which
+is threaded into each handler so a tool scopes its reads/writes to the caller (the
+study write-guard rejects mutating a non-owned study). A miss returns `401` with
+`WWW-Authenticate: Bearer resource_metadata="…"`.
+
+## MCP auth: OAuth 2.1 + service token (ADR 0016)
+
+`server/routes/oauth.rs` is the OAuth 2.1 authorization server and discovery
+metadata for `/mcp`. claude.ai self-onboards: dynamic client registration
+(`POST /oauth/register`, RFC 7591, public/PKCE-only), the authorization-code grant
+(`GET /oauth/authorize` → `POST /oauth/token`, PKCE **S256**) and the
+`refresh_token` grant, with `/.well-known/oauth-protected-resource` (RFC 9728) and
+`/.well-known/oauth-authorization-server` (RFC 8414) built from the request host.
+`authorize` requires a logged-in server-mode session and **auto-consents** (an
+anonymous request bounces to the SPA login). Local mode skips OAuth: it seeds and
+prints a static **service token** at startup (the `claude mcp add … --header
+"Authorization: Bearer …"` line), reused across restarts. Both grants resolve to a
+`CurrentUser`; authorization is by resource ownership (ADR 0007), not OAuth scopes.
 
 ## Engine analysis (ADR 0012)
 
@@ -197,13 +218,25 @@ only**: it travels in the `x-api-key` header and never reaches the SPA.
   `password_hash` is an Argon2 PHC string.
 - `sessions(token, user_id, created_at, expires_at)` — opaque bearer/cookie tokens
   with a hard expiry; `user_id` FKs `users.id` (cascade delete). Indexed on `user_id`.
+- `service_tokens(token, owner_id, is_admin, label, created_at, expires_at?)` —
+  static MCP bearers (ADR 0016): the local-mode printed token and admin-issued
+  server tokens. `owner_id` lands in the ownership `scope`; `is_admin` carries the
+  role, so a token resolves to a `CurrentUser` without a `users` lookup.
+- `oauth_clients(client_id, client_name, redirect_uris, created_at)` — public,
+  PKCE-only OAuth clients from dynamic registration (RFC 7591). `redirect_uris` is
+  a JSON array.
+- `oauth_codes(code, client_id, user_id, redirect_uri, code_challenge,
+  code_challenge_method, scope, expires_at, used)` — short-lived, single-use
+  authorization codes.
+- `oauth_tokens(access_token, refresh_token, client_id, user_id, scope, created_at,
+  expires_at)` — issued OAuth pairs; the access token is what `authenticate_mcp`
+  checks, the refresh token mints a fresh pair (both rotate on refresh).
 
 Indices cover `zobrist`, the games header columns (`database_id`, player/event FKs,
 `date`, `eco`, `result`) and `database_id`/`owner_id` scoping. Migration `m0002_core_schema`
-adds the core domain; `m0003_auth` adds `users`/`sessions`. All run on both SQLite
-and Postgres.
-
-Planned (feature epics): MCP/AI-assistant tables.
+adds the core domain; `m0003_auth` adds `users`/`sessions`; `m0004_oauth` adds the
+MCP-auth tables (`service_tokens`, `oauth_clients`, `oauth_codes`, `oauth_tokens`).
+All run on both SQLite and Postgres.
 
 ### Position search
 

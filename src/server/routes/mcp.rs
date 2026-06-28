@@ -1,20 +1,20 @@
 //! MCP server: a hand-rolled JSON-RPC 2.0 endpoint at `POST /mcp` (ADR-0008).
 //!
-//! This module is the **transport + dispatch plumbing only**. It owns a
-//! [`ToolRegistry`] that the Epic 9 services (engine facade, DB layer,
-//! interactive analysis) plug their tools into — each tool is a name +
-//! input-schema + async handler. The handler returns a [`ToolOutcome`] which
-//! this layer wraps into the MCP content/`isError` envelope. Mirrors the
-//! `site` project's proven pattern; no MCP server crate.
+//! This module is the **transport + dispatch plumbing**: it authenticates the
+//! caller (ADR-0016), owns a [`ToolRegistry`] that the Epic 9 services plug their
+//! tools into — each tool is a name + input-schema + async handler — and wraps the
+//! handler's [`ToolOutcome`] into the MCP content/`isError` envelope. Every call
+//! is authenticated up front; the resolved [`CurrentUser`] is threaded into each
+//! handler so a tool scopes its reads/writes to the caller (ADR 0007/0011). The
+//! tool builders themselves live in [`super::mcp_tools`].
 
-use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -22,7 +22,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::engine::Limits;
+use crate::server::auth::{authenticate_mcp, BearerChallenge};
+use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 
 const SERVER_NAME: &str = "chess-base";
@@ -33,7 +34,7 @@ const PROTOCOL_VERSION: &str = "2025-03-26";
 pub fn router(app: AppState) -> Router {
     let state = McpState {
         app,
-        registry: Arc::new(default_registry()),
+        registry: Arc::new(super::mcp_tools::default_registry()),
     };
     Router::new().route("/mcp", post(handle)).with_state(state)
 }
@@ -71,9 +72,9 @@ impl ToolOutcome {
     }
 }
 
-/// Boxed async tool handler: `(app state, arguments) -> outcome`.
+/// Boxed async tool handler: `(app state, caller, arguments) -> outcome`.
 type ToolFuture = Pin<Box<dyn Future<Output = ToolOutcome> + Send>>;
-type ToolFn = Arc<dyn Fn(AppState, Value) -> ToolFuture + Send + Sync>;
+type ToolFn = Arc<dyn Fn(AppState, CurrentUser, Value) -> ToolFuture + Send + Sync>;
 
 /// A registered tool: its `tools/list` metadata plus the dispatch handler.
 pub struct Tool {
@@ -85,7 +86,8 @@ pub struct Tool {
 
 impl Tool {
     /// Build a tool from metadata and an async handler closure. The handler
-    /// receives the cloned [`AppState`] and the raw `arguments` object.
+    /// receives the cloned [`AppState`], the resolved [`CurrentUser`], and the raw
+    /// `arguments` object.
     pub fn new<F, Fut>(
         name: &'static str,
         description: &'static str,
@@ -93,14 +95,14 @@ impl Tool {
         handler: F,
     ) -> Self
     where
-        F: Fn(AppState, Value) -> Fut + Send + Sync + 'static,
+        F: Fn(AppState, CurrentUser, Value) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ToolOutcome> + Send + 'static,
     {
         Self {
             name,
             description,
             input_schema,
-            handler: Arc::new(move |state, args| Box::pin(handler(state, args))),
+            handler: Arc::new(move |state, user, args| Box::pin(handler(state, user, args))),
         }
     }
 }
@@ -125,7 +127,7 @@ impl ToolRegistry {
     }
 
     /// The `tools/list` payload: `[{ name, description, inputSchema }]`.
-    fn list(&self) -> Value {
+    pub fn list(&self) -> Value {
         let tools: Vec<Value> = self
             .tools
             .iter()
@@ -138,104 +140,6 @@ impl ToolRegistry {
             })
             .collect();
         json!({ "tools": tools })
-    }
-}
-
-/// The default registry. An `echo` stub proves dispatch end-to-end; the engine
-/// facade (#27) registers `engine_analyse`. Later Epic 9 services append theirs.
-fn default_registry() -> ToolRegistry {
-    let mut registry = ToolRegistry::new();
-    registry.register(echo_tool());
-    registry.register(engine_analyse_tool());
-    registry
-}
-
-/// Stub tool: echoes its `text` argument back. Proves the full
-/// initialize → tools/list → tools/call path without any Epic 9 dependency.
-fn echo_tool() -> Tool {
-    Tool::new(
-        "echo",
-        "Echo the provided text back. A connectivity/diagnostic stub; \
-         the real engine and database tools are registered by Epic 9.",
-        json!({
-            "type": "object",
-            "properties": {
-                "text": { "type": "string", "description": "Text to echo back." }
-            },
-            "required": ["text"]
-        }),
-        |_app, args| async move {
-            match args.get("text").and_then(Value::as_str) {
-                Some(text) => ToolOutcome::ok(text.to_string()),
-                None => ToolOutcome::error("Invalid arguments: missing string field `text`"),
-            }
-        },
-    )
-}
-
-/// Interactive analysis tool. The MCP facade over the pooled [`EngineService`]:
-/// it routes through the **same** `analyse` the batch pipeline calls in-process,
-/// so one engine pool backs both paths.
-///
-/// [`EngineService`]: crate::engine::EngineService
-fn engine_analyse_tool() -> Tool {
-    Tool::new(
-        "engine_analyse",
-        "Analyse a chess position with the configured UCI engine (Stockfish/Lc0). \
-         Returns the evaluation (centipawns or mate), the principal variation and \
-         the best move — use it as ground truth when annotating positions. \
-         Requires the server to be started with an engine configured.",
-        json!({
-            "type": "object",
-            "properties": {
-                "fen": { "type": "string", "description": "Position to analyse, in FEN." },
-                "depth": {
-                    "type": "integer", "minimum": 1,
-                    "description": "Search depth in plies. Defaults to a fixed depth if omitted."
-                },
-                "movetime_ms": {
-                    "type": "integer", "minimum": 1,
-                    "description": "Search time budget in milliseconds (optional)."
-                }
-            },
-            "required": ["fen"]
-        }),
-        |app, args| async move { engine_analyse(app, args).await },
-    )
-}
-
-/// Run the `engine_analyse` tool: validate args, call the pooled service, and
-/// return the [`Analysis`] as pretty JSON. Errors (no engine, bad FEN, engine
-/// failure) come back as `isError` outcomes, never panics.
-///
-/// [`Analysis`]: crate::engine::Analysis
-async fn engine_analyse(app: AppState, args: Value) -> ToolOutcome {
-    let service = match &app.engine_service {
-        Some(service) => service.clone(),
-        None => {
-            return ToolOutcome::error(
-                "No engine configured: start chess-base with --engine / CHESS_BASE_ENGINE.",
-            )
-        }
-    };
-
-    let fen = match args.get("fen").and_then(Value::as_str) {
-        Some(fen) if !fen.trim().is_empty() => fen.to_string(),
-        _ => return ToolOutcome::error("Invalid arguments: missing string field `fen`."),
-    };
-
-    let limits = Limits {
-        depth: args.get("depth").and_then(Value::as_u64).map(|d| d as u32),
-        movetime_ms: args.get("movetime_ms").and_then(Value::as_u64),
-        nodes: None,
-    };
-
-    match service.analyse(&fen, &limits, &BTreeMap::new()).await {
-        Ok(analysis) => match serde_json::to_string_pretty(&analysis) {
-            Ok(text) => ToolOutcome::ok(text),
-            Err(e) => ToolOutcome::error(format!("failed to serialise analysis: {e}")),
-        },
-        Err(e) => ToolOutcome::error(format!("engine analysis failed: {e}")),
     }
 }
 
@@ -294,7 +198,19 @@ impl JsonRpcResponse {
 
 // --- Dispatch ------------------------------------------------------------
 
-async fn handle(State(state): State<McpState>, Json(req): Json<JsonRpcRequest>) -> Response {
+async fn handle(
+    State(state): State<McpState>,
+    headers: HeaderMap,
+    Json(req): Json<JsonRpcRequest>,
+) -> Response {
+    // Every `/mcp` call is authenticated; an OAuth access token or a service
+    // token resolves the caller, otherwise a 401 + bearer challenge points the
+    // client at OAuth discovery.
+    let user = match authenticate_mcp(&state.app, &headers).await {
+        Ok(user) => user,
+        Err(challenge) => return unauthorized(challenge),
+    };
+
     // `notifications/initialized` is a fire-and-forget notification (no id);
     // acknowledge with 202 and an empty body per the MCP HTTP transport.
     if req.method == "notifications/initialized" {
@@ -304,11 +220,23 @@ async fn handle(State(state): State<McpState>, Json(req): Json<JsonRpcRequest>) 
     let resp = match req.method.as_str() {
         "initialize" => JsonRpcResponse::success(req.id, initialize_result()),
         "tools/list" => JsonRpcResponse::success(req.id, state.registry.list()),
-        "tools/call" => tools_call(&state, req.id, req.params).await,
+        "tools/call" => tools_call(&state, &user, req.id, req.params).await,
         other => JsonRpcResponse::error(req.id, -32601, format!("Method not found: {other}")),
     };
 
     (StatusCode::OK, Json(resp)).into_response()
+}
+
+/// Build the `401` response carrying the `WWW-Authenticate` bearer challenge.
+fn unauthorized(challenge: BearerChallenge) -> Response {
+    let body = Json(JsonRpcResponse::error(None, -32000, "Unauthorized"));
+    let mut response: Response = (StatusCode::UNAUTHORIZED, body).into_response();
+    if let Ok(value) = HeaderValue::from_str(&challenge.www_authenticate) {
+        response
+            .headers_mut()
+            .insert(header::WWW_AUTHENTICATE, value);
+    }
+    response
 }
 
 fn initialize_result() -> Value {
@@ -323,7 +251,12 @@ fn initialize_result() -> Value {
     })
 }
 
-async fn tools_call(state: &McpState, id: Option<Value>, params: Option<Value>) -> JsonRpcResponse {
+async fn tools_call(
+    state: &McpState,
+    user: &CurrentUser,
+    id: Option<Value>,
+    params: Option<Value>,
+) -> JsonRpcResponse {
     let params = match params {
         Some(p) => p,
         None => return JsonRpcResponse::error(id, -32602, "Missing params"),
@@ -340,7 +273,7 @@ async fn tools_call(state: &McpState, id: Option<Value>, params: Option<Value>) 
         None => return JsonRpcResponse::error(id, -32602, format!("Unknown tool: {name}")),
     };
 
-    let outcome = (tool.handler)(state.app.clone(), arguments).await;
+    let outcome = (tool.handler)(state.app.clone(), user.clone(), arguments).await;
     JsonRpcResponse::success(id, tool_envelope(outcome))
 }
 
@@ -373,11 +306,9 @@ over JSON-RPC; the available tools depend on what is registered (call \
   principal variation) to use as ground truth when annotating.
 - **Database** — search the caller's databases and the global ones by game \
   header or by position (64-bit Zobrist hash), and read individual games.
-- **Interactive analysis** — walk a study move-tree, play moves, and inspect \
-  resulting positions.
-
-Study *mutation* (creating/annotating studies) is a separate programmatic API, \
-not an MCP tool.
+- **Studies** — create studies and edit their move-trees (add moves, annotate). \
+  Every edit is scoped to the authenticated caller: you may only mutate your own \
+  studies (global studies require admin).
 
 ## Board directives
 
@@ -394,32 +325,6 @@ rather than asserting them unverified.
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn registry_lists_registered_tools() {
-        let registry = default_registry();
-        let list = registry.list();
-        let tools = list["tools"].as_array().expect("tools array");
-        assert!(tools.iter().any(|t| t["name"] == "echo"));
-        assert_eq!(list["tools"][0]["inputSchema"]["type"], "object");
-    }
-
-    #[test]
-    fn engine_tool_is_registered_with_fen_input() {
-        let registry = default_registry();
-        let tools = registry.list();
-        let tools = tools["tools"].as_array().expect("tools array");
-        let engine = tools
-            .iter()
-            .find(|t| t["name"] == "engine_analyse")
-            .expect("engine_analyse tool registered");
-        assert_eq!(engine["inputSchema"]["required"][0], "fen");
-    }
-
-    #[test]
-    fn unknown_tool_is_none() {
-        assert!(default_registry().find("nope").is_none());
-    }
 
     #[test]
     fn error_outcome_sets_is_error_flag() {

@@ -13,6 +13,8 @@ use crate::server::{embed::Assets, engine_ws, identity::CurrentUser, state::AppS
 
 mod engines;
 mod mcp;
+mod mcp_tools;
+mod oauth;
 
 /// Build the application router.
 pub fn router(state: AppState) -> Router {
@@ -30,6 +32,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::databases::routes::router(state.clone()))
         .merge(engines::router(state.clone()))
         .merge(crate::studies::routes::router(state.clone()))
+        .merge(oauth::router(state.clone()))
         .merge(mcp::router(state))
 }
 

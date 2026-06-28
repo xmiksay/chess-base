@@ -27,7 +27,8 @@ src/
   engine.rs        UCI engine config + parsing (Stockfish, Lc0/Maia)
   ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
   auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
-  server/          Axum app: routes, state, embedded SPA, browser launch
+  server/          Axum app: routes, state, embedded SPA, browser launch,
+                   MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016)
   bin/chess-base.rs  CLI entry (clap)
 frontend/          Vue 3 + Vite + Pinia + Tailwind v4 + chessground
 ```
