@@ -13,8 +13,10 @@ use sea_orm::{
     ActiveModelTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder, Set,
 };
 
+pub mod routes;
+
 use crate::db::entities::studies;
-use crate::pgn_tree::MoveTree;
+use crate::pgn_tree::{MoveTree, TreeError};
 use crate::position::{legal_sans, replay, CastlingMode, PositionError, STARTPOS_FEN};
 use crate::server::identity::{assert_admin, scope, CurrentUser};
 
@@ -35,6 +37,9 @@ pub enum StudyError {
     /// `node_id` is not a node in the study's tree.
     #[error("node {0} not found in study")]
     InvalidNode(usize),
+    /// A structural edit was rejected (e.g. reordering or deleting the root).
+    #[error("{0}")]
+    InvalidEdit(String),
     /// `san` is not a legal move in the position at the target node.
     #[error("illegal move '{san}' in position {fen}")]
     IllegalMove { san: String, fen: String },
@@ -47,6 +52,18 @@ pub enum StudyError {
     /// Underlying database error (never surfaced verbatim to clients).
     #[error(transparent)]
     Db(#[from] DbErr),
+}
+
+/// Map a pure tree edit failure onto the transport-agnostic study error: a
+/// missing node is a `404`-style `InvalidNode`, a rootless edit a `400`-style
+/// `InvalidEdit`.
+impl From<TreeError> for StudyError {
+    fn from(err: TreeError) -> Self {
+        match err {
+            TreeError::NoSuchNode(id) => StudyError::InvalidNode(id),
+            TreeError::NoParent(_) => StudyError::InvalidEdit(err.to_string()),
+        }
+    }
 }
 
 /// Study CRUD + move-tree edits over the `studies` table. Holds a connection
@@ -169,6 +186,58 @@ impl StudyService {
         if let Some(nag) = nag {
             tree.add_nag(node_id, nag);
         }
+        self.persist(study, &tree).await?;
+        Ok(())
+    }
+
+    /// Promote a variation to the mainline (move it to the front of its parent's
+    /// children) on a study the caller may write.
+    pub async fn promote_variation(
+        &self,
+        user: &CurrentUser,
+        study_id: i32,
+        node_id: usize,
+    ) -> Result<(), StudyError> {
+        self.edit_tree(user, study_id, |tree| tree.promote(node_id))
+            .await
+    }
+
+    /// Reorder a node among its siblings, moving it to `index` (0 = mainline) in
+    /// its parent's child list, on a study the caller may write.
+    pub async fn reorder_variation(
+        &self,
+        user: &CurrentUser,
+        study_id: i32,
+        node_id: usize,
+        index: usize,
+    ) -> Result<(), StudyError> {
+        self.edit_tree(user, study_id, |tree| tree.reorder(node_id, index))
+            .await
+    }
+
+    /// Delete a node and its whole subtree on a study the caller may write. The
+    /// surviving tree is reindexed, so callers should reload it afterwards.
+    pub async fn delete_node(
+        &self,
+        user: &CurrentUser,
+        study_id: i32,
+        node_id: usize,
+    ) -> Result<(), StudyError> {
+        self.edit_tree(user, study_id, |tree| tree.delete(node_id))
+            .await
+    }
+
+    /// Load a writable study, deserialize its tree, apply a structural edit, and
+    /// persist it. The shared body of the promote / reorder / delete operations.
+    async fn edit_tree(
+        &self,
+        user: &CurrentUser,
+        study_id: i32,
+        edit: impl FnOnce(&mut MoveTree) -> Result<(), TreeError>,
+    ) -> Result<(), StudyError> {
+        let study = self.load_writable(user, study_id).await?;
+        let mut tree: MoveTree = serde_json::from_str(&study.tree_json)?;
+        edit(&mut tree)?;
         self.persist(study, &tree).await?;
         Ok(())
     }

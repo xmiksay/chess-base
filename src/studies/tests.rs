@@ -14,6 +14,11 @@ fn user(id: &str) -> CurrentUser {
     }
 }
 
+/// Deserialize a study's current move tree.
+async fn tree_of(svc: &StudyService, user: &CurrentUser, id: i32) -> MoveTree {
+    serde_json::from_str(&svc.get(user, id).await.unwrap().tree_json).unwrap()
+}
+
 /// Connect to a fresh in-memory DB, seed one database row, return the service
 /// and that database's id.
 async fn setup() -> (StudyService, i32) {
@@ -93,6 +98,50 @@ async fn annotate_persists_comment_and_nag() {
 }
 
 #[tokio::test]
+async fn promote_reorder_and_delete_restructure_the_tree() {
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+    let study = svc.create(&alice, db_id, "Lines", false).await.unwrap();
+
+    // e4 with two replies: c5 (mainline) and e5 (variation).
+    let e4 = svc.add_move(&alice, study.id, 0, "e4").await.unwrap();
+    let _c5 = svc.add_move(&alice, study.id, e4, "c5").await.unwrap();
+    let e5 = svc.add_move(&alice, study.id, e4, "e5").await.unwrap();
+
+    // Promote the variation: e5 becomes the mainline reply.
+    svc.promote_variation(&alice, study.id, e5).await.unwrap();
+    assert_eq!(
+        tree_of(&svc, &alice, study.id).await.mainline(),
+        ["e4", "e5"]
+    );
+
+    // Reorder it back to second place: c5 is the mainline again.
+    svc.reorder_variation(&alice, study.id, e5, 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        tree_of(&svc, &alice, study.id).await.mainline(),
+        ["e4", "c5"]
+    );
+
+    // Deleting e4 prunes the whole tree back to the root.
+    svc.delete_node(&alice, study.id, e4).await.unwrap();
+    assert!(tree_of(&svc, &alice, study.id).await.mainline().is_empty());
+
+    // Structural edits on the root are rejected as bad edits, not 500s.
+    assert!(matches!(
+        svc.delete_node(&alice, study.id, 0).await.unwrap_err(),
+        StudyError::InvalidEdit(_)
+    ));
+    assert!(matches!(
+        svc.promote_variation(&alice, study.id, 99)
+            .await
+            .unwrap_err(),
+        StudyError::InvalidNode(99)
+    ));
+}
+
+#[tokio::test]
 async fn cannot_mutate_another_users_study() {
     let (svc, db_id) = setup().await;
     let alice = user("alice");
@@ -108,6 +157,20 @@ async fn cannot_mutate_another_users_study() {
         svc.annotate(&bob, study.id, 0, Some("x".into()), None)
             .await
             .unwrap_err(),
+        StudyError::Forbidden
+    ));
+    assert!(matches!(
+        svc.promote_variation(&bob, study.id, 0).await.unwrap_err(),
+        StudyError::Forbidden
+    ));
+    assert!(matches!(
+        svc.reorder_variation(&bob, study.id, 0, 0)
+            .await
+            .unwrap_err(),
+        StudyError::Forbidden
+    ));
+    assert!(matches!(
+        svc.delete_node(&bob, study.id, 0).await.unwrap_err(),
         StudyError::Forbidden
     ));
     assert!(matches!(
