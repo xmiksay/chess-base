@@ -24,7 +24,7 @@ commented PGN studies, and integrates UCI engines.
 | `settings` | Transport-agnostic `SettingsService`: per-user UI preferences (theme, board theme, piece set, default database) stored as one JSON blob per user under a `user_settings:{id}` key in the key/value `settings` table — no new entity. Validates the theme value and that `default_database_id` is visible to the caller (own ∪ global). HTTP routes (`settings/routes.rs`, `GET/PUT /api/settings`) are thin callers | DB |
 | `auth` | Server-mode auth (ADR 0015): `users`/`sessions` tables, Argon2 hashing, transport-agnostic `AuthService` (register/login/logout/authenticate), `/api/auth/*` routes. Inert in local mode | DB |
 | `ingest` | Shared game-ingest path (`ingest_pgn`): parses a PGN, dedups players/event, stores the game, replays the mainline via `position::replay`, and bulk-inserts the `position_index` rows (one per ply, capped by the database's `index_depth`; ADR-0003). One transaction per game; every collector funnels through it | DB |
-| `search` | Transport-agnostic search services. `PositionSearchService` (ADR-0003): "find games reaching this position" (`games_with_position`) and the opening tree of aggregated per-continuation stats (`opening_tree`: count + W/D/L), both keyed on the Zobrist `position_index`. `HeaderSearchService` (issue #6, `search/headers.rs`): query games by player/color/event/ECO-prefix/date-range/result, keyset-paginated on a stable `(sort, id)` cursor. Both scope to own ∪ global databases via `databases.owner_id`. The `report` submodule (`PositionReportService`, #28) layers the **pre-chewed** query surface on top of position search — reusing `opening_tree`/`games_with_position` and adding ECO (`openings`), per-move frequency/score and transpositions (distinct move orders reaching a Zobrist) — exposed as internal batch functions and the MCP DB tools. HTTP routes (`search/routes.rs`): `GET /api/search/{tree,games}` stream NDJSON, `GET /api/search/headers` returns a `{ games, next_cursor }` JSON page; thin callers of the services | DB |
+| `search` | Transport-agnostic search services. `PositionSearchService` (ADR-0003): "find games reaching this position" (`games_with_position`) and the opening tree of aggregated per-continuation stats (`opening_tree`: count + W/D/L), both keyed on the Zobrist `position_index`. `HeaderSearchService` (issue #6, `search/headers.rs`): query games by player/color/event/ECO-prefix/date-range/result, keyset-paginated on a stable `(sort, id)` cursor. Both scope to own ∪ global databases via `databases.owner_id`. The `report` submodule (`PositionReportService`, #28) layers the **pre-chewed** query surface on top of position search — reusing `opening_tree`/`games_with_position` and adding ECO (`openings`), per-move frequency/score and transpositions (distinct move orders reaching a Zobrist) — exposed as internal batch functions and the MCP DB tools. HTTP routes (`search/routes.rs`): `GET /api/search/{tree,games}` stream NDJSON, `GET /api/search/headers` returns a `{ games, next_cursor }` JSON page; thin callers of the services. The SPA's search surface is `SearchView` (issue #69, see "Search UI") | DB |
 | `games` | Transport-agnostic `GameService` (issue #68): keyset-paginated `list` of the games in a database (`GameSummary` rows, ordered by id; cursor + clamped `limit`) and single-game `get` (`GameDetail` with PGN movetext + `variant`/`start_fen` for board playback). Visibility follows ownership (own ∪ global). HTTP routes (`games/routes.rs`, `GET /api/games?database_id=…&after=…&limit=…` and `GET /api/games/{id}`) are thin callers | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
 | `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis), the pooled `service::EngineService` facade — one-shot `analyse` for batch + MCP (ADR 0014) — and the `download` auto-download manager (platform catalog → fetch + checksum + register, #11) (Stockfish, Lc0/Maia) | process / HTTP |
@@ -45,10 +45,11 @@ the folder exists so the crate always compiles even before the SPA is built.
 
 `App.vue` is a thin nav/layout shell around a `<router-view>`; **vue-router**
 (`router/index.js`, HTML5 history) maps each top-level surface to a lazily-loaded
-view in `views/`: `AnalysisView` (`/`, the board + analysis panel) and
-`GamesView` (`/games`, the game browser) plus stubs for `collections`, `search`,
-`settings` and `login`. Deep links work because the server's `static_handler`
-falls back to `index.html` for unknown paths (`src/server/routes/mod.rs`).
+view in `views/`: `AnalysisView` (`/`, the board + analysis panel), `GamesView`
+(`/games`, the game browser) and `SearchView` (`/search`, see "Search UI" below)
+plus stubs for `collections`, `settings` and `login`. Deep links work because the
+server's `static_handler` falls back to `index.html` for unknown paths
+(`src/server/routes/mod.rs`).
 
 State lives in Pinia stores: `stores/game.js` (chess.js-backed position,
 legal-move `dests`, play-vs-engine moves), `stores/games.js` (the game browser —
@@ -360,6 +361,22 @@ reconstructed by replaying each game's indexed moves up to its first arrival).
 only as internal batch functions (`position_report`, `position_reports`,
 `references`) and the MCP DB tools — no HTTP route — so the LLM consumes
 conclusions it never computes (ADR-0009).
+
+### Search UI
+
+`SearchView` (`/search`, issue #69) toggles between two surfaces. **Header search**
+(`components/HeaderSearch.vue`) is a player/color/event/result/ECO/date form whose
+results render as a games table with a "Load more" button that follows the
+`next_cursor` keyset pages. **Position explorer** (`components/PositionExplorer.vue`)
+reuses `Board.vue`: dragging a piece (or clicking a move-stats row) descends the
+opening tree, "back"/"start" walk the line, and the table shows each continuation's
+frequency and a W/D/L bar alongside the games reaching the position. Both are
+driven by `stores/search.js`. The pure, unit-tested logic is split out:
+`lib/headerQuery.js` owns the query state (empty shape, blank detection,
+snake_case param mapping) and `lib/openingTree.js` owns tree navigation (replay a
+SAN line to a FEN + legal `dests` via chess.js, board-drag→SAN, stat math). The
+store calls `api.search.{headers,tree,games}` — `headers` returns a JSON page,
+`tree`/`games` parse the NDJSON streams.
 
 ## Build & CI
 
