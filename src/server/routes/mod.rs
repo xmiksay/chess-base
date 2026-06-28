@@ -22,9 +22,10 @@ pub fn router(state: AppState) -> Router {
         .fallback(static_handler)
         .with_state(state.clone());
 
-    // The MCP endpoint carries its own state (app + tool registry), so it is
-    // resolved independently and merged in.
-    api.merge(mcp::router(state))
+    // Auth endpoints (register/login/logout) carry their own state; inert in
+    // local mode. The MCP endpoint likewise resolves independently. Merge both.
+    api.merge(crate::auth::router(state.clone()))
+        .merge(mcp::router(state))
 }
 
 /// Report the resolved caller: the implicit admin in local mode, the
