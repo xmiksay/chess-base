@@ -22,6 +22,7 @@ pgn-reader = "0.29"
 
 # Async / web
 tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
 axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace"] }

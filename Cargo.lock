@@ -440,6 +440,7 @@ dependencies = [
  "shakmaty",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-stream",
  "tower",
  "tower-http",
  "tracing",
