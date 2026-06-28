@@ -22,3 +22,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0014 | Engine facade: one UCI service, two consumption paths (batch + MCP) |
 | 0015 | Server-mode auth: opaque sessions (Bearer/cookie) + first-user-is-admin |
 | 0016 | MCP auth & scoping: OAuth 2.1 (server) + service token (local) |
+| 0017 | Plan trajectories: pure `plans` module, thin WS/MCP callers |
