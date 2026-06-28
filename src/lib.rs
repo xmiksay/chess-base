@@ -11,12 +11,14 @@ pub mod collectors;
 pub mod databases;
 pub mod db;
 pub mod engine;
+pub mod ingest;
 pub mod openings;
 pub mod pgn_tree;
 pub mod position;
 pub mod server;
 pub mod studies;
 
+pub use ingest::{ingest_pgn, Ingested};
 pub use openings::{classify_mainline, eco_of_position, opening_of_zobrist, Opening};
 pub use pgn_tree::pgn::{from_pgn, to_pgn, PgnError};
 pub use pgn_tree::{MoveTree, Node};
