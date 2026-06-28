@@ -27,6 +27,10 @@ async function send(method, path, body) {
 export const api = {
   health: () => getJson('/api/health'),
 
+  // Identity of the caller (issue #67): { id, is_admin } — drives whether
+  // global (admin-managed) collections render writable.
+  whoami: () => getJson('/api/whoami'),
+
   // Engine registry (issue #53): persisted multi-engine config + default.
   engines: {
     list: () => getJson('/api/engines'),
@@ -50,9 +54,16 @@ export const api = {
     remove: (id) => send('DELETE', `/api/studies/${id}`),
   },
 
-  // Ownable databases (issue #6): collections to search/import into.
+  // Ownable databases (issue #6): collections to search/import into. `list`
+  // returns the caller's databases plus global (admin-managed) ones; `global`
+  // on create makes an admin-owned database (requires admin server-side).
   databases: {
     list: () => getJson('/api/databases'),
+    get: (id) => getJson(`/api/databases/${id}`),
+    create: (name, kind, global = false) =>
+      send('POST', '/api/databases', { name, kind, global }),
+    rename: (id, name) => send('PATCH', `/api/databases/${id}`, { name }),
+    remove: (id) => send('DELETE', `/api/databases/${id}`),
   },
 
   // Per-user settings (issue #13): theme, board theme, default database.
