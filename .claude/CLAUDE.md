@@ -26,6 +26,7 @@ src/
   collectors/      GameSource trait + Lichess / Chess.com adapters
   engine.rs        UCI engine config + parsing (Stockfish, Lc0/Maia)
   ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
+  auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
   server/          Axum app: routes, state, embedded SPA, browser launch
   bin/chess-base.rs  CLI entry (clap)
 frontend/          Vue 3 + Vite + Pinia + Tailwind v4 + chessground

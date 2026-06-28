@@ -6,6 +6,7 @@
 //!   adapters around that core.
 
 pub mod ai;
+pub mod auth;
 pub mod collectors;
 pub mod db;
 pub mod engine;

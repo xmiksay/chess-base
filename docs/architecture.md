@@ -19,6 +19,7 @@ commented PGN studies, and integrates UCI engines.
 | `openings` | ECO classification: embedded lichess `chess-openings` dataset → O(1) `zobrist -> (eco, name)` lookup; classifies a game by the longest match along its mainline (`eco_of_position`, `classify_mainline`) | none (pure) |
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `studies` | Transport-agnostic `StudyService`: study CRUD + `MoveTree` edits (`add_move` SAN-validated via `position::legal_sans`, `annotate`); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — the HTTP routes and MCP tools are thin callers | DB |
+| `auth` | Server-mode auth (ADR 0015): `users`/`sessions` tables, Argon2 hashing, transport-agnostic `AuthService` (register/login/logout/authenticate), `/api/auth/*` routes. Inert in local mode | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
 | `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis) and the pooled `service::EngineService` facade — one-shot `analyse` for batch + MCP (ADR 0014) (Stockfish, Lc0/Maia) | process |
 | `ai/llm` | Provider-agnostic LLM client: `LlmProvider` trait + Anthropic Messages API client (ADR 0013); HTTP behind an injectable `Transport` seam | HTTP |
@@ -59,11 +60,24 @@ CLI flags; resolved into `AppConfig` (config) → `AppState` (runtime).
 `server/identity.rs` defines `CurrentUser { id, is_admin }` — the one identity
 type every service takes — produced by an Axum extractor. Resolution is the only
 mode-dependent part and lives in `AppState::resolve_current_user`: local mode is
-always the implicit admin (`local-admin`); server mode resolves from session /
-Bearer auth (wired in #14, until then `401`). Two shared helpers enforce the
+always the implicit admin (`local-admin`); server mode resolves the session token
+through `auth::AuthService` (#14, ADR 0015). Two shared helpers enforce the
 ownership model (ADR 0007) in one place: `scope(owner_col, user)` (the
 `owner == caller OR owner IS NULL` read filter) and `assert_admin(user)`. The
 `/api/whoami` route exposes the resolved caller to the SPA.
+
+## Server-mode auth (ADR 0015)
+
+`auth/` is the server-mode-only authentication layer (inert in local mode). It
+owns `users` (accounts + `is_admin` role) and `sessions` (opaque tokens) over
+migration `m0003_auth`, Argon2 password hashing (`auth/password.rs`), and the
+transport-agnostic `AuthService` (register / login / logout / `authenticate`).
+A request carries its token as `Authorization: Bearer <token>` or a `session`
+cookie; both resolve via `auth::token_from_headers`. The HTTP surface
+(`auth/routes.rs`) is `POST /api/auth/{register,login,logout}`. Bootstrap rule:
+the **first** registered user is made admin, so global databases are manageable.
+`AuthService` is the only thing #14 added to the identity seam — no handler or
+service signature changed.
 
 ## MCP endpoint (ADR 0008)
 
@@ -160,12 +174,18 @@ only**: it travels in the `x-api-key` header and never reaches the SPA.
 - `studies(id, database_id, owner_id?, name, tree_json, created_at)` — a named,
   serialized `pgn_tree::MoveTree` (JSON in `tree_json`); `owner_id IS NULL` mirrors
   the global-collection rule.
+- `users(id, username, password_hash, is_admin, created_at)` — server-mode accounts
+  (ADR 0015); `id` is the string that lands in `owner_id`. `username` is unique;
+  `password_hash` is an Argon2 PHC string.
+- `sessions(token, user_id, created_at, expires_at)` — opaque bearer/cookie tokens
+  with a hard expiry; `user_id` FKs `users.id` (cascade delete). Indexed on `user_id`.
 
 Indices cover `zobrist`, the games header columns (`database_id`, player/event FKs,
 `date`, `eco`, `result`) and `database_id`/`owner_id` scoping. Migration `m0002_core_schema`
-adds all of the above and runs on both SQLite and Postgres.
+adds the core domain; `m0003_auth` adds `users`/`sessions`. All run on both SQLite
+and Postgres.
 
-Planned (feature epics): `users`/auth and MCP/AI-assistant tables.
+Planned (feature epics): MCP/AI-assistant tables.
 
 ### Position search
 

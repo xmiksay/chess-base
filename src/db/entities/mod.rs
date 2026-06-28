@@ -9,8 +9,10 @@ pub mod events;
 pub mod games;
 pub mod players;
 pub mod position_index;
+pub mod sessions;
 pub mod settings;
 pub mod studies;
+pub mod users;
 
 #[cfg(test)]
 mod tests {

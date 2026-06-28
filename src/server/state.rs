@@ -25,12 +25,21 @@ pub struct AppState {
 impl AppState {
     /// Resolve the caller's identity for a request — the single seam between the
     /// two run modes. Local mode is always the implicit admin (zero config);
-    /// server-mode resolution (session / Bearer auth, possibly a DB lookup)
-    /// lands in #14 and only changes this method, not any handler.
-    pub async fn resolve_current_user(&self, _parts: &Parts) -> Result<CurrentUser, AuthError> {
+    /// server mode reads the session token (Bearer header or `session` cookie)
+    /// and resolves it through [`AuthService`]. Only this method differs between
+    /// modes; no handler signature does.
+    ///
+    /// [`AuthService`]: crate::auth::AuthService
+    pub async fn resolve_current_user(&self, parts: &Parts) -> Result<CurrentUser, AuthError> {
         match self.mode {
             Mode::Local => Ok(CurrentUser::local_admin()),
-            Mode::Server => Err(AuthError::Unauthorized),
+            Mode::Server => {
+                let token = crate::auth::token_from_headers(&parts.headers)
+                    .ok_or(AuthError::Unauthorized)?;
+                crate::auth::AuthService::new(self.db.clone())
+                    .authenticate(&token)
+                    .await
+            }
         }
     }
 }
