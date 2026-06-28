@@ -11,6 +11,7 @@ pub mod collectors;
 pub mod databases;
 pub mod db;
 pub mod engine;
+pub mod games;
 pub mod ingest;
 pub mod openings;
 pub mod pgn_tree;
