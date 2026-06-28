@@ -24,6 +24,7 @@ commented PGN studies, and integrates UCI engines.
 | `settings` | Transport-agnostic `SettingsService`: per-user UI preferences (theme, board theme, piece set, default database) stored as one JSON blob per user under a `user_settings:{id}` key in the key/value `settings` table — no new entity. Validates the theme value and that `default_database_id` is visible to the caller (own ∪ global). HTTP routes (`settings/routes.rs`, `GET/PUT /api/settings`) are thin callers | DB |
 | `auth` | Server-mode auth (ADR 0015): `users`/`sessions` tables, Argon2 hashing, transport-agnostic `AuthService` (register/login/logout/authenticate), `/api/auth/*` routes. Inert in local mode | DB |
 | `ingest` | Shared game-ingest path (`ingest_pgn`): parses a PGN, dedups players/event, stores the game, replays the mainline via `position::replay`, and bulk-inserts the `position_index` rows (one per ply, capped by the database's `index_depth`; ADR-0003). One transaction per game; every collector funnels through it | DB |
+| `search` | Transport-agnostic `PositionSearchService` (ADR-0003): the headline "find games reaching this position" (`games_with_position`) and the opening tree of aggregated per-continuation stats (`opening_tree`: count + W/D/L), both keyed on the Zobrist `position_index`. Scope follows ownership (own ∪ global) via the denormalized `position_index.database_id`, so no join is needed for scoping. HTTP routes (`search/routes.rs`, `GET /api/search/{tree,games}`) stream rows as NDJSON; thin callers of the service | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters, sync cursor | HTTP |
 | `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis), the pooled `service::EngineService` facade — one-shot `analyse` for batch + MCP (ADR 0014) — and the `download` auto-download manager (platform catalog → fetch + checksum + register, #11) (Stockfish, Lc0/Maia) | process / HTTP |
 | `ai/llm` | Provider-agnostic LLM client: `LlmProvider` trait + Anthropic Messages API client (ADR 0013); HTTP behind an injectable `Transport` seam | HTTP |
@@ -302,6 +303,16 @@ Every indexed position is keyed by the 64-bit Polyglot-compatible Zobrist hash
 produced by `position::zobrist_of_fen`. The same scheme works identically on
 SQLite and Postgres (a plain indexed integer column), avoiding a separate
 key-value store while covering the self-hosted scale we target.
+
+`search::PositionSearchService` (issue #7) is the query side of that index. A FEN
+is hashed to its Zobrist key, then the `position_index` rows at that key — scoped
+to the caller's databases plus global ones via the denormalized `database_id` —
+are aggregated two ways: `opening_tree` groups the move played from each row into
+per-continuation stats (occurrence `count` plus W/D/L from the owning game's
+`result`), sorted by count; `games_with_position` takes the distinct games and
+resolves their player names. `server/routes`'s `GET /api/search/tree?fen=…` and
+`GET /api/search/games?fen=…&limit=…` stream the result rows as NDJSON
+(`application/x-ndjson`, one JSON object per line).
 
 ## Build & CI
 
