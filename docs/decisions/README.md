@@ -14,3 +14,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0006 | Frontend board: chessground + chess.js |
 | 0007 | Databases are ownable; NULL owner = global |
 | 0008 | MCP via hand-rolled JSON-RPC `/mcp` endpoint |
+| 0009 | LLM as annotator: the study generation pipeline |

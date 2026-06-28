@@ -69,4 +69,7 @@ otherwise it belongs to that user. Search scope = caller's databases ∪ global 
 0 scaffold (this) · 1 core domain & DB · 2 collection (Lichess/Chess.com/master) ·
 3 search (header + position) · 4 studies UI · 5 engine analysis (auto-download
 Stockfish/Lc0/Maia) · 6 auth/settings + roles · **7 MCP / AI-assisted studies**
-(JSON-RPC `/mcp` endpoint mirroring the `site` project; `StudyService` tools).
+(JSON-RPC `/mcp` endpoint mirroring the `site` project; `StudyService` tools) ·
+8 packaging & deployment (local release binaries; server Docker + Postgres) ·
+**9 LLM study generation pipeline** — the AI-studies design (ADR-0009): LLM as
+annotator, engine/DB as ground truth, preprocessing stages + verification loop.
