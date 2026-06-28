@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod pgn;
+
 /// A single node in a study move tree.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Node {
