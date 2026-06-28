@@ -6,6 +6,26 @@ async function getJson(path) {
   return res.json()
 }
 
+// The search endpoints stream NDJSON (one JSON object per line); parse it into
+// an array. Blank lines are skipped so a trailing newline is harmless.
+async function getNdjson(path) {
+  const res = await fetch(path)
+  if (!res.ok) {
+    let detail = ''
+    try {
+      detail = (await res.json())?.error ?? ''
+    } catch {
+      // non-JSON error body; the status is enough.
+    }
+    throw new Error(detail || `${path} → ${res.status}`)
+  }
+  const text = await res.text()
+  return text
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line))
+}
+
 async function send(method, path, body) {
   const res = await fetch(path, {
     method,
@@ -77,6 +97,22 @@ export const api = {
       return getJson(`/api/games?${params}`)
     },
     get: (id) => getJson(`/api/games/${id}`),
+  },
+
+  // Game search (issues #6/#7). Header/metadata search (`headers`) is keyset-
+  // paginated and returns one JSON page `{ games, next_cursor }`; pass the
+  // previous page's `next_cursor` as `cursor` to advance. Position search
+  // (`tree`/`games`) takes a FEN and streams NDJSON rows. `headers` takes the
+  // query params built by lib/headerQuery.toParams.
+  search: {
+    headers: (params = {}) =>
+      getJson(`/api/search/headers?${new URLSearchParams(params).toString()}`),
+    tree: (fen) => getNdjson(`/api/search/tree?fen=${encodeURIComponent(fen)}`),
+    games: (fen, limit) =>
+      getNdjson(
+        `/api/search/games?fen=${encodeURIComponent(fen)}` +
+          (limit ? `&limit=${limit}` : ''),
+      ),
   },
 
   // Per-user settings (issue #13): theme, board theme, default database.
