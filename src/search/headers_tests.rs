@@ -219,6 +219,70 @@ async fn filters_by_player_event_eco_date_and_result() {
     assert_eq!(page.games.len(), 1);
 }
 
+#[test]
+fn escape_like_neutralizes_wildcards() {
+    assert_eq!(escape_like("a%b_c"), "a\\%b\\_c");
+    assert_eq!(escape_like("100%"), "100\\%");
+    // Backslash is escaped first so it can't form a spurious escape sequence.
+    assert_eq!(escape_like("a\\_b"), "a\\\\\\_b");
+    assert_eq!(escape_like("plain"), "plain");
+}
+
+#[tokio::test]
+async fn player_event_filters_treat_like_wildcards_as_literals() {
+    let pgns = [
+        game(
+            "Smith_J",
+            "Real %Match",
+            "100% Open",
+            "C00",
+            "2020.01.01",
+            "1-0",
+        ),
+        game(
+            "Smithers",
+            "Decoy",
+            "Closed Cup",
+            "C00",
+            "2020.01.02",
+            "0-1",
+        ),
+    ];
+    let refs: Vec<&str> = pgns.iter().map(String::as_str).collect();
+    let (conn, _) = db_with(Some("alice"), &refs).await;
+    let svc = HeaderSearchService::new(conn);
+
+    // `_` must match a literal underscore, not "any character" — so "Smithers"
+    // (which an unescaped `%Smith_%` would catch) is excluded.
+    let page = svc
+        .search(
+            &user("alice"),
+            &query(HeaderParams {
+                player: Some("Smith_".to_string()),
+                ..params()
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.games.len(), 1);
+    assert_eq!(page.games[0].white.as_deref(), Some("Smith_J"));
+
+    // A bare `%` must match the literal percent sign, not every row.
+    let page = svc
+        .search(
+            &user("alice"),
+            &query(HeaderParams {
+                event: Some("%".to_string()),
+                ..params()
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.games.len(), 1);
+    // Only the "100% Open" game (white "Smith_J") carries a literal '%'.
+    assert_eq!(page.games[0].white.as_deref(), Some("Smith_J"));
+}
+
 #[tokio::test]
 async fn keyset_pagination_walks_all_rows_without_overlap() {
     let pgns: Vec<String> = (0..5)

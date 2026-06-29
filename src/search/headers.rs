@@ -9,7 +9,7 @@
 //! key; the client echoes it back to advance.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use sea_orm::sea_query::{Expr, Func, IntoCondition, SimpleExpr};
+use sea_orm::sea_query::{Expr, Func, IntoCondition, LikeExpr, SimpleExpr};
 use sea_orm::{
     ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, Order, QueryFilter, QueryOrder,
     QuerySelect,
@@ -300,7 +300,7 @@ impl HeaderSearchService {
     /// `LIKE`); the substring match keeps player search forgiving of full names.
     async fn player_ids_matching(&self, name: &str) -> Result<Vec<i32>, HeaderSearchError> {
         Ok(players::Entity::find()
-            .filter(players::Column::Name.contains(name))
+            .filter(players::Column::Name.like(contains_like(name)))
             .select_only()
             .column(players::Column::Id)
             .into_tuple()
@@ -311,13 +311,31 @@ impl HeaderSearchService {
     /// Event ids whose name contains `name`.
     async fn event_ids_matching(&self, name: &str) -> Result<Vec<i32>, HeaderSearchError> {
         Ok(events::Entity::find()
-            .filter(events::Column::Name.contains(name))
+            .filter(events::Column::Name.like(contains_like(name)))
             .select_only()
             .column(events::Column::Id)
             .into_tuple()
             .all(&self.db)
             .await?)
     }
+}
+
+/// Build a substring `LIKE` pattern that matches `needle` literally. SeaORM's
+/// `contains` wraps the raw input in `%…%` without escaping, so a `%`/`_` in a
+/// player/event name (or a `%` query) would act as a wildcard and over-match
+/// (issue #99). We escape the LIKE metacharacters with `\` and pair the pattern
+/// with `ESCAPE '\'` so they match as literals on both SQLite and Postgres.
+fn contains_like(needle: &str) -> LikeExpr {
+    LikeExpr::new(format!("%{}%", escape_like(needle))).escape('\\')
+}
+
+/// Escape the SQL `LIKE` metacharacters (`%`, `_`) and the escape char itself so
+/// the result matches `s` verbatim under `ESCAPE '\'`. Backslash is escaped first
+/// to avoid double-escaping the sequences introduced for `%`/`_`.
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 impl HeaderPage {
