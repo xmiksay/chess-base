@@ -1,8 +1,8 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted } from 'vue'
 import { RouterLink, RouterView, useRouter } from 'vue-router'
-import { useSettingsStore } from './stores/settings.js'
-import { useAuthStore } from './stores/auth.js'
+import { useSettingsStore } from './stores/settings'
+import { useAuthStore } from './stores/auth'
 
 const settings = useSettingsStore()
 const auth = useAuthStore()

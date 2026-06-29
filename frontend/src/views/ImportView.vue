@@ -1,17 +1,22 @@
-<script setup>
+<script setup lang="ts">
 // Game-import view (issue #70): pick a target database, then either sync from
 // Lichess / Chess.com (username + optional token) or upload a `.pgn` file. Each
 // import runs as a tracked job; the store folds their statuses into a summary.
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useImportStore } from '../stores/import.js'
+import { useImportStore } from '../stores/import'
+import type { ImportSource } from '../types'
 
 const store = useImportStore()
 
 // The collection the import writes into; defaults to the first visible database.
-const targetId = ref(null)
+const targetId = ref<number | null>(null)
 
-const sync = reactive({ source: 'lichess', username: '', token: '' })
-const pgnFile = ref(null)
+const sync = reactive<{ source: ImportSource; username: string; token: string }>({
+  source: 'lichess',
+  username: '',
+  token: '',
+})
+const pgnFile = ref<File | null>(null)
 
 // Lichess accepts a personal token to raise rate limits; Chess.com is tokenless.
 const supportsToken = computed(() => sync.source === 'lichess')
@@ -27,23 +32,27 @@ const summaryText = computed(() => {
 
 function startSync() {
   if (!canSync.value) return
+  const databaseId = targetId.value
+  if (databaseId == null) return
   store.syncSource({
-    databaseId: targetId.value,
+    databaseId,
     source: sync.source,
     username: sync.username.trim(),
     token: supportsToken.value ? sync.token.trim() : '',
   })
 }
 
-function onFileChange(event) {
-  pgnFile.value = event.target.files?.[0] ?? null
+function onFileChange(event: Event) {
+  pgnFile.value = (event.target as HTMLInputElement).files?.[0] ?? null
 }
 
 async function uploadPgn() {
   if (!canUpload.value) return
+  const databaseId = targetId.value
   const file = pgnFile.value
+  if (databaseId == null || !file) return
   const pgn = await file.text()
-  store.uploadPgn({ databaseId: targetId.value, name: file.name, pgn })
+  store.uploadPgn({ databaseId, name: file.name, pgn })
 }
 
 onMounted(async () => {

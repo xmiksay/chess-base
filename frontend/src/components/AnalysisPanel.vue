@@ -1,10 +1,11 @@
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useEngineStore } from '../stores/engine.js'
-import { useGameStore } from '../stores/game.js'
-import { formatScore } from '../lib/engineStream.js'
-import { uciLineToSan } from '../lib/pv.js'
-import { sideToMove } from '../lib/fen.js'
+import { useEngineStore } from '../stores/engine'
+import { useGameStore } from '../stores/game'
+import { formatScore } from '../lib/engineStream'
+import { uciLineToSan } from '../lib/pv'
+import { sideToMove } from '../lib/fen'
+import type { Color, EngineLine } from '../types'
 import EvalBar from './EvalBar.vue'
 
 const engine = useEngineStore()
@@ -20,7 +21,7 @@ const stm = computed(() => sideToMove(game.fen))
 const topScore = computed(() => engine.lines[0]?.score ?? null)
 const evalText = computed(() => formatScore(topScore.value, stm.value))
 
-function lineSan(line) {
+function lineSan(line: EngineLine) {
   return uciLineToSan(game.fen, line.pv, 12).join(' ')
 }
 
@@ -89,7 +90,7 @@ function newGame() {
   }
 }
 
-function setPlayColor(color) {
+function setPlayColor(color: Color) {
   game.playColor = color
   game.orientation = color
 }

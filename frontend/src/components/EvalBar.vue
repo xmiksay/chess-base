@@ -1,11 +1,16 @@
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
-import { evalBarPercent } from '../lib/engineStream.js'
+import { evalBarPercent } from '../lib/engineStream'
+import type { Color, Score } from '../types'
 
 // Vertical eval bar: White's share fills from the bottom.
-const props = defineProps({
-  score: { type: Object, default: null },
-  sideToMove: { type: String, default: 'white' },
+interface Props {
+  score?: Score | null
+  sideToMove?: Color
+}
+const props = withDefaults(defineProps<Props>(), {
+  score: null,
+  sideToMove: 'white',
 })
 
 const whitePct = computed(() => evalBarPercent(props.score, props.sideToMove))

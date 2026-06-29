@@ -35,7 +35,8 @@ src/
   server/          Axum app: routes, state, embedded SPA, browser launch,
                    MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016)
   bin/chess-base.rs  CLI entry (clap)
-frontend/          Vue 3 + Vite + Pinia + Tailwind v4 + chessground
+frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
+                   (strict `vue-tsc`; shared API/domain types in src/types.ts; ADR 0021)
 ```
 
 **Layering rule:** pure logic (`position`, `pgn_tree`, `openings`, `plans`) is I/O-free and fully

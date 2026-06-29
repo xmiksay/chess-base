@@ -1,16 +1,21 @@
-<script setup>
+<script setup lang="ts">
 // Collection (databases) browser (issue #67): list the caller's databases plus
 // global (admin-managed) ones with an ownership badge, and create / rename /
 // delete the writable ones. Global databases render read-only for non-admins.
 import { onMounted, reactive, ref } from 'vue'
-import { useCollectionsStore } from '../stores/collections.js'
+import { useCollectionsStore } from '../stores/collections'
+import type { Database, DatabaseKind } from '../types'
 
 // The four collection kinds the backend accepts (db::entities::databases::KINDS).
-const KINDS = ['own', 'lichess', 'chesscom', 'master']
+const KINDS: DatabaseKind[] = ['own', 'lichess', 'chesscom', 'master']
 
 const store = useCollectionsStore()
-const form = reactive({ name: '', kind: 'own', global: false })
-const editingId = ref(null)
+const form = reactive<{ name: string; kind: DatabaseKind; global: boolean }>({
+  name: '',
+  kind: 'own',
+  global: false,
+})
+const editingId = ref<number | null>(null)
 const editName = ref('')
 
 async function create() {
@@ -19,12 +24,12 @@ async function create() {
   Object.assign(form, { name: '', kind: 'own', global: false })
 }
 
-function startRename(db) {
+function startRename(db: Database) {
   editingId.value = db.id
   editName.value = db.name
 }
 
-async function commitRename(id) {
+async function commitRename(id: number) {
   const name = editName.value.trim()
   if (name) await store.rename(id, name)
   editingId.value = null
@@ -34,7 +39,7 @@ function cancelRename() {
   editingId.value = null
 }
 
-const remove = (db) => store.remove(db.id)
+const remove = (db: Database) => store.remove(db.id)
 
 // The store records failures on `store.error`; swallow the rejection here so an
 // offline/unauthenticated load doesn't surface as an unhandled rejection.

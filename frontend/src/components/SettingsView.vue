@@ -1,19 +1,20 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { api } from '../api.js'
+import { api } from '../api'
 import {
   useSettingsStore,
   THEMES,
   BOARD_THEMES,
   PIECE_SETS,
-} from '../stores/settings.js'
+} from '../stores/settings'
+import type { Database } from '../types'
 import EnginesSettings from './EnginesSettings.vue'
 
 // Per-user settings (issue #13): theme, board theme, piece set and default
 // database. Each control writes through the store, which mirrors to localStorage
 // for instant UI and persists to the backend.
 const settings = useSettingsStore()
-const databases = ref([])
+const databases = ref<Database[]>([])
 
 const themes = THEMES
 const boardThemes = BOARD_THEMES
@@ -28,11 +29,18 @@ onMounted(async () => {
   }
 })
 
-const setTheme = (e) => settings.update({ theme: e.target.value })
-const setBoardTheme = (e) => settings.update({ boardTheme: e.target.value })
-const setPieceSet = (e) => settings.update({ pieceSet: e.target.value })
-const setDefaultDatabase = (e) =>
-  settings.update({ defaultDatabaseId: e.target.value ? Number(e.target.value) : null })
+const setTheme = (e: Event) =>
+  settings.update({ theme: (e.target as HTMLSelectElement).value })
+const setBoardTheme = (e: Event) =>
+  settings.update({ boardTheme: (e.target as HTMLSelectElement).value })
+const setPieceSet = (e: Event) =>
+  settings.update({ pieceSet: (e.target as HTMLSelectElement).value })
+const setDefaultDatabase = (e: Event) =>
+  settings.update({
+    defaultDatabaseId: (e.target as HTMLSelectElement).value
+      ? Number((e.target as HTMLSelectElement).value)
+      : null,
+  })
 </script>
 
 <template>

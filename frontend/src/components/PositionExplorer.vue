@@ -1,19 +1,20 @@
-<script setup>
+<script setup lang="ts">
 // Position / opening-tree explorer (issue #7 UI): a board whose position drives
 // the move-stats tree. Drag a piece or click a tree row to descend; "back"/"start"
 // walk the line. Navigation + stat math are pure (lib/openingTree); this renders.
 import { computed, onMounted } from 'vue'
 import Board from './Board.vue'
-import { useSearchStore } from '../stores/search.js'
-import { useSettingsStore } from '../stores/settings.js'
-import { frequency, scoreBar, totalCount } from '../lib/openingTree.js'
+import { useSearchStore } from '../stores/search'
+import { useSettingsStore } from '../stores/settings'
+import { frequency, scoreBar, totalCount } from '../lib/openingTree'
+import type { BoardMove } from '../types'
 
 const search = useSearchStore()
 const settings = useSettingsStore()
 
 const total = computed(() => totalCount(search.tree))
 
-function onMove({ from, to }) {
+function onMove({ from, to }: BoardMove) {
   search.playMove({ from, to })
 }
 

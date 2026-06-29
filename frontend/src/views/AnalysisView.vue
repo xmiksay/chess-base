@@ -1,21 +1,22 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import Board from '../components/Board.vue'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
-import { useGameStore } from '../stores/game.js'
-import { useSettingsStore } from '../stores/settings.js'
-import { api } from '../api.js'
+import { useGameStore } from '../stores/game'
+import { useSettingsStore } from '../stores/settings'
+import { api } from '../api'
+import type { BoardMove } from '../types'
 
 const game = useGameStore()
 const settings = useSettingsStore()
-const error = ref(null)
+const error = ref<string | null>(null)
 
 // In play mode only the human's side may move (and only while the game is live).
 const movable = computed(() =>
   game.mode === 'analyse' ? true : game.turnColor === game.playColor && !game.gameOver,
 )
 
-function onMove({ from, to }) {
+function onMove({ from, to }: BoardMove) {
   game.playMove({ from, to })
 }
 

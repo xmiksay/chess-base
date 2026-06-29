@@ -1,21 +1,22 @@
-<script setup>
+<script setup lang="ts">
 // Game browser (issue #68): pick a database, page through its games, open one on
 // the board and step through its moves (buttons, ply selector, arrow keys).
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Board from '../components/Board.vue'
-import { api } from '../api.js'
-import { useGamesStore } from '../stores/games.js'
-import { useSettingsStore } from '../stores/settings.js'
+import { api } from '../api'
+import { useGamesStore } from '../stores/games'
+import { useSettingsStore } from '../stores/settings'
+import type { Database, GameRow } from '../types'
 
 const games = useGamesStore()
 const settings = useSettingsStore()
 
-const databases = ref([])
-const selectedDb = ref(null)
-const loadError = ref(null)
+const databases = ref<Database[]>([])
+const selectedDb = ref<number | null>(null)
+const loadError = ref<string | null>(null)
 
 /** A "White – Black" label for a game row, tolerating missing names. */
-function players(g) {
+function players(g: GameRow): string {
   return `${g.white ?? '?'} – ${g.black ?? '?'}`
 }
 
@@ -27,7 +28,7 @@ async function onSelectDatabase() {
   await games.selectDatabase(selectedDb.value)
 }
 
-function onKey(e) {
+function onKey(e: KeyboardEvent) {
   if (!games.openGame) return
   if (e.key === 'ArrowLeft') {
     games.go('prev')
@@ -188,7 +189,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             :value="games.ply"
             class="flex-1"
             aria-label="Ply"
-            @input="games.go(Number($event.target.value))"
+            @input="games.go(Number(($event.target as HTMLInputElement).value))"
           >
           <button
             class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"

@@ -26,3 +26,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0018 | Pre-chewed DB query layer: ECO + frequency/score + transpositions + references |
 | 0019 | Interactive analysis mode: `analyse_position` bundles engine + DB + feature tags |
 | 0020 | Incremental sync: persisted cursor + per-game `source_ref` dedup |
+| 0021 | Frontend in TypeScript: strict `vue-tsc`, shared `src/types.ts` |
