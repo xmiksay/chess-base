@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::entities::position_index;
 use crate::openings::opening_of_zobrist;
-use crate::position::{zobrist_of_fen, CastlingMode};
+use crate::position::{black_to_move, zobrist_of_fen, CastlingMode};
 use crate::search::position::{GameHit, MoveStat, PositionSearchService, SearchError};
 use crate::server::identity::CurrentUser;
 
@@ -30,9 +30,14 @@ pub struct EcoInfo {
 
 /// A continuation with its outcomes (reused from #7) plus the two figures the
 /// raw index can't give: `frequency` (share of games that chose this move,
-/// `0..=1`) and `score` (White's performance, `0..=1`). `white`/`draws`/`black`
-/// are the win/draw/loss counts; games with an unknown result (`*`) count toward
-/// `count` only and are excluded from `score`.
+/// `0..=1`) and `score` (the **moving side's** performance, `0..=1`).
+/// `white`/`draws`/`black` are the win/draw/loss counts; games with an unknown
+/// result (`*`) count toward `count` only and are excluded from `score`.
+///
+/// `score` is side-to-move-relative (issue #94): at a Black-to-move position a
+/// move on which Black scores 100% reports `score == 1.0`, not `0.0`. This is
+/// what the annotation LLM and pruning expect — "how well the move does for the
+/// player making it" — so it must not be read as a White-relative figure.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MoveReport {
     pub san: String,
@@ -47,12 +52,19 @@ pub struct MoveReport {
 impl MoveReport {
     /// Layer frequency/score onto an aggregated [`MoveStat`]. `total` is the sum
     /// of all continuation counts at the position (the frequency denominator).
-    fn from_stat(stat: MoveStat, total: u64) -> Self {
+    /// `black_to_move` makes `score` side-to-move-relative (issue #94): the
+    /// moving side's wins, not always White's.
+    fn from_stat(stat: MoveStat, total: u64, black_to_move: bool) -> Self {
         let decided = stat.white + stat.draws + stat.black;
         let score = if decided == 0 {
             0.0
         } else {
-            (stat.white as f64 + stat.draws as f64 / 2.0) / decided as f64
+            let wins = if black_to_move {
+                stat.black
+            } else {
+                stat.white
+            };
+            (wins as f64 + stat.draws as f64 / 2.0) / decided as f64
         };
         let frequency = if total == 0 {
             0.0
@@ -122,12 +134,14 @@ impl PositionReportService {
     ) -> Result<PositionReport, SearchError> {
         let zobrist = zobrist_of_fen(fen, CastlingMode::Standard)
             .map_err(|e| SearchError::InvalidFen(e.to_string()))?;
+        let black = black_to_move(fen, CastlingMode::Standard)
+            .map_err(|e| SearchError::InvalidFen(e.to_string()))?;
 
         let stats = self.search.opening_tree(user, fen).await?;
         let total: u64 = stats.iter().map(|m| m.count).sum();
         let moves = stats
             .into_iter()
-            .map(|s| MoveReport::from_stat(s, total))
+            .map(|s| MoveReport::from_stat(s, total, black))
             .collect();
 
         let eco = opening_of_zobrist(zobrist).map(|o| EcoInfo {
@@ -338,6 +352,8 @@ mod tests {
         let svc = PositionReportService::new(conn);
 
         // After 1. e4 c5 2. Nf3 the games diverge: d6 (White won) vs Nc6 (Black won).
+        // It is Black to move here, so `score` is from Black's perspective (#94):
+        // the Black-winning move scores 1.0, the White-winning one 0.0.
         let report = svc
             .position_report(&user("alice"), &fen_after(&["e4", "c5", "Nf3"]))
             .await
@@ -346,11 +362,11 @@ mod tests {
         let d6 = report.moves.iter().find(|m| m.san == "d6").unwrap();
         assert_eq!(d6.frequency, 0.5);
         assert_eq!(d6.white, 1);
-        assert_eq!(d6.score, 1.0); // White scored 1/1
+        assert_eq!(d6.score, 0.0); // Black (to move) scored 0/1 on this line
         let nc6 = report.moves.iter().find(|m| m.san == "Nc6").unwrap();
         assert_eq!(nc6.frequency, 0.5);
         assert_eq!(nc6.black, 1);
-        assert_eq!(nc6.score, 0.0); // White scored 0/1
+        assert_eq!(nc6.score, 1.0); // Black (to move) scored 1/1 on this line
     }
 
     #[tokio::test]

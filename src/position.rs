@@ -72,6 +72,13 @@ pub fn zobrist_of_position(pos: &Chess) -> u64 {
     z.0
 }
 
+/// Whether Black is the side to move in `fen`. Used to render move statistics
+/// from the moving side's perspective rather than always White's (issue #94).
+pub fn black_to_move(fen: &str, mode: CastlingMode) -> Result<bool, PositionError> {
+    let pos = position_from_fen(fen, mode)?;
+    Ok(pos.turn() == shakmaty::Color::Black)
+}
+
 /// All legal moves from `fen`, in SAN, sorted for deterministic output.
 pub fn legal_sans(fen: &str, mode: CastlingMode) -> Result<Vec<String>, PositionError> {
     let pos = position_from_fen(fen, mode)?;
