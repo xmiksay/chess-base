@@ -46,9 +46,10 @@ the folder exists so the crate always compiles even before the SPA is built.
 `App.vue` is a thin nav/layout shell around a `<router-view>`; **vue-router**
 (`router/index.js`, HTML5 history) maps each top-level surface to a lazily-loaded
 view in `views/`: `AnalysisView` (`/`, the board + analysis panel), `GamesView`
-(`/games`, the game browser), `SearchView` (`/search`, see "Search UI" below)
-and `LoginView` (`/login`, the server-mode register/login form, see "Auth UI"
-below) plus a stub for `collections`. Deep links work because the server's
+(`/games`, the game browser), `StudyView` (`/studies`, the variation-tree editor,
+see "Study editor" below), `SearchView` (`/search`, see "Search UI" below) and
+`LoginView` (`/login`, the server-mode register/login form, see "Auth UI" below)
+plus a stub for `collections`. Deep links work because the server's
 `static_handler` falls back to `index.html` for unknown paths
 (`src/server/routes/mod.rs`).
 
@@ -68,6 +69,20 @@ the unit-tested `lib/pgnViewer.js`. `components/AnalysisPanel.vue`
 (+ `EvalBar.vue`) renders the eval bar, MultiPV lines, depth/nps, engine options
 and play-vs-engine controls; `Board.vue` is presentational (it also drives the
 read-only game viewer in `GamesView`) and emits user moves.
+
+The **study editor** (issue #8, `views/StudyView.vue`) builds and annotates
+commented PGN trees. `stores/studies.js` owns the open study (`current`, with its
+`MoveTree`) and its lifecycle CRUD/import/export; `stores/studyEditor.js` layers
+the editing state on top — the selected node id, the chess.js position derived for
+that node (FEN, legal `dests`, last move), and the mutations: a board drag is
+turned into SAN and either navigates to the matching child or appends a new
+move/variation (`addMove`), plus annotate/promote/reorder/delete — each calling
+`api.studies` and re-rendering from the returned tree. The pure tree walking
+(path/line to a node, child lookup, and flattening the tree into renderable
+move/variation tokens with move numbers + NAG glyphs) is the unit-tested
+`lib/moveTree.js`. `components/MoveTree.vue` renders those tokens (click to
+navigate, variations dimmed by depth); `components/AnnotationEditor.vue` edits the
+selected node's comment/NAG and promotes/deletes variations.
 
 In dev, Vite serves the SPA and proxies `/api` (with `ws: true` for the engine
 WebSocket) to the backend on `:3030`.
