@@ -7,6 +7,7 @@
 //! [`tree::build_tree`] walk to the real engine facade and DB layer; the tree
 //! types and pruning logic live in [`tree`].
 
+pub mod annotate;
 pub mod features;
 pub mod tree;
 
@@ -20,6 +21,10 @@ use crate::position::CastlingMode;
 use crate::search::report::{MoveReport, PositionReportService};
 use crate::server::identity::CurrentUser;
 
+pub use annotate::{
+    annotate_tree, build_prompt, build_request, verify_and_commit, AnnotateError,
+    AnnotationOutcome, Claim, DraftAnnotation, Rejection,
+};
 pub use features::{concepts_of_fen, concepts_of_fen_with, Concepts, KeySquare};
 pub use tree::{
     build_tree, score_to_cp, select_continuations, Candidate, ContinuationSource, Evaluator,
