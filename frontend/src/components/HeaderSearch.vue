@@ -1,8 +1,8 @@
-<script setup>
+<script setup lang="ts">
 // Header/metadata search (issue #6): a form over player/color/event/result/ECO/
 // date that renders the matching games. Query state + param mapping live in the
 // store and lib/headerQuery; results are keyset-paginated ("Load more").
-import { useSearchStore } from '../stores/search.js'
+import { useSearchStore } from '../stores/search'
 
 const search = useSearchStore()
 

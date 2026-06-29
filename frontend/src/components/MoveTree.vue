@@ -1,15 +1,20 @@
-<script setup>
+<script setup lang="ts">
 // Presentational variation tree: flattens the MoveTree into move / paren tokens
 // and renders them inline. The parent owns selection; clicking a move emits
 // `select(nodeId)`. Variations render dimmer the deeper they nest.
 import { computed } from 'vue'
-import { treeTokens, nagGlyph } from '../lib/moveTree.js'
+import { treeTokens, nagGlyph } from '../lib/moveTree'
+import type { MoveTree } from '../types'
 
-const props = defineProps({
-  tree: { type: Object, default: null },
-  currentId: { type: Number, default: null },
+interface Props {
+  tree?: MoveTree | null
+  currentId?: number | null
+}
+const props = withDefaults(defineProps<Props>(), {
+  tree: null,
+  currentId: null,
 })
-const emit = defineEmits(['select'])
+const emit = defineEmits<{ select: [nodeId: number] }>()
 
 const tokens = computed(() => treeTokens(props.tree))
 </script>

@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Variation-tree editor (issue #8): pick/create a study, play moves on the board
 // to build a mainline + variations, navigate the tree, and annotate moves. The
 // board (chessground) and tree stay in sync through the study-editor store.
@@ -6,27 +6,28 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Board from '../components/Board.vue'
 import MoveTree from '../components/MoveTree.vue'
 import AnnotationEditor from '../components/AnnotationEditor.vue'
-import { api } from '../api.js'
-import { useStudiesStore } from '../stores/studies.js'
-import { useStudyEditorStore } from '../stores/studyEditor.js'
-import { useSettingsStore } from '../stores/settings.js'
+import { api } from '../api'
+import { useStudiesStore } from '../stores/studies'
+import { useStudyEditorStore } from '../stores/studyEditor'
+import { useSettingsStore } from '../stores/settings'
+import type { BoardMove, Database } from '../types'
 
 const studies = useStudiesStore()
 const editor = useStudyEditorStore()
 const settings = useSettingsStore()
 
-const databases = ref([])
+const databases = ref<Database[]>([])
 const newName = ref('')
-const newDb = ref(null)
-const loadError = ref(null)
+const newDb = ref<number | null>(null)
+const loadError = ref<string | null>(null)
 
 const hasStudy = computed(() => !!studies.current)
 
-async function onBoardMove({ from, to }) {
+async function onBoardMove({ from, to }: BoardMove) {
   try {
     await editor.playMove({ from, to })
   } catch (e) {
-    loadError.value = String(e.message ?? e)
+    loadError.value = String((e as Error)?.message ?? e)
   }
 }
 
@@ -38,9 +39,9 @@ async function onCreate() {
   await studies.refresh()
 }
 
-function onKey(e) {
+function onKey(e: KeyboardEvent) {
   if (!hasStudy.value) return
-  const target = e.target
+  const target = e.target as HTMLElement | null
   if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) return
   if (e.key === 'ArrowLeft') {
     editor.back()
@@ -67,7 +68,7 @@ onMounted(async () => {
       databases.value[0]?.id ??
       null
   } catch (e) {
-    loadError.value = String(e.message ?? e)
+    loadError.value = String((e as Error)?.message ?? e)
   }
 })
 
@@ -199,7 +200,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         class="lg:w-1/3"
       >
         <p class="mb-2 text-sm font-medium">
-          {{ studies.current.name }}
+          {{ studies.current?.name }}
         </p>
         <MoveTree
           :tree="editor.tree"

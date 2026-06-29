@@ -1,13 +1,21 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { api } from '../api.js'
+import { api } from '../api'
+import type { EngineConfig } from '../types'
 
 // Persisted engine registry (issue #53): list, add/edit, pick the default,
 // remove. Writes are admin-gated server-side; errors surface inline.
-const engines = ref([])
-const defaultName = ref(null)
-const error = ref(null)
-const form = reactive({ name: '', path: '', runner: '', weights: '' })
+interface EngineForm {
+  name: string
+  path: string
+  runner: string
+  weights: string
+}
+
+const engines = ref<EngineConfig[]>([])
+const defaultName = ref<string | null>(null)
+const error = ref<string | null>(null)
+const form = reactive<EngineForm>({ name: '', path: '', runner: '', weights: '' })
 
 async function refresh() {
   error.value = null
@@ -15,17 +23,17 @@ async function refresh() {
     engines.value = await api.engines.list()
     defaultName.value = (await api.engines.default()).default
   } catch (e) {
-    error.value = String(e.message ?? e)
+    error.value = String((e as Error)?.message ?? e)
   }
 }
 
-async function run(action) {
+async function run(action: () => Promise<unknown>) {
   error.value = null
   try {
     await action()
     await refresh()
   } catch (e) {
-    error.value = String(e.message ?? e)
+    error.value = String((e as Error)?.message ?? e)
   }
 }
 
@@ -34,7 +42,7 @@ function add() {
     error.value = 'name and path are required'
     return
   }
-  const config = { name: form.name.trim(), path: form.path.trim() }
+  const config: EngineConfig = { name: form.name.trim(), path: form.path.trim() }
   if (form.runner.trim()) config.runner = form.runner.trim()
   if (form.weights.trim()) config.weights = form.weights.trim()
   run(async () => {
@@ -43,8 +51,8 @@ function add() {
   })
 }
 
-const selectDefault = (name) => run(() => api.engines.setDefault(name))
-const remove = (name) => run(() => api.engines.remove(name))
+const selectDefault = (name: string) => run(() => api.engines.setDefault(name))
+const remove = (name: string) => run(() => api.engines.remove(name))
 
 onMounted(refresh)
 

@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Search surface (issue #69): a tab toggle between header/metadata search and the
 // position / opening-tree explorer. Each tab is its own component; shared search
 // state lives in the search store.

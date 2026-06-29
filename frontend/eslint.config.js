@@ -1,24 +1,25 @@
 import js from '@eslint/js'
 import pluginVue from 'eslint-plugin-vue'
+import tseslint from 'typescript-eslint'
 
-export default [
+// Flat config: typescript-eslint parses .ts and (via vue-eslint-parser) the
+// `<script lang="ts">` blocks in .vue SFCs. `no-undef` is delegated to the type
+// checker (vue-tsc), which knows the DOM/Vitest globals from tsconfig `lib`/`types`.
+export default tseslint.config(
+  { ignores: ['dist/**', 'node_modules/**'] },
   js.configs.recommended,
+  ...tseslint.configs.recommended,
   ...pluginVue.configs['flat/recommended'],
   {
+    files: ['**/*.vue'],
     languageOptions: {
-      ecmaVersion: 'latest',
-      sourceType: 'module',
-      globals: { fetch: 'readonly', localStorage: 'readonly', console: 'readonly' },
-    },
-    rules: {
-      'vue/multi-word-component-names': 'off',
+      parserOptions: { parser: tseslint.parser },
     },
   },
   {
-    files: ['**/*.test.js'],
-    languageOptions: {
-      globals: { vi: 'readonly', describe: 'readonly', it: 'readonly', expect: 'readonly' },
+    rules: {
+      'vue/multi-word-component-names': 'off',
+      'no-undef': 'off',
     },
   },
-  { ignores: ['dist/**', 'node_modules/**'] },
-]
+)

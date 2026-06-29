@@ -1,15 +1,24 @@
-<script setup>
+<script setup lang="ts">
 // Editor for the selected node's annotations: free-text comment, NAG glyphs, and
 // the variation actions (promote to mainline / delete subtree). Presentational —
 // it emits intents and lets the parent drive the store. Disabled at the root,
 // which carries no move to annotate.
 import { ref, watch } from 'vue'
-import { nagGlyph } from '../lib/moveTree.js'
+import { nagGlyph } from '../lib/moveTree'
+import type { MoveNode } from '../types'
 
-const props = defineProps({
-  node: { type: Object, default: null },
+interface Props {
+  node?: MoveNode | null
+}
+const props = withDefaults(defineProps<Props>(), {
+  node: null,
 })
-const emit = defineEmits(['comment', 'nag', 'promote', 'delete'])
+const emit = defineEmits<{
+  comment: [comment: string]
+  nag: [nag: number]
+  promote: []
+  delete: []
+}>()
 
 // The NAGs offered as quick buttons (good/mistake/brilliant/blunder/dubious).
 const NAGS = [1, 2, 3, 4, 5, 6]

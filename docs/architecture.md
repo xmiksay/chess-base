@@ -41,13 +41,19 @@ business logic stays testable and reusable across transports (HTTP and the MCP
 
 ### Frontend (`frontend/`)
 
-Vue 3 + Vite + Pinia + Tailwind v4. Board rendering via **chessground**;
-client-side move legality via **chess.js**. Built to `frontend/dist` and embedded
-into the binary with `rust-embed` (`src/server/embed.rs`). `build.rs` guarantees
-the folder exists so the crate always compiles even before the SPA is built.
+Vue 3 + **TypeScript** + Vite + Pinia + Tailwind v4. Board rendering via
+**chessground**; client-side move legality via **chess.js**. Built to
+`frontend/dist` and embedded into the binary with `rust-embed`
+(`src/server/embed.rs`). `build.rs` guarantees the folder exists so the crate
+always compiles even before the SPA is built.
+
+The SPA is strictly typed: `vue-tsc -b` runs in `npm run build` and `npm run lint`
+(so both CI and `make lint` gate on it). Shared API/domain types live in one
+module, `src/types.ts`, imported by the typed `api.ts` client, the Pinia stores
+and the SFCs; see ADR 0021.
 
 `App.vue` is a thin nav/layout shell around a `<router-view>`; **vue-router**
-(`router/index.js`, HTML5 history) maps each top-level surface to a lazily-loaded
+(`router/index.ts`, HTML5 history) maps each top-level surface to a lazily-loaded
 view in `views/`: `AnalysisView` (`/`, the board + analysis panel), `GamesView`
 (`/games`, the game browser), `StudyView` (`/studies`, the variation-tree editor,
 see "Study editor" below), `ImportView` (`/import`, the game-import UI — see
@@ -63,8 +69,8 @@ keyset-paginated list for a selected database plus the opened game's replay stat
 backed by `/api/games`), `stores/engine.js` (the
 `/api/engine/analyse` WebSocket — folds streamed `info`/`bestmove` events into
 reactive eval/PV state; the socket factory is injectable for tests) and
-`stores/settings.js` (per-user UI preferences with a `localStorage` mirror for
-instant load; see "User settings" below) and `stores/auth.js` (server-mode
+`stores/settings.ts` (per-user UI preferences with a `localStorage` mirror for
+instant load; see "User settings" below) and `stores/auth.ts` (server-mode
 session: register/login/logout + the resolved caller; see "Auth UI" below). The
 WebSocket protocol parsing/formatting is isolated in the pure, unit-tested
 `lib/engineStream.js` (and `lib/pv.js` for UCI→SAN). Replaying a stored game's
@@ -259,7 +265,7 @@ a known set and that `default_database_id` is visible to the caller (own ∪
 global, via the shared `scope` helper); blank string fields normalize to absent.
 `server/routes/settings.rs` exposes `GET/PUT /api/settings` (the caller's own
 settings; gated by the standard identity extractor, so server mode requires
-auth). The frontend `stores/settings.js` Pinia store mirrors the server into
+auth). The frontend `stores/settings.ts` Pinia store mirrors the server into
 `localStorage` so the last-known preferences render instantly on load, then
 reconciles with the backend (the source of truth); `components/SettingsView.vue`
 (Settings toggle, which also embeds `EnginesSettings.vue`) drives it, and the
@@ -445,7 +451,7 @@ picker (the caller's databases ∪ global) feeds two forms: a **provider sync**
 (source = Lichess/Chess.com + username + optional Lichess token → `POST
 /api/import/sync`) and a **PGN upload** (a `.pgn` file read in the browser →
 `POST /api/import/pgn`). Each request runs as a tracked *job* in
-`stores/import.js`; the pure, exported `foldStatus(jobs)` folds the per-job
+`stores/import.ts`; the pure, exported `foldStatus(jobs)` folds the per-job
 statuses into an overall summary (`idle`/`running`/`done`/`partial`/`error` +
 total games imported) rendered as a status list. `foldStatus` and the store
 actions are unit-tested, as is the view's form wiring. The store calls
