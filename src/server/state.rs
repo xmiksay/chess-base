@@ -5,6 +5,7 @@ use std::sync::Arc;
 use axum::http::request::Parts;
 use sea_orm::DatabaseConnection;
 
+use crate::ai::llm::LlmProvider;
 use crate::engine::{EngineRegistry, EngineService};
 use crate::server::config::Mode;
 use crate::server::identity::{AuthError, CurrentUser};
@@ -17,6 +18,9 @@ pub struct AppState {
     /// `engine_analyse` tool. Built at startup from the registry's resolved
     /// default; `None` ⇒ those paths are disabled.
     pub engine_service: Option<Arc<EngineService>>,
+    /// LLM provider backing AI-assisted study generation (#115). Built at startup
+    /// from `ANTHROPIC_API_KEY`; `None` ⇒ the `generate_study` paths are disabled.
+    pub llm_provider: Option<Arc<dyn LlmProvider>>,
 }
 
 impl AppState {

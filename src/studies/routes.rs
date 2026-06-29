@@ -16,18 +16,29 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::db::entities::studies;
+use crate::engine::Limits;
 use crate::pgn_tree::pgn::PgnError;
 use crate::pgn_tree::{MoveTree, Shape};
+use crate::position::STARTPOS_FEN;
+use crate::search::report::PositionReportService;
 use crate::server::error::error_response;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 use crate::studies::{StudyError, StudyService};
+use crate::study_gen::tree::TreeConfig;
+use crate::study_gen::{generate_study_live, GenerateError, GenerateOutcome, GenerateParams};
+
+/// Per-position engine search depth used by `POST /api/studies/generate` when the
+/// request doesn't override it. Moderate so a generated tree's ground-truth evals
+/// land quickly; capped server-side via [`Limits::clamped`].
+const DEFAULT_GENERATE_DEPTH: u32 = 18;
 
 /// Study routes, mounted under the main API router.
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/studies", get(list).post(create))
         .route("/api/studies/import", post(import))
+        .route("/api/studies/generate", post(generate))
         .route(
             "/api/studies/{id}",
             get(get_one).patch(rename).delete(delete),
@@ -114,6 +125,57 @@ struct ImportBody {
     global: bool,
 }
 
+/// Body for `POST /api/studies/generate` — the AI-assisted study-generation
+/// orchestrator (#115). Only the target database and name are required; the start
+/// position defaults to the standard opening and pruning to [`TreeConfig::default`].
+#[derive(Deserialize)]
+struct GenerateBody {
+    database_id: i32,
+    name: String,
+    /// Create a global (admin-owned) study; requires admin. Defaults to false.
+    #[serde(default)]
+    global: bool,
+    /// FEN to grow the study from; defaults to the standard start position.
+    #[serde(default)]
+    start_fen: Option<String>,
+    /// LLM model id; defaults to the provider's default model.
+    #[serde(default)]
+    model: Option<String>,
+    /// Tree pruning thresholds; defaults to [`TreeConfig::default`].
+    #[serde(default)]
+    tree: Option<TreeConfig>,
+    /// Per-position engine search depth (plies); capped server-side.
+    #[serde(default)]
+    engine_depth: Option<u32>,
+}
+
+/// Summary returned by `generate`: the created study plus what the verification
+/// loop dropped, so the caller can fetch the full tree via `GET /api/studies/{id}`.
+#[derive(Serialize)]
+struct GenerateView {
+    id: i32,
+    database_id: i32,
+    name: String,
+    global: bool,
+    /// Nodes in the committed annotated tree.
+    node_count: usize,
+    /// How many model claims/glyphs ground truth rejected (never committed).
+    rejected: usize,
+}
+
+impl From<&GenerateOutcome> for GenerateView {
+    fn from(outcome: &GenerateOutcome) -> Self {
+        Self {
+            id: outcome.study.id,
+            database_id: outcome.study.database_id,
+            name: outcome.study.name.clone(),
+            global: outcome.study.owner_id.is_none(),
+            node_count: outcome.node_count,
+            rejected: outcome.rejected.len(),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct AddMoveBody {
     /// Node to branch from; the move becomes a child of it (a variation when the
@@ -169,6 +231,68 @@ async fn import(
         .import_pgn(&user, body.database_id, body.name, &body.pgn, body.global)
         .await?;
     Ok((StatusCode::CREATED, Json(StudyView::try_from(model)?)).into_response())
+}
+
+/// Generate an annotated study from a start position (`POST /api/studies/generate`).
+/// Thin caller over [`generate_study_live`]: it runs the tree builder → batch LLM
+/// annotation + verification pass → persist, all scoped to the caller. Requires
+/// both an engine and an LLM provider configured; failures surface a clean status
+/// without leaking engine/DB/LLM internals.
+async fn generate(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(body): Json<GenerateBody>,
+) -> Result<Response, Response> {
+    // A missing engine / model is an operator-configuration gap, not a leaked
+    // internal — surface the guidance verbatim (like the analysis WS), rather than
+    // through the 5xx-masking `error_response`.
+    let engine = state.engine_service.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "No engine configured: start chess-base with --engine / CHESS_BASE_ENGINE.",
+        )
+            .into_response()
+    })?;
+    let provider = state.llm_provider.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "No language model configured: set ANTHROPIC_API_KEY to enable study generation.",
+        )
+            .into_response()
+    })?;
+
+    let params = GenerateParams {
+        database_id: body.database_id,
+        name: body.name,
+        global: body.global,
+        start_fen: body.start_fen.unwrap_or_else(|| STARTPOS_FEN.to_string()),
+        tree: body.tree.unwrap_or_default(),
+        model: body.model,
+    };
+    let limits = Limits::depth(body.engine_depth.unwrap_or(DEFAULT_GENERATE_DEPTH)).clamped();
+    let reports = PositionReportService::new(state.db.clone());
+
+    let outcome = generate_study_live(
+        engine,
+        &reports,
+        provider.as_ref(),
+        &service(&state),
+        &user,
+        &params,
+        limits,
+    )
+    .await
+    .map_err(generate_error_response)?;
+
+    Ok((StatusCode::CREATED, Json(GenerateView::from(&outcome))).into_response())
+}
+
+/// Map a [`GenerateError`] onto an HTTP response using its transport-agnostic
+/// status hint + client-safe message (never a raw `DbErr`, engine or LLM detail).
+fn generate_error_response(error: GenerateError) -> Response {
+    let status =
+        StatusCode::from_u16(error.http_status_hint()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    error_response(status, error.client_message())
 }
 
 async fn get_one(

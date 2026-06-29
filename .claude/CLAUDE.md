@@ -32,7 +32,9 @@ src/
   study_gen/       study-gen stages (Epic 9): tree (#29) builds a pruned VariationTree;
                    features.rs (#30) pure pawn-structure & key-square concepts;
                    annotate.rs (#31) batch LLM annotation pass + verification loop
-                   (tool-free prompt, claims checked vs engine/DB before commit)   ← unit-tested
+                   (tool-free prompt, claims checked vs engine/DB before commit);
+                   generate.rs (#115) orchestrator: tree → annotate/verify → persist a
+                   study; exposed as MCP `generate_study` + POST /api/studies/generate   ← unit-tested
   auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
   server/          Axum app: routes, state, embedded SPA, browser launch,
                    MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016)

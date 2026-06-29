@@ -111,6 +111,21 @@ impl StudyService {
         self.insert(user, database_id, name, global, &tree).await
     }
 
+    /// Persist a pre-built [`MoveTree`] as a new study. The study-generation
+    /// orchestrator (#115) hands the verified, annotated tree straight to the same
+    /// insert path [`create`](Self::create) / [`import_pgn`](Self::import_pgn) use,
+    /// so ownership/`global` gating stays in one place.
+    pub async fn create_with_tree(
+        &self,
+        user: &CurrentUser,
+        database_id: i32,
+        name: impl Into<String>,
+        global: bool,
+        tree: &MoveTree,
+    ) -> Result<studies::Model, StudyError> {
+        self.insert(user, database_id, name, global, tree).await
+    }
+
     /// Export a study the caller may read as standard PGN movetext (no headers).
     pub async fn export_pgn(&self, user: &CurrentUser, id: i32) -> Result<String, StudyError> {
         let study = self.get(user, id).await?;
