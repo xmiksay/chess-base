@@ -39,19 +39,26 @@ run: frontend ## Run locally (SQLite, opens a browser)
 
 .PHONY: bundle-stockfish
 bundle-stockfish: ## Fetch this host's Stockfish into engines-bundled/<target>/ (for --features bundled-stockfish)
-	@target=$$(rustc -vV | sed -n 's/host: //p'); \
+	@set -e; \
+	target=$$(rustc -vV | sed -n 's/host: //p'); \
 	case "$$target" in \
-	  x86_64-*-linux-*)   slug=stockfish-ubuntu-x86-64-avx2;      bin=stockfish ;; \
-	  aarch64-*-linux-*)  slug=stockfish-android-armv8;           bin=stockfish ;; \
-	  x86_64-apple-*)     slug=stockfish-macos-x86-64-avx2;       bin=stockfish ;; \
-	  aarch64-apple-*)    slug=stockfish-macos-m1-apple-silicon;  bin=stockfish ;; \
-	  x86_64-*-windows-*) slug=stockfish-windows-x86-64-avx2;     bin=stockfish.exe ;; \
+	  x86_64-*-linux-*)   slug=stockfish-ubuntu-x86-64-avx2;      bin=stockfish;     arch=tar; inner=$$slug ;; \
+	  aarch64-*-linux-*)  slug=stockfish-android-armv8;           bin=stockfish;     arch=tar; inner=$$slug ;; \
+	  x86_64-apple-*)     slug=stockfish-macos-x86-64-avx2;       bin=stockfish;     arch=tar; inner=$$slug ;; \
+	  aarch64-apple-*)    slug=stockfish-macos-m1-apple-silicon;  bin=stockfish;     arch=tar; inner=$$slug ;; \
+	  x86_64-*-windows-*) slug=stockfish-windows-x86-64-avx2;     bin=stockfish.exe; arch=zip; inner=$$slug.exe ;; \
 	  *) echo "no Stockfish asset catalogued for target $$target" >&2; exit 1 ;; \
 	esac; \
 	dir="engines-bundled/$$target"; mkdir -p "$$dir"; \
-	url="https://github.com/official-stockfish/Stockfish/releases/download/sf_16.1/$$slug"; \
+	url="https://github.com/official-stockfish/Stockfish/releases/download/sf_16.1/$$slug.$$arch"; \
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
 	echo "Fetching $$url"; \
-	curl -fsSL "$$url" -o "$$dir/$$bin"; \
+	curl -fSL "$$url" -o "$$tmp/archive"; \
+	case "$$arch" in \
+	  tar) tar -xf "$$tmp/archive" -C "$$tmp" ;; \
+	  zip) unzip -oq "$$tmp/archive" -d "$$tmp" ;; \
+	esac; \
+	cp "$$tmp/stockfish/$$inner" "$$dir/$$bin"; \
 	chmod +x "$$dir/$$bin"; \
 	( cd "$$dir" && { sha256sum "$$bin" || shasum -a 256 "$$bin"; } | awk '{print $$1}' > "$$bin.sha256" ); \
 	echo "Bundled $$dir/$$bin (LICENSING: Stockfish is GPLv3 — a bundled build is GPLv3)"
