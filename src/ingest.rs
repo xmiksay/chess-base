@@ -8,12 +8,6 @@
 //! source. Parsing only reads syntax; legality is enforced by `position::replay`,
 //! so an illegal move aborts the ingest before any row is written.
 
-use std::borrow::Cow;
-use std::io::Cursor;
-use std::ops::ControlFlow;
-
-use anyhow::{anyhow, Result};
-use pgn_reader::{RawTag, Reader, SanPlus, Skip, Visitor};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait,
     QueryFilter, Set, TransactionTrait,
@@ -22,6 +16,9 @@ use sha2::{Digest, Sha256};
 
 use crate::db::entities::{databases, events, games, players, position_index};
 use crate::position::{self, zobrist_of_fen, CastlingMode, STARTPOS_FEN};
+
+mod parse;
+pub(crate) use parse::{event_offsets, parse_pgn, split_games, Headers, ParsedGame};
 
 /// Outcome of a successful ingest: the new game's id and how many positions were
 /// written to `position_index` (mainline length, capped by the database's
@@ -62,32 +59,6 @@ pub struct GameError {
 pub struct IngestReport {
     pub imported: Vec<Ingested>,
     pub errors: Vec<GameError>,
-}
-
-/// PGN seven-tag-roster + indexing-relevant headers, all optional. `variant` and
-/// `start_fen` (`[SetUp]`/`[FEN]`) make Chess960 and set-up positions first-class.
-#[derive(Debug, Default, Clone)]
-struct Headers {
-    white: Option<String>,
-    black: Option<String>,
-    event: Option<String>,
-    site: Option<String>,
-    round: Option<String>,
-    date: Option<String>,
-    result: Option<String>,
-    eco: Option<String>,
-    white_elo: Option<i32>,
-    black_elo: Option<i32>,
-    variant: Option<String>,
-    start_fen: Option<String>,
-    /// Chess.com permalink (`[Link]`); Lichess carries its permalink in `site`.
-    link: Option<String>,
-}
-
-/// A parsed PGN: its headers and the mainline SAN tokens (variations dropped).
-pub(crate) struct ParsedGame {
-    headers: Headers,
-    mainline: Vec<String>,
 }
 
 impl ParsedGame {
@@ -375,37 +346,6 @@ async fn ingest_into_report(
     Ok(())
 }
 
-/// Split a complete multi-game PGN blob into individual, trimmed game strings.
-/// Games are delimited by a line beginning with `[Event `. Shared with the
-/// streaming collectors (Lichess / Chess.com).
-pub(crate) fn split_games(blob: &str) -> Vec<String> {
-    let starts = event_offsets(blob.as_bytes());
-    let mut games = Vec::with_capacity(starts.len());
-    for (i, &start) in starts.iter().enumerate() {
-        let end = starts.get(i + 1).copied().unwrap_or(blob.len());
-        let game = blob[start..end].trim();
-        if !game.is_empty() {
-            games.push(game.to_string());
-        }
-    }
-    games
-}
-
-/// Byte offsets of every line that begins a new game (`[Event `). ASCII-only
-/// matching, so it is safe on the raw byte buffer regardless of UTF-8 framing.
-pub(crate) fn event_offsets(buf: &[u8]) -> Vec<usize> {
-    const MARKER: &[u8] = b"[Event ";
-    let mut offsets = Vec::new();
-    let mut at_line_start = true;
-    for i in 0..buf.len() {
-        if at_line_start && buf[i..].starts_with(MARKER) {
-            offsets.push(i);
-        }
-        at_line_start = buf[i] == b'\n';
-    }
-    offsets
-}
-
 /// Find a player by exact name or create one, returning its id. `None`/blank
 /// names (e.g. a missing `[White]` tag) yield `None`.
 async fn intern_player<C: ConnectionTrait>(
@@ -457,86 +397,6 @@ fn castling_mode(variant: &str) -> CastlingMode {
     match variant.to_ascii_lowercase().as_str() {
         "chess960" | "fischerandom" | "fischerrandom" => CastlingMode::Chess960,
         _ => CastlingMode::Standard,
-    }
-}
-
-/// Parse the first game's headers and mainline SAN from `pgn`.
-pub(crate) fn parse_pgn(pgn: &str) -> Result<ParsedGame> {
-    let mut reader = Reader::new(Cursor::new(pgn.as_bytes()));
-    match reader.read_game(&mut Importer) {
-        Ok(Some(game)) => Ok(game),
-        Ok(None) => Err(anyhow!("no game found in PGN")),
-        Err(e) => Err(anyhow!("malformed PGN: {e}")),
-    }
-}
-
-/// Streaming visitor collecting headers and the mainline; variations are skipped
-/// since only the mainline is indexed.
-struct Importer;
-
-impl Visitor for Importer {
-    type Tags = Headers;
-    type Movetext = ParsedGame;
-    type Output = ParsedGame;
-
-    fn begin_tags(&mut self) -> ControlFlow<Self::Output, Self::Tags> {
-        ControlFlow::Continue(Headers::default())
-    }
-
-    fn tag(
-        &mut self,
-        tags: &mut Self::Tags,
-        name: &[u8],
-        value: RawTag<'_>,
-    ) -> ControlFlow<Self::Output> {
-        set_header(tags, name, value.decode_utf8_lossy());
-        ControlFlow::Continue(())
-    }
-
-    fn begin_movetext(&mut self, tags: Self::Tags) -> ControlFlow<Self::Output, Self::Movetext> {
-        ControlFlow::Continue(ParsedGame {
-            headers: tags,
-            mainline: Vec::new(),
-        })
-    }
-
-    fn san(&mut self, game: &mut Self::Movetext, san_plus: SanPlus) -> ControlFlow<Self::Output> {
-        game.mainline.push(san_plus.to_string());
-        ControlFlow::Continue(())
-    }
-
-    fn begin_variation(&mut self, _game: &mut Self::Movetext) -> ControlFlow<Self::Output, Skip> {
-        // Only the mainline feeds the position index.
-        ControlFlow::Continue(Skip(true))
-    }
-
-    fn end_game(&mut self, game: Self::Movetext) -> Self::Output {
-        game
-    }
-}
-
-/// Record one parsed PGN tag into `headers`. Blank and `?` placeholders are
-/// dropped; Elo tags parse to integers (unparseable values are ignored).
-fn set_header(headers: &mut Headers, name: &[u8], value: Cow<'_, str>) {
-    let value = value.trim();
-    if value.is_empty() || value == "?" {
-        return;
-    }
-    match name {
-        b"White" => headers.white = Some(value.to_string()),
-        b"Black" => headers.black = Some(value.to_string()),
-        b"Event" => headers.event = Some(value.to_string()),
-        b"Site" => headers.site = Some(value.to_string()),
-        b"Round" => headers.round = Some(value.to_string()),
-        b"Date" => headers.date = Some(value.to_string()),
-        b"Result" => headers.result = Some(value.to_string()),
-        b"ECO" => headers.eco = Some(value.to_string()),
-        b"WhiteElo" => headers.white_elo = value.parse().ok(),
-        b"BlackElo" => headers.black_elo = value.parse().ok(),
-        b"Variant" => headers.variant = Some(value.to_ascii_lowercase()),
-        b"FEN" => headers.start_fen = Some(value.to_string()),
-        b"Link" => headers.link = Some(value.to_string()),
-        _ => {}
     }
 }
 
