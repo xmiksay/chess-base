@@ -84,9 +84,19 @@ impl Concepts {
 }
 
 /// Classify the pawn structure and key squares of the position described by
-/// `fen` (standard chess). Errors only on an invalid / illegal FEN.
+/// `fen` (standard chess). Errors only on an invalid / illegal FEN. A
+/// backward-compatible convenience over [`concepts_of_fen_with`] for callers
+/// that always use standard castling.
 pub fn concepts_of_fen(fen: &str) -> Result<Concepts, PositionError> {
-    let board = board_of_fen(fen, CastlingMode::Standard)?;
+    concepts_of_fen_with(fen, CastlingMode::Standard)
+}
+
+/// Classify the pawn structure and key squares of `fen` under the given
+/// castling `mode` (e.g. [`CastlingMode::Chess960`] for a Fischer-Random start,
+/// whose castling rights only parse under that mode). Errors only on an invalid
+/// / illegal FEN.
+pub fn concepts_of_fen_with(fen: &str, mode: CastlingMode) -> Result<Concepts, PositionError> {
+    let board = board_of_fen(fen, mode)?;
     Ok(analyze(&board))
 }
 

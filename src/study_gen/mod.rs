@@ -16,10 +16,11 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::engine::{EngineService, Limits, Score};
+use crate::position::CastlingMode;
 use crate::search::report::{MoveReport, PositionReportService};
 use crate::server::identity::CurrentUser;
 
-pub use features::{concepts_of_fen, Concepts, KeySquare};
+pub use features::{concepts_of_fen, concepts_of_fen_with, Concepts, KeySquare};
 pub use tree::{
     build_tree, score_to_cp, select_continuations, Candidate, ContinuationSource, Evaluator,
     TreeConfig, TreeError, VariationNode, VariationTree,
@@ -87,8 +88,9 @@ pub async fn build_variation_tree(
     start_fen: &str,
     config: &TreeConfig,
     engine_limits: Limits,
+    castling: CastlingMode,
 ) -> Result<VariationTree, TreeError> {
     let evaluator = EngineEvaluator::new(engine, engine_limits);
     let continuations = ReportContinuations::new(reports, user);
-    build_tree(&evaluator, &continuations, start_fen, config).await
+    build_tree(&evaluator, &continuations, start_fen, config, castling).await
 }
