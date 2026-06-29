@@ -18,7 +18,26 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use crate::ai::llm::anthropic::AnthropicProvider;
+use crate::ai::llm::LlmProvider;
 use crate::engine::{download_default_engines, EngineRegistry, EngineService};
+
+/// Build the LLM provider for AI-assisted study generation (#115) from
+/// `ANTHROPIC_API_KEY`. Best-effort, like engine resolution: a missing key or a
+/// construction failure is logged and leaves the `generate_study` paths disabled
+/// (`None`) — the server still starts.
+fn resolve_llm_provider() -> Option<Arc<dyn LlmProvider>> {
+    let key = std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())?;
+    match AnthropicProvider::new(key) {
+        Ok(provider) => Some(Arc::new(provider) as Arc<dyn LlmProvider>),
+        Err(e) => {
+            tracing::warn!(error = %e, "could not build LLM provider; study generation disabled");
+            None
+        }
+    }
+}
 
 /// Engines in the pooled facade. One keeps batch + MCP analysis serialized so a
 /// multi-threaded engine isn't oversubscribed against itself on a shared host.
@@ -75,10 +94,12 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
 
     // One pool backs both facades: the direct batch API and the MCP tool.
     let engine_service = default_engine.map(|c| Arc::new(EngineService::new(c, ENGINE_POOL_SIZE)));
+    let llm_provider = resolve_llm_provider();
     let state = AppState {
         db: db.clone(),
         mode: cfg.mode,
         engine_service,
+        llm_provider,
     };
     let app = build_router(state);
 

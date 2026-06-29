@@ -8,10 +8,18 @@ use std::collections::BTreeMap;
 use serde_json::{json, Value};
 
 use super::{Tool, ToolOutcome, ToolRegistry};
-use crate::engine::{MAX_DEPTH, MAX_MOVETIME_MS};
+use crate::engine::{Limits, MAX_DEPTH, MAX_MOVETIME_MS};
+use crate::position::STARTPOS_FEN;
+use crate::search::report::PositionReportService;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 use crate::studies::{StudyError, StudyService};
+use crate::study_gen::tree::TreeConfig;
+use crate::study_gen::{generate_study_live, GenerateError, GenerateParams};
+
+/// Per-position engine search depth for `generate_study` when unspecified; capped
+/// server-side via [`Limits::clamped`].
+const DEFAULT_GENERATE_DEPTH: u32 = 18;
 
 /// The default registry. An `echo` stub proves dispatch; the engine facade
 /// registers `engine_analyse`; the study tools (#17) mutate the caller's studies;
@@ -25,6 +33,7 @@ pub fn default_registry() -> ToolRegistry {
     registry.register(study_create_tool());
     registry.register(study_add_move_tool());
     registry.register(study_annotate_tool());
+    registry.register(generate_study_tool());
     super::db_tools::register(&mut registry);
     super::analysis::register(&mut registry);
     registry
@@ -249,6 +258,126 @@ async fn study_annotate(app: AppState, user: CurrentUser, args: Value) -> ToolOu
     }
 }
 
+/// Generate a fully annotated study from a start position — the AI-assisted
+/// study-generation orchestrator (#115). Ties the Epic 9 stages together end to
+/// end (tree builder → batch LLM annotation + verification → persist).
+fn generate_study_tool() -> Tool {
+    Tool::new(
+        "generate_study",
+        "Generate an annotated study for a position: build a variation tree from \
+         the master/reference games, annotate it with a language model, verify \
+         every concrete claim against the engine and database (ground truth), and \
+         save the result as a study you own. Requires both an engine and a \
+         language model configured. Returns the new study id and a summary.",
+        json!({
+            "type": "object",
+            "properties": {
+                "database_id": { "type": "integer", "description": "Database the new study belongs to." },
+                "name": { "type": "string", "description": "Name for the new study." },
+                "fen": { "type": "string", "description": "Start position in FEN; defaults to the standard opening." },
+                "global": { "type": "boolean", "description": "Make it a global (admin) study (requires admin)." },
+                "model": { "type": "string", "description": "Language model id; defaults to the provider's default." },
+                "engine_depth": {
+                    "type": "integer", "minimum": 1, "maximum": MAX_DEPTH,
+                    "description": "Per-position engine search depth in plies; capped server-side."
+                },
+                "tree": {
+                    "type": "object",
+                    "description": "Optional tree pruning thresholds (max_depth, max_children, max_nodes, min_frequency, eval_margin_cp)."
+                }
+            },
+            "required": ["database_id", "name"]
+        }),
+        |app, user, args| async move { generate_study(app, user, args).await },
+    )
+}
+
+async fn generate_study(app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
+    let Some(database_id) = args.get("database_id").and_then(Value::as_i64) else {
+        return ToolOutcome::error("Invalid arguments: missing integer field `database_id`.");
+    };
+    let Some(name) = args.get("name").and_then(Value::as_str) else {
+        return ToolOutcome::error("Invalid arguments: missing string field `name`.");
+    };
+
+    let engine = match &app.engine_service {
+        Some(engine) => engine.clone(),
+        None => {
+            return ToolOutcome::error(
+                "No engine configured: start chess-base with --engine / CHESS_BASE_ENGINE.",
+            )
+        }
+    };
+    let provider =
+        match &app.llm_provider {
+            Some(provider) => provider.clone(),
+            None => return ToolOutcome::error(
+                "No language model configured: set ANTHROPIC_API_KEY to enable study generation.",
+            ),
+        };
+
+    let tree = match args.get("tree") {
+        None | Some(Value::Null) => TreeConfig::default(),
+        Some(value) => match serde_json::from_value(value.clone()) {
+            Ok(config) => config,
+            Err(e) => return ToolOutcome::error(format!("Invalid arguments: bad `tree`: {e}")),
+        },
+    };
+    let params = GenerateParams {
+        database_id: database_id as i32,
+        name: name.to_string(),
+        global: args.get("global").and_then(Value::as_bool).unwrap_or(false),
+        start_fen: args
+            .get("fen")
+            .and_then(Value::as_str)
+            .filter(|fen| !fen.trim().is_empty())
+            .unwrap_or(STARTPOS_FEN)
+            .to_string(),
+        tree,
+        model: args
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    };
+    let depth = args
+        .get("engine_depth")
+        .and_then(Value::as_u64)
+        .map(|d| d as u32)
+        .unwrap_or(DEFAULT_GENERATE_DEPTH);
+    let limits = Limits::depth(depth).clamped();
+    let reports = PositionReportService::new(app.db.clone());
+    let studies = StudyService::new(app.db.clone());
+
+    match generate_study_live(
+        &engine,
+        &reports,
+        provider.as_ref(),
+        &studies,
+        &user,
+        &params,
+        limits,
+    )
+    .await
+    {
+        Ok(outcome) => ToolOutcome::ok(
+            json!({
+                "id": outcome.study.id,
+                "name": outcome.study.name,
+                "node_count": outcome.node_count,
+                "rejected": outcome.rejected.len(),
+            })
+            .to_string(),
+        ),
+        Err(e) => generate_error(e),
+    }
+}
+
+/// Map a [`GenerateError`] onto a tool `isError` outcome with a client-safe
+/// message — never leaks a raw DB error, engine output or provider detail.
+fn generate_error(error: GenerateError) -> ToolOutcome {
+    ToolOutcome::error(error.client_message())
+}
+
 /// Map a [`StudyError`] to a tool `isError` outcome — never leaks a raw DB error.
 fn study_error(error: StudyError) -> ToolOutcome {
     match error {
@@ -271,6 +400,7 @@ mod tests {
             "study_create",
             "study_add_move",
             "study_annotate",
+            "generate_study",
         ] {
             assert!(
                 tools.iter().any(|t| t["name"] == expected),

@@ -148,6 +148,52 @@ async fn engine_analyse_without_engine_is_a_tool_error() {
 }
 
 #[tokio::test]
+async fn tools_list_includes_generate_study() {
+    let (status, v) = rpc(json!({
+        "jsonrpc": "2.0", "id": 60, "method": "tools/list"
+    }))
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let tools = v["result"]["tools"].as_array().unwrap();
+    assert!(tools.iter().any(|t| t["name"] == "generate_study"));
+}
+
+#[tokio::test]
+async fn generate_study_without_engine_is_a_tool_error() {
+    // No engine and no model wired ⇒ the orchestrator tool reports a graceful
+    // `isError`, not a panic or transport error. The dispatch itself succeeds.
+    let (status, v) = rpc(json!({
+        "jsonrpc": "2.0", "id": 61, "method": "tools/call",
+        "params": {
+            "name": "generate_study",
+            "arguments": { "database_id": 1, "name": "From e4" }
+        }
+    }))
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["result"]["isError"], json!(true));
+    assert!(v["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("No engine configured"));
+}
+
+#[tokio::test]
+async fn generate_study_requires_arguments() {
+    // Missing the required `database_id` / `name` is rejected before any stage.
+    let (status, v) = rpc(json!({
+        "jsonrpc": "2.0", "id": 62, "method": "tools/call",
+        "params": { "name": "generate_study", "arguments": {} }
+    }))
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["result"]["isError"], json!(true));
+}
+
+#[tokio::test]
 async fn engine_analyse_missing_fen_is_a_tool_error() {
     // Even with an engine present this would reject; with none it still must.
     let (status, v) = rpc(json!({
@@ -167,6 +213,7 @@ async fn missing_bearer_is_unauthorized_with_resource_metadata() {
         db,
         mode: Mode::Server,
         engine_service: None,
+        llm_provider: None,
     });
 
     let resp = app
@@ -205,6 +252,7 @@ async fn invalid_bearer_is_unauthorized() {
         db,
         mode: Mode::Server,
         engine_service: None,
+        llm_provider: None,
     });
 
     let resp = app
@@ -278,6 +326,7 @@ async fn tools_call_rejects_mutating_a_non_owned_study() {
         db,
         mode: Mode::Server,
         engine_service: None,
+        llm_provider: None,
     });
 
     let resp = app

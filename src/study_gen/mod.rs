@@ -9,6 +9,7 @@
 
 pub mod annotate;
 pub mod features;
+pub mod generate;
 pub mod tree;
 
 use std::collections::BTreeMap;
@@ -26,6 +27,9 @@ pub use annotate::{
     AnnotationOutcome, Claim, DraftAnnotation, Rejection,
 };
 pub use features::{concepts_of_fen, concepts_of_fen_with, Concepts, KeySquare};
+pub use generate::{
+    generate_study, generate_study_live, GenerateError, GenerateOutcome, GenerateParams,
+};
 pub use tree::{
     build_tree, score_to_cp, select_continuations, Candidate, ContinuationSource, Evaluator,
     TreeConfig, TreeError, VariationNode, VariationTree,

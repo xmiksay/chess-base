@@ -18,6 +18,7 @@ async fn server_app() -> Router {
         db,
         mode: Mode::Server,
         engine_service: None,
+        llm_provider: None,
     })
 }
 

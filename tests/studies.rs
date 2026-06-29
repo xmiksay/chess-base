@@ -20,6 +20,7 @@ async fn server_app() -> Router {
         db,
         mode: Mode::Server,
         engine_service: None,
+        llm_provider: None,
     })
 }
 
@@ -635,4 +636,31 @@ async fn unauthenticated_requests_are_rejected() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// `POST /api/studies/generate` is mounted and callable; with no engine wired the
+/// orchestrator surfaces a clean `503` (never a panic or a leaked internal error).
+/// The full happy path is covered at the service layer with injected fakes
+/// (`study_gen::generate` unit tests), since it needs a real engine + LLM.
+#[tokio::test]
+async fn generate_without_engine_is_service_unavailable() {
+    let app = server_app().await;
+    let admin = register(&app, "alice").await; // first user → admin
+    let db_id = make_database(&app, &admin).await;
+
+    let resp = app
+        .clone()
+        .oneshot(json_req(
+            "POST",
+            "/api/studies/generate",
+            &admin,
+            json!({"database_id": db_id, "name": "From the start"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("No engine configured"), "body was: {text}");
 }
