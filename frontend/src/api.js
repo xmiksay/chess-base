@@ -1,7 +1,43 @@
 // Thin client for the chess-base backend JSON API.
 
+// Server-mode session token. The browser also receives an HttpOnly `session`
+// cookie on login, but same-origin requests attach the token as a Bearer header
+// too so the client controls when it authenticates (and can drop it on logout).
+const TOKEN_KEY = 'chess-base:token'
+
+let authToken = readStoredToken()
+
+function readStoredToken() {
+  try {
+    return window.localStorage.getItem(TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+/** Set (or clear, with a falsy value) the token used to authenticate requests. */
+export function setAuthToken(token) {
+  authToken = token || null
+  try {
+    if (authToken) window.localStorage.setItem(TOKEN_KEY, authToken)
+    else window.localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    // Storage unavailable (private mode / quota): the in-memory token still
+    // authenticates this tab; it just won't survive a reload.
+  }
+}
+
+export function getAuthToken() {
+  return authToken
+}
+
+/** Merge the Bearer auth header into a (possibly empty) header set. */
+function withAuth(headers = {}) {
+  return authToken ? { ...headers, Authorization: `Bearer ${authToken}` } : { ...headers }
+}
+
 async function getJson(path) {
-  const res = await fetch(path)
+  const res = await fetch(path, { headers: withAuth() })
   if (!res.ok) throw new Error(`${path} → ${res.status}`)
   return res.json()
 }
@@ -9,7 +45,7 @@ async function getJson(path) {
 // The search endpoints stream NDJSON (one JSON object per line); parse it into
 // an array. Blank lines are skipped so a trailing newline is harmless.
 async function getNdjson(path) {
-  const res = await fetch(path)
+  const res = await fetch(path, { headers: withAuth() })
   if (!res.ok) {
     let detail = ''
     try {
@@ -29,7 +65,7 @@ async function getNdjson(path) {
 async function send(method, path, body) {
   const res = await fetch(path, {
     method,
-    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    headers: withAuth(body === undefined ? {} : { 'Content-Type': 'application/json' }),
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!res.ok) {
@@ -50,6 +86,16 @@ export const api = {
   // Identity of the caller (issue #67): { id, is_admin } — drives whether
   // global (admin-managed) collections render writable.
   whoami: () => getJson('/api/whoami'),
+
+  // Server-mode auth (issue #71). `register`/`login` return { token, user };
+  // the caller stores the token via setAuthToken. `logout` is 204 (no body).
+  // These 400 in local mode (no login — the single user is the implicit admin).
+  auth: {
+    register: (username, password) =>
+      send('POST', '/api/auth/register', { username, password }),
+    login: (username, password) => send('POST', '/api/auth/login', { username, password }),
+    logout: () => send('POST', '/api/auth/logout'),
+  },
 
   // Engine registry (issue #53): persisted multi-engine config + default.
   engines: {

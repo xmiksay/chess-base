@@ -46,9 +46,10 @@ the folder exists so the crate always compiles even before the SPA is built.
 `App.vue` is a thin nav/layout shell around a `<router-view>`; **vue-router**
 (`router/index.js`, HTML5 history) maps each top-level surface to a lazily-loaded
 view in `views/`: `AnalysisView` (`/`, the board + analysis panel), `GamesView`
-(`/games`, the game browser) and `SearchView` (`/search`, see "Search UI" below)
-plus stubs for `collections`, `settings` and `login`. Deep links work because the
-server's `static_handler` falls back to `index.html` for unknown paths
+(`/games`, the game browser), `SearchView` (`/search`, see "Search UI" below)
+and `LoginView` (`/login`, the server-mode register/login form, see "Auth UI"
+below) plus a stub for `collections`. Deep links work because the server's
+`static_handler` falls back to `index.html` for unknown paths
 (`src/server/routes/mod.rs`).
 
 State lives in Pinia stores: `stores/game.js` (chess.js-backed position,
@@ -58,7 +59,8 @@ backed by `/api/games`), `stores/engine.js` (the
 `/api/engine/analyse` WebSocket — folds streamed `info`/`bestmove` events into
 reactive eval/PV state; the socket factory is injectable for tests) and
 `stores/settings.js` (per-user UI preferences with a `localStorage` mirror for
-instant load; see "User settings" below). The
+instant load; see "User settings" below) and `stores/auth.js` (server-mode
+session: register/login/logout + the resolved caller; see "Auth UI" below). The
 WebSocket protocol parsing/formatting is isolated in the pure, unit-tested
 `lib/engineStream.js` (and `lib/pv.js` for UCI→SAN). Replaying a stored game's
 PGN into one board position per ply, plus the pure ply-navigation logic, lives in
@@ -99,6 +101,21 @@ cookie; both resolve via `auth::token_from_headers`. The HTTP surface
 the **first** registered user is made admin, so global databases are manageable.
 `AuthService` is the only thing #14 added to the identity seam — no handler or
 service signature changed.
+
+### Auth UI (#71)
+
+The SPA's auth surface is server-mode only; local mode is the implicit admin and
+shows no login controls. `api.js` keeps the session token in memory plus a
+`localStorage` mirror (`setAuthToken`/`getAuthToken`) and attaches it as
+`Authorization: Bearer <token>` to every request (the HttpOnly `session` cookie
+the backend sets still works too — the Bearer header just lets the client decide
+when it authenticates and drop it on logout). `stores/auth.js` resolves the run
+mode from `/api/health` once (`init()`), restores the user via `/api/whoami` when
+a token is present, and exposes `register`/`login`/`logout` plus `needsAuth`. The
+router guard (`authRedirect` in `router/index.js`) bounces gated navigations to
+`LoginView` (`/login`) with a `redirect` query and sends already-authenticated
+callers away from it. Backend error messages are pre-sanitized (generic for 5xx),
+so the form surfaces them verbatim without leaking internals.
 
 ## MCP endpoint (ADR 0008)
 
