@@ -14,6 +14,10 @@ use shakmaty::{Chess, EnPassantMode, Move, Position};
 // `shakmaty::Chess` type backs both (per ADR-0009).
 pub use shakmaty::CastlingMode;
 
+// Board-geometry types re-exported so the pure feature layer (issue #30) reads
+// the board through these queries without taking its own `shakmaty` dependency.
+pub use shakmaty::{Board, Color, File, Rank, Role, Square};
+
 /// Standard chess starting position in FEN.
 pub const STARTPOS_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -77,6 +81,40 @@ pub fn zobrist_of_position(pos: &Chess) -> u64 {
 pub fn black_to_move(fen: &str, mode: CastlingMode) -> Result<bool, PositionError> {
     let pos = position_from_fen(fen, mode)?;
     Ok(pos.turn() == shakmaty::Color::Black)
+}
+
+// --- board queries -------------------------------------------------------
+//
+// Small, reusable readers over a parsed [`Board`]. They take `&Board` (not the
+// whole `Chess`) so any layer holding a board can call them, and they back the
+// pawn-structure / key-square classifier in [`crate::study_gen::features`].
+
+/// Parse `fen` and hand back just its [`Board`] — the piece placement the pure
+/// feature layer reads, without the rest of the game state.
+pub fn board_of_fen(fen: &str, mode: CastlingMode) -> Result<Board, PositionError> {
+    Ok(position_from_fen(fen, mode)?.board().clone())
+}
+
+/// Squares occupied by `color`'s pawns, in board order (a1, b1, …).
+pub fn pawn_squares(board: &Board, color: Color) -> Vec<Square> {
+    (board.pawns() & board.by_color(color))
+        .into_iter()
+        .collect()
+}
+
+/// Per-file pawn counts for `color`: index 0 is the a-file … 7 the h-file. A
+/// count `>= 2` on a file means doubled (or tripled) pawns there.
+pub fn pawn_file_counts(board: &Board, color: Color) -> [u8; 8] {
+    let mut counts = [0u8; 8];
+    for sq in pawn_squares(board, color) {
+        counts[sq.file().to_u32() as usize] += 1;
+    }
+    counts
+}
+
+/// `color`'s king square, if the side has a king on the board.
+pub fn king_square(board: &Board, color: Color) -> Option<Square> {
+    board.king_of(color)
 }
 
 /// All legal moves from `fen`, in SAN, sorted for deterministic output.
@@ -315,6 +353,30 @@ mod tests {
             "pawn should advance from the supplied start FEN, got {}",
             plies[0].fen
         );
+    }
+
+    #[test]
+    fn pawn_queries_read_the_skeleton() {
+        let pos = position_from_fen(STARTPOS_FEN, STD).unwrap();
+        let board = pos.board();
+        assert_eq!(pawn_squares(board, Color::White).len(), 8);
+        assert_eq!(pawn_file_counts(board, Color::White), [1; 8]);
+        // A doubled c-pawn: White has pawns on c2 and c3.
+        let doubled = position_from_fen(
+            "rnbqkbnr/pppppppp/8/8/8/2P5/PPP1PPPP/RNBQKBNR b KQkq - 0 1",
+            STD,
+        )
+        .unwrap();
+        let counts = pawn_file_counts(doubled.board(), Color::White);
+        assert_eq!(counts[File::C.to_u32() as usize], 2);
+        assert_eq!(counts[File::D.to_u32() as usize], 0);
+    }
+
+    #[test]
+    fn king_square_locates_each_king() {
+        let pos = position_from_fen(STARTPOS_FEN, STD).unwrap();
+        assert_eq!(king_square(pos.board(), Color::White), Some(Square::E1));
+        assert_eq!(king_square(pos.board(), Color::Black), Some(Square::E8));
     }
 
     #[test]

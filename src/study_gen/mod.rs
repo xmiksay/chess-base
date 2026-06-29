@@ -7,6 +7,7 @@
 //! [`tree::build_tree`] walk to the real engine facade and DB layer; the tree
 //! types and pruning logic live in [`tree`].
 
+pub mod features;
 pub mod tree;
 
 use std::collections::BTreeMap;
@@ -18,6 +19,7 @@ use crate::engine::{EngineService, Limits, Score};
 use crate::search::report::{MoveReport, PositionReportService};
 use crate::server::identity::CurrentUser;
 
+pub use features::{concepts_of_fen, Concepts, KeySquare};
 pub use tree::{
     build_tree, score_to_cp, select_continuations, Candidate, ContinuationSource, Evaluator,
     TreeConfig, TreeError, VariationNode, VariationTree,
