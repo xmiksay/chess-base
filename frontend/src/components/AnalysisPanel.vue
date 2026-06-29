@@ -211,7 +211,10 @@ onUnmounted(() => engine.disconnect())
         <li
           v-for="line in engine.lines"
           :key="line.multipv"
-          class="flex gap-2 rounded bg-neutral-100 px-2 py-1"
+          class="flex cursor-default gap-2 rounded px-2 py-1 ring-inset transition"
+          :class="engine.activeLine === line.multipv ? 'bg-neutral-200 ring-1 ring-neutral-400' : 'bg-neutral-100'"
+          @mouseenter="engine.setActiveLine(line.multipv)"
+          @mouseleave="engine.setActiveLine(null)"
         >
           <span class="w-12 shrink-0 font-semibold tabular-nums">
             {{ formatScore(line.score, stm) }}

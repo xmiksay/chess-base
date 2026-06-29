@@ -120,6 +120,46 @@ describe('engine store', () => {
     expect(frame!.options.MultiPV).toBe('4')
   })
 
+  it('threads planline frames into plans and derives dimmed shapes on hover', () => {
+    const engine = freshStore()
+    engine.connect()
+    FakeWebSocket.last.open()
+    FakeWebSocket.last.emit({
+      type: 'planline',
+      multipv: 1,
+      pv: ['g1f3'],
+      trajectories: [{ piece: 'N', squares: ['g1', 'f3', 'g5'] }],
+    })
+    FakeWebSocket.last.emit({
+      type: 'planline',
+      multipv: 2,
+      pv: ['e2e4'],
+      trajectories: [{ piece: 'P', squares: ['e2', 'e4'] }],
+    })
+    expect(engine.plans.map((p) => p.multipv)).toEqual([1, 2])
+    // No active line ⇒ both lines drawn at full opacity.
+    expect(engine.shapes.every((s) => !s.brush?.endsWith('d'))).toBe(true)
+    engine.setActiveLine(1)
+    expect(engine.shapes.find((s) => s.orig === 'e2')?.brush).toBe('plan2d')
+    expect(engine.shapes.find((s) => s.orig === 'g1')?.brush).toBe('plan1')
+  })
+
+  it('clears plans when a new search starts', () => {
+    const engine = freshStore()
+    engine.connect()
+    FakeWebSocket.last.open()
+    FakeWebSocket.last.emit({
+      type: 'planline',
+      multipv: 1,
+      pv: ['g1f3'],
+      trajectories: [{ piece: 'N', squares: ['g1', 'f3'] }],
+    })
+    expect(engine.plans).toHaveLength(1)
+    engine.analyse('newfen', {})
+    expect(engine.plans).toHaveLength(0)
+    expect(engine.shapes).toHaveLength(0)
+  })
+
   it('surfaces error frames', () => {
     const engine = freshStore()
     engine.connect()

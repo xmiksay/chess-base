@@ -4,11 +4,13 @@ import Board from '../components/Board.vue'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import { useGameStore } from '../stores/game'
 import { useSettingsStore } from '../stores/settings'
+import { useEngineStore } from '../stores/engine'
 import { api } from '../api'
 import type { BoardMove } from '../types'
 
 const game = useGameStore()
 const settings = useSettingsStore()
+const engine = useEngineStore()
 const error = ref<string | null>(null)
 
 // In play mode only the human's side may move (and only while the game is live).
@@ -38,6 +40,7 @@ onMounted(async () => {
         :dests="game.legalDests"
         :movable="movable"
         :board-theme="settings.boardTheme"
+        :shapes="engine.shapes"
         @move="onMove"
       />
       <p

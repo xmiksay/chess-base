@@ -68,17 +68,26 @@ legal-move `dests`, play-vs-engine moves), `stores/games.js` (the game browser �
 keyset-paginated list for a selected database plus the opened game's replay state;
 backed by `/api/games`), `stores/engine.js` (the
 `/api/engine/analyse` WebSocket — folds streamed `info`/`bestmove` events into
-reactive eval/PV state; the socket factory is injectable for tests) and
+reactive eval/PV state, and `planline` frames into per-MultiPV `plans` plus a
+derived `shapes` overlay for the board; the socket factory is injectable for
+tests) and
 `stores/settings.ts` (per-user UI preferences with a `localStorage` mirror for
 instant load; see "User settings" below) and `stores/auth.ts` (server-mode
 session: register/login/logout + the resolved caller; see "Auth UI" below). The
 WebSocket protocol parsing/formatting is isolated in the pure, unit-tested
-`lib/engineStream.js` (and `lib/pv.js` for UCI→SAN). Replaying a stored game's
+`lib/engineStream.js` (and `lib/pv.js` for UCI→SAN). The pure, unit-tested
+`lib/plansToShapes.js` maps the engine's per-piece `trajectories` into chessground
+auto-shapes — one brush per line (`plan1…3` + dimmed variants), a chained arrow
+per square pair, the hovered line full-opacity and the rest dimmed (issue #60,
+ADR 0017). Replaying a stored game's
 PGN into one board position per ply, plus the pure ply-navigation logic, lives in
 the unit-tested `lib/pgnViewer.js`. `components/AnalysisPanel.vue`
 (+ `EvalBar.vue`) renders the eval bar, MultiPV lines, depth/nps, engine options
-and play-vs-engine controls; `Board.vue` is presentational (it also drives the
-read-only game viewer in `GamesView`) and emits user moves.
+and play-vs-engine controls — hovering a PV row sets the store's active line so
+its plan highlights and the others dim. `Board.vue` is presentational (it also
+drives the read-only game viewer in `GamesView`), emits user moves, and renders
+the plan overlay via `setAutoShapes` (auto-shapes, so a user's right-click
+drawings survive), cleared on every position change.
 
 The **study editor** (issue #8, `views/StudyView.vue`) builds and annotates
 commented PGN trees. `stores/studies.js` owns the open study (`current`, with its
