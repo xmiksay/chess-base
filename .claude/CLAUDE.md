@@ -29,6 +29,8 @@ src/
   collectors/      GameSource trait + Lichess / Chess.com adapters
   engine.rs        UCI engine config + parsing (Stockfish, Lc0/Maia)
   ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
+  study_gen/       study-gen stages (Epic 9): tree (#29) builds a pruned VariationTree;
+                   features.rs (#30) pure pawn-structure & key-square concepts   ← unit-tested
   auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
   server/          Axum app: routes, state, embedded SPA, browser launch,
                    MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016)

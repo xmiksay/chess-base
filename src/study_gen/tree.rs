@@ -23,6 +23,7 @@ use crate::engine::Score;
 use crate::openings::opening_of_zobrist;
 use crate::position::{apply_san, zobrist_of_fen, CastlingMode};
 use crate::search::report::{EcoInfo, MoveReport};
+use crate::study_gen::features::{concepts_of_fen, Concepts};
 
 const STD: CastlingMode = CastlingMode::Standard;
 
@@ -114,6 +115,10 @@ pub struct VariationNode {
     /// ECO classification of this position, if the opening is known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eco: Option<EcoInfo>,
+    /// Strategic concepts (pawn structure, key squares, files, king safety,
+    /// material imbalance) for this position — the issue #30 feature layer.
+    #[serde(default, skip_serializing_if = "Concepts::is_empty")]
+    pub concepts: Concepts,
     pub children: Vec<usize>,
 }
 
@@ -223,6 +228,7 @@ where
         eval: root_eval,
         stats: None,
         eco: eco_for(root_zobrist),
+        concepts: concepts_of_fen(start_fen).unwrap_or_default(),
         children: Vec::new(),
     }];
 
@@ -276,6 +282,7 @@ where
                 eval: *child_eval,
                 stats: Some(mv.clone()),
                 eco: eco_for(*child_zobrist),
+                concepts: concepts_of_fen(child_fen).unwrap_or_default(),
                 children: Vec::new(),
             });
             nodes[idx].children.push(child_id);
