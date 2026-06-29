@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::db::entities::position_index;
 use crate::openings::opening_of_zobrist;
@@ -22,7 +22,7 @@ use crate::search::position::{GameHit, MoveStat, PositionSearchService, SearchEr
 use crate::server::identity::CurrentUser;
 
 /// ECO classification (code + name) for a position.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EcoInfo {
     pub eco: String,
     pub name: String,
@@ -33,7 +33,7 @@ pub struct EcoInfo {
 /// `0..=1`) and `score` (White's performance, `0..=1`). `white`/`draws`/`black`
 /// are the win/draw/loss counts; games with an unknown result (`*`) count toward
 /// `count` only and are excluded from `score`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MoveReport {
     pub san: String,
     pub count: u64,
