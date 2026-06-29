@@ -172,6 +172,21 @@ export const api = {
       ),
   },
 
+  // Game import (issue #70): trigger a Lichess / Chess.com sync, or upload a
+  // PGN file, into a target database. Both return `{ imported }` — the number of
+  // games ingested this run. A blank `token` is omitted (Lichess only).
+  import: {
+    sync: (databaseId, source, username, token) =>
+      send('POST', '/api/import/sync', {
+        database_id: databaseId,
+        source,
+        username,
+        ...(token ? { token } : {}),
+      }),
+    uploadPgn: (databaseId, pgn) =>
+      send('POST', '/api/import/pgn', { database_id: databaseId, pgn }),
+  },
+
   // Per-user settings (issue #13): theme, board theme, default database.
   settings: {
     get: () => getJson('/api/settings'),
