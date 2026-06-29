@@ -54,7 +54,9 @@ and the SFCs; see ADR 0021.
 
 `App.vue` is a thin nav/layout shell around a `<router-view>`; **vue-router**
 (`router/index.ts`, HTML5 history) maps each top-level surface to a lazily-loaded
-view in `views/`: `AnalysisView` (`/`, the board + analysis panel), `GamesView`
+view in `views/`: `AnalysisView` (`/`, the board + analysis panel + a flat
+move-list/notation panel with ply-cursor navigation — `components/MoveList.vue`,
+click or ←/→/Home/End to jump the board & engine to a ply, issue #121), `GamesView`
 (`/games`, the game browser), `StudyView` (`/studies`, the variation-tree editor,
 see "Study editor" below), `ImportView` (`/import`, the game-import UI — see
 "Game import" below), `SearchView` (`/search`, see "Search UI" below) and
@@ -65,7 +67,10 @@ databases via `/api/databases`, store `stores/collections.ts`). Deep links work 
 (`src/server/routes/mod.rs`).
 
 State lives in Pinia stores: `stores/game.ts` (chess.js-backed position,
-legal-move `dests`, play-vs-engine moves), `stores/games.ts` (the game browser —
+legal-move `dests`, play-vs-engine moves, plus a flat game line with a `ply`
+cursor — `goto`/`next`/`prev`/`first`/`last` move the board & engine without
+mutating the line; playing at a non-tip ply truncates the future, issue #121),
+`stores/games.ts` (the game browser —
 keyset-paginated list for a selected database plus the opened game's replay state;
 backed by `/api/games`), `stores/engine.ts` (the
 `/api/engine/analyse` WebSocket — folds streamed `info`/`bestmove` events into
@@ -107,7 +112,9 @@ line's plan trajectories (`lib/plansToShapes.ts`) into stored `Shape`s. The pure
 move/variation tokens with move numbers + NAG glyphs) is the unit-tested
 `lib/moveTree.ts`. `components/MoveTree.vue` renders those tokens (click to
 navigate, variations dimmed by depth); `components/AnnotationEditor.vue` edits the
-selected node's comment/NAG and promotes/deletes variations.
+selected node's comment/NAG and promotes/deletes variations. The analysis board's
+flat, variation-free notation is the separate `components/MoveList.vue` (numbered
+pairs over `game.history`, click a move to `goto` its ply, issue #121).
 
 In dev, Vite serves the SPA and proxies `/api` (with `ws: true` for the engine
 WebSocket) to the backend on `:3030`.

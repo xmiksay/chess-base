@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Board from '../components/Board.vue'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
+import MoveList from '../components/MoveList.vue'
 import { useGameStore } from '../stores/game'
 import { useSettingsStore } from '../stores/settings'
 import { useEngineStore } from '../stores/engine'
@@ -22,13 +23,35 @@ function onMove({ from, to }: BoardMove) {
   game.playMove({ from, to })
 }
 
+// ← / → step through plies; ↑ / Home jump to start, ↓ / End to the last move.
+function onKey(e: KeyboardEvent) {
+  const target = e.target as HTMLElement | null
+  if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) return
+  if (e.key === 'ArrowLeft') {
+    game.prev()
+    e.preventDefault()
+  } else if (e.key === 'ArrowRight') {
+    game.next()
+    e.preventDefault()
+  } else if (e.key === 'ArrowUp' || e.key === 'Home') {
+    game.first()
+    e.preventDefault()
+  } else if (e.key === 'ArrowDown' || e.key === 'End') {
+    game.last()
+    e.preventDefault()
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener('keydown', onKey)
   try {
     await api.health()
   } catch (e) {
     error.value = String(e)
   }
 })
+
+onUnmounted(() => window.removeEventListener('keydown', onKey))
 </script>
 
 <template>
@@ -39,6 +62,7 @@ onMounted(async () => {
         :orientation="game.orientation"
         :dests="game.legalDests"
         :movable="movable"
+        :last-move="game.lastMove"
         :board-theme="settings.boardTheme"
         :shapes="engine.shapes"
         @move="onMove"
@@ -49,6 +73,49 @@ onMounted(async () => {
       >
         Backend offline: {{ error }}
       </p>
+
+      <!-- Move-list navigation -->
+      <div class="mt-3 flex items-center gap-2">
+        <button
+          class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
+          :disabled="game.atStart"
+          aria-label="Start"
+          @click="game.first()"
+        >
+          ⏮
+        </button>
+        <button
+          class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
+          :disabled="game.atStart"
+          aria-label="Back"
+          @click="game.prev()"
+        >
+          ◀
+        </button>
+        <button
+          class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
+          :disabled="game.atEnd"
+          aria-label="Forward"
+          @click="game.next()"
+        >
+          ▶
+        </button>
+        <button
+          class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
+          :disabled="game.atEnd"
+          aria-label="End"
+          @click="game.last()"
+        >
+          ⏭
+        </button>
+      </div>
+
+      <MoveList
+        class="mt-3"
+        :history="game.history"
+        :current-ply="game.ply"
+        @select="game.goto($event)"
+      />
     </section>
 
     <aside class="flex-1">
