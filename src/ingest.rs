@@ -150,6 +150,65 @@ pub async fn ingest_pgn(db: &DatabaseConnection, database_id: i32, pgn: &str) ->
     })
 }
 
+/// Parse, store and index **every** game in a multi-game PGN into `database_id`,
+/// returning one [`Ingested`] per game in document order.
+///
+/// Games are split on the `[Event ` line that opens each one (the export
+/// convention shared by Lichess / Chess.com and `pgn-reader`). Each game is its
+/// own [`ingest_pgn`] transaction, so a malformed or illegal game aborts that
+/// game only — the ones already ingested before it stay committed.
+pub async fn ingest_pgn_all(
+    db: &DatabaseConnection,
+    database_id: i32,
+    pgn: &str,
+) -> Result<Vec<Ingested>> {
+    let games = split_games(pgn);
+    // A blob with no `[Event]` header is still a single (headerless) game; defer
+    // the empty-input rejection to `ingest_pgn`.
+    if games.is_empty() {
+        return Ok(vec![ingest_pgn(db, database_id, pgn).await?]);
+    }
+    let mut out = Vec::with_capacity(games.len());
+    for (i, game) in games.iter().enumerate() {
+        let ingested = ingest_pgn(db, database_id, game)
+            .await
+            .with_context(|| format!("ingesting game {}", i + 1))?;
+        out.push(ingested);
+    }
+    Ok(out)
+}
+
+/// Split a complete multi-game PGN blob into individual, trimmed game strings.
+/// Games are delimited by a line beginning with `[Event `. Shared with the
+/// streaming collectors (Lichess / Chess.com).
+pub(crate) fn split_games(blob: &str) -> Vec<String> {
+    let starts = event_offsets(blob.as_bytes());
+    let mut games = Vec::with_capacity(starts.len());
+    for (i, &start) in starts.iter().enumerate() {
+        let end = starts.get(i + 1).copied().unwrap_or(blob.len());
+        let game = blob[start..end].trim();
+        if !game.is_empty() {
+            games.push(game.to_string());
+        }
+    }
+    games
+}
+
+/// Byte offsets of every line that begins a new game (`[Event `). ASCII-only
+/// matching, so it is safe on the raw byte buffer regardless of UTF-8 framing.
+pub(crate) fn event_offsets(buf: &[u8]) -> Vec<usize> {
+    const MARKER: &[u8] = b"[Event ";
+    let mut offsets = Vec::new();
+    let mut at_line_start = true;
+    for i in 0..buf.len() {
+        if at_line_start && buf[i..].starts_with(MARKER) {
+            offsets.push(i);
+        }
+        at_line_start = buf[i] == b'\n';
+    }
+    offsets
+}
+
 /// Find a player by exact name or create one, returning its id. `None`/blank
 /// names (e.g. a missing `[White]` tag) yield `None`.
 async fn intern_player<C: ConnectionTrait>(db: &C, name: Option<&str>) -> Result<Option<i32>> {
@@ -450,6 +509,46 @@ mod tests {
     async fn empty_pgn_is_rejected() {
         let (conn, database_id) = db_with_own_collection().await;
         assert!(ingest_pgn(&conn, database_id, "   \n  ").await.is_err());
+    }
+
+    // Two complete games in one blob, as a `.pgn` file / export stream carries them.
+    const TWO_GAMES: &str = "[Event \"Game 1\"]\n[White \"Spassky\"]\n[Black \"Fischer\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0\n\n[Event \"Game 2\"]\n[White \"Carlsen\"]\n[Black \"Caruana\"]\n[Result \"1/2-1/2\"]\n\n1. d4 d5 2. c4 e6 1/2-1/2\n";
+
+    #[tokio::test]
+    async fn ingest_all_stores_every_game_in_a_multi_game_pgn() {
+        let (conn, database_id) = db_with_own_collection().await;
+
+        let ingested = ingest_pgn_all(&conn, database_id, TWO_GAMES).await.unwrap();
+        assert_eq!(ingested.len(), 2);
+        assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn ingest_all_accepts_a_headerless_single_game() {
+        let (conn, database_id) = db_with_own_collection().await;
+
+        // No `[Event]` tag ⇒ split finds nothing; the whole blob is one game.
+        let ingested = ingest_pgn_all(&conn, database_id, "1. d4 d5 *")
+            .await
+            .unwrap();
+        assert_eq!(ingested.len(), 1);
+        assert_eq!(ingested[0].indexed_plies, 2);
+    }
+
+    #[tokio::test]
+    async fn ingest_all_rejects_a_blank_blob() {
+        let (conn, database_id) = db_with_own_collection().await;
+        assert!(ingest_pgn_all(&conn, database_id, "   \n  ").await.is_err());
+    }
+
+    #[test]
+    fn split_games_separates_each_event_block() {
+        let games = split_games(TWO_GAMES);
+        assert_eq!(games.len(), 2);
+        assert!(games[0].contains("Qxf7#"));
+        assert!(games[1].starts_with("[Event "));
+        assert!(games[1].contains("Caruana"));
+        assert!(split_games("   \n").is_empty());
     }
 
     // A real Chess960 start array (king e1 between rooks on b1/g1, bishops on

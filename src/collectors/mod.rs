@@ -16,6 +16,14 @@ pub struct SyncCursor {
     pub last_game_ms: Option<i64>,
 }
 
+/// Result of a sync run: the advanced cursor to persist and how many games were
+/// ingested this run. Shared by every collector ([`lichess`] / [`chesscom`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncOutcome {
+    pub cursor: SyncCursor,
+    pub imported: usize,
+}
+
 /// A provider of chess games. Implementors expose where games are pulled from;
 /// the sync engine drives the actual download into a target database.
 pub trait GameSource {

@@ -14,8 +14,8 @@ use anyhow::{anyhow, Context, Result};
 use sea_orm::DatabaseConnection;
 use std::time::Duration;
 
-use super::{GameSource, SyncCursor};
-use crate::ingest::ingest_pgn;
+use super::{GameSource, SyncCursor, SyncOutcome};
+use crate::ingest::{event_offsets, ingest_pgn, split_games};
 
 const API_BASE: &str = "https://lichess.org";
 
@@ -34,14 +34,6 @@ pub struct Lichess {
     pub username: String,
     /// Optional personal access token (raises rate limits).
     pub token: Option<String>,
-}
-
-/// Result of a sync run: the advanced cursor to persist and how many games were
-/// ingested this run.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SyncOutcome {
-    pub cursor: SyncCursor,
-    pub imported: usize,
 }
 
 impl Lichess {
@@ -227,35 +219,6 @@ fn retry_after_secs(resp: &reqwest::Response) -> Option<u64> {
 fn trailing_game_offset(buf: &[u8]) -> Option<usize> {
     let starts = event_offsets(buf);
     (starts.len() >= 2).then(|| starts[starts.len() - 1])
-}
-
-/// Split a complete multi-game PGN blob into individual, trimmed game strings.
-fn split_games(blob: &str) -> Vec<String> {
-    let starts = event_offsets(blob.as_bytes());
-    let mut games = Vec::with_capacity(starts.len());
-    for (i, &start) in starts.iter().enumerate() {
-        let end = starts.get(i + 1).copied().unwrap_or(blob.len());
-        let game = blob[start..end].trim();
-        if !game.is_empty() {
-            games.push(game.to_string());
-        }
-    }
-    games
-}
-
-/// Byte offsets of every line that begins a new game (`[Event `). ASCII-only
-/// matching, so it is safe on the raw byte buffer regardless of UTF-8 framing.
-fn event_offsets(buf: &[u8]) -> Vec<usize> {
-    const MARKER: &[u8] = b"[Event ";
-    let mut offsets = Vec::new();
-    let mut at_line_start = true;
-    for i in 0..buf.len() {
-        if at_line_start && buf[i..].starts_with(MARKER) {
-            offsets.push(i);
-        }
-        at_line_start = buf[i] == b'\n';
-    }
-    offsets
 }
 
 /// Game start time in epoch-ms parsed from the `UTCDate`/`UTCTime` tags (second
