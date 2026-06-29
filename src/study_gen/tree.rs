@@ -13,7 +13,7 @@
 //! parent module ([`super`]).
 
 use std::cmp::Ordering;
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -23,9 +23,7 @@ use crate::engine::Score;
 use crate::openings::opening_of_zobrist;
 use crate::position::{apply_san, zobrist_of_fen, CastlingMode};
 use crate::search::report::{EcoInfo, MoveReport};
-use crate::study_gen::features::{concepts_of_fen, Concepts};
-
-const STD: CastlingMode = CastlingMode::Standard;
+use crate::study_gen::features::{concepts_of_fen_with, Concepts};
 
 /// Centipawn magnitude a forced mate maps onto, kept well clear of any real
 /// centipawn eval so mate always dominates and `mate in 1` beats `mate in 5`.
@@ -204,19 +202,34 @@ fn eco_for(zobrist: u64) -> Option<EcoInfo> {
 /// frequency, the survivors evaluated, then [`select_continuations`] picks the
 /// kept moves. Expansion stops at `max_depth`, `max_children` per node, and the
 /// global `max_nodes` budget. Deterministic for deterministic seams.
+///
+/// `castling` is the variant's castling mode (e.g. [`CastlingMode::Chess960`]
+/// for a Fischer-Random start): it drives the root Zobrist and every `apply_san`
+/// so node hashes, ECO lookup and transposition matching line up with the
+/// variant's real positions.
+///
+/// Transposition dedup within a single build: each unique position (keyed by its
+/// Zobrist) is evaluated by the engine at most once and its subtree expanded at
+/// most once. A move transposing into an already-enqueued position still gets a
+/// node (so it stays visible) but becomes a leaf rather than a duplicate subtree.
 pub async fn build_tree<E, S>(
     eval: &E,
     stats: &S,
     start_fen: &str,
     config: &TreeConfig,
+    castling: CastlingMode,
 ) -> Result<VariationTree, TreeError>
 where
     E: Evaluator + Sync,
     S: ContinuationSource + Sync,
 {
     let root_zobrist =
-        zobrist_of_fen(start_fen, STD).map_err(|e| TreeError::InvalidFen(e.to_string()))?;
+        zobrist_of_fen(start_fen, castling).map_err(|e| TreeError::InvalidFen(e.to_string()))?;
+
+    // Each unique position is evaluated at most once per build.
+    let mut eval_cache: HashMap<u64, Option<Score>> = HashMap::new();
     let root_eval = eval.eval(start_fen).await?;
+    eval_cache.insert(root_zobrist, root_eval);
 
     let mut nodes = vec![VariationNode {
         id: 0,
@@ -228,9 +241,14 @@ where
         eval: root_eval,
         stats: None,
         eco: eco_for(root_zobrist),
-        concepts: concepts_of_fen(start_fen).unwrap_or_default(),
+        concepts: concepts_of_fen_with(start_fen, castling).unwrap_or_default(),
         children: Vec::new(),
     }];
+
+    // Positions already enqueued for expansion; a transposition to one of these
+    // becomes a leaf instead of a duplicate subtree.
+    let mut enqueued: HashSet<u64> = HashSet::new();
+    enqueued.insert(root_zobrist);
 
     let mut queue = VecDeque::from([0usize]);
     while let Some(idx) = queue.pop_front() {
@@ -241,17 +259,24 @@ where
         let fen = nodes[idx].fen.clone();
 
         // Pre-filter on frequency before spending an engine eval per move, then
-        // evaluate each survivor's resulting position.
+        // evaluate each survivor's resulting position (cached per unique position).
         let mut scored: Vec<(MoveReport, String, u64, Option<Score>)> = Vec::new();
         for mv in stats.continuations(&fen).await? {
             if mv.frequency < config.min_frequency {
                 continue;
             }
-            let (child_fen, child_zobrist) = match apply_san(&fen, &mv.san, STD) {
+            let (child_fen, child_zobrist) = match apply_san(&fen, &mv.san, castling) {
                 Ok(pair) => pair,
                 Err(_) => continue, // a move the DB has that no longer parses — skip
             };
-            let child_eval = eval.eval(&child_fen).await?;
+            let child_eval = match eval_cache.get(&child_zobrist) {
+                Some(cached) => *cached,
+                None => {
+                    let e = eval.eval(&child_fen).await?;
+                    eval_cache.insert(child_zobrist, e);
+                    e
+                }
+            };
             scored.push((mv, child_fen, child_zobrist, child_eval));
         }
 
@@ -282,11 +307,15 @@ where
                 eval: *child_eval,
                 stats: Some(mv.clone()),
                 eco: eco_for(*child_zobrist),
-                concepts: concepts_of_fen(child_fen).unwrap_or_default(),
+                concepts: concepts_of_fen_with(child_fen, castling).unwrap_or_default(),
                 children: Vec::new(),
             });
             nodes[idx].children.push(child_id);
-            queue.push_back(child_id);
+            // Only expand the first occurrence of a position; a transposition to
+            // an already-enqueued position stays a visible leaf.
+            if enqueued.insert(*child_zobrist) {
+                queue.push_back(child_id);
+            }
         }
     }
 

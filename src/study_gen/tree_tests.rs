@@ -2,8 +2,11 @@
 //! module under the project's 500-line file cap.
 
 use super::*;
-use crate::position::{replay, STARTPOS_FEN};
+use crate::position::{replay, zobrist_of_fen, STARTPOS_FEN};
 use std::collections::HashMap;
+use std::sync::Mutex;
+
+const STD: CastlingMode = CastlingMode::Standard;
 
 fn cand(san: &str, frequency: f64, eval_cp: i32) -> Candidate {
     Candidate {
@@ -168,7 +171,7 @@ async fn builds_a_tagged_tree_with_eval_and_stats() {
         min_frequency: 0.05,
         eval_margin_cp: 1000, // wide ⇒ eval doesn't prune here
     };
-    let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg)
+    let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg, STD)
         .await
         .unwrap();
 
@@ -201,7 +204,7 @@ async fn respects_max_depth() {
         max_depth: 1,
         ..TreeConfig::default()
     };
-    let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg)
+    let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg, STD)
         .await
         .unwrap();
     // Depth 1: root's children exist but none of them expand further.
@@ -225,7 +228,7 @@ async fn eval_margin_prunes_the_weaker_first_move() {
         min_frequency: 0.05,
         eval_margin_cp: 50,
     };
-    let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg)
+    let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg, STD)
         .await
         .unwrap();
     let root = &tree.nodes[tree.root];
@@ -247,7 +250,7 @@ async fn respects_global_node_budget() {
         min_frequency: 0.05,
         eval_margin_cp: 1000,
     };
-    let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg)
+    let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg, STD)
         .await
         .unwrap();
     assert_eq!(tree.nodes.len(), 2);
@@ -256,7 +259,7 @@ async fn respects_global_node_budget() {
 #[tokio::test]
 async fn rejects_an_invalid_fen() {
     let (eval, stats) = fixture();
-    let err = build_tree(&eval, &stats, "not a fen", &TreeConfig::default())
+    let err = build_tree(&eval, &stats, "not a fen", &TreeConfig::default(), STD)
         .await
         .unwrap_err();
     assert!(matches!(err, TreeError::InvalidFen(_)));
@@ -265,10 +268,150 @@ async fn rejects_an_invalid_fen() {
 #[tokio::test]
 async fn output_round_trips_through_json() {
     let (eval, stats) = fixture();
-    let tree = build_tree(&eval, &stats, &fen_after(&[]), &TreeConfig::default())
+    let tree = build_tree(&eval, &stats, &fen_after(&[]), &TreeConfig::default(), STD)
         .await
         .unwrap();
     let json = serde_json::to_string(&tree).unwrap();
     let back: VariationTree = serde_json::from_str(&json).unwrap();
     assert_eq!(tree, back);
+}
+
+// --- transposition dedup (Part B) ---------------------------------------
+
+/// Evaluator that records how many times each FEN was queried, so a test can
+/// assert each unique position is evaluated at most once per build.
+struct CountingEval {
+    evals: HashMap<String, Score>,
+    calls: Mutex<HashMap<String, usize>>,
+}
+
+impl CountingEval {
+    fn new(evals: HashMap<String, Score>) -> Self {
+        Self {
+            evals,
+            calls: Mutex::new(HashMap::new()),
+        }
+    }
+    fn calls_for(&self, fen: &str) -> usize {
+        self.calls.lock().unwrap().get(fen).copied().unwrap_or(0)
+    }
+}
+
+#[async_trait]
+impl Evaluator for CountingEval {
+    async fn eval(&self, fen: &str) -> Result<Option<Score>> {
+        *self
+            .calls
+            .lock()
+            .unwrap()
+            .entry(fen.to_string())
+            .or_insert(0) += 1;
+        Ok(self.evals.get(fen).copied())
+    }
+}
+
+/// Two move orders (`Nc3 Nf6 Nf3` and `Nf3 Nf6 Nc3`) reach the same position.
+/// Knight moves keep castling rights and en passant identical so the Zobrist
+/// keys collide exactly — a real transposition.
+fn transposition_fixture() -> (CountingEval, FakeStats) {
+    let trans = fen_after(&["Nf3", "Nf6", "Nc3"]); // == fen_after(&["Nc3", "Nf6", "Nf3"])
+    assert_eq!(trans, fen_after(&["Nc3", "Nf6", "Nf3"]));
+
+    let mut conts = HashMap::new();
+    conts.insert(fen_after(&[]), vec![report("Nf3", 0.5), report("Nc3", 0.5)]);
+    conts.insert(fen_after(&["Nf3"]), vec![report("Nf6", 1.0)]);
+    conts.insert(fen_after(&["Nc3"]), vec![report("Nf6", 1.0)]);
+    conts.insert(fen_after(&["Nf3", "Nf6"]), vec![report("Nc3", 1.0)]);
+    conts.insert(fen_after(&["Nc3", "Nf6"]), vec![report("Nf3", 1.0)]);
+    // From the transposed position a unique continuation only the expanded copy
+    // can reach.
+    conts.insert(trans.clone(), vec![report("e5", 1.0)]);
+
+    // Flat evals: pruning is by frequency only, the shape stays deterministic.
+    let mut evals = HashMap::new();
+    for f in [
+        fen_after(&[]),
+        fen_after(&["Nf3"]),
+        fen_after(&["Nc3"]),
+        fen_after(&["Nf3", "Nf6"]),
+        fen_after(&["Nc3", "Nf6"]),
+        trans.clone(),
+        fen_after(&["Nf3", "Nf6", "Nc3", "e5"]),
+    ] {
+        evals.insert(f, Score::Cp { value: 0 });
+    }
+    (CountingEval::new(evals), FakeStats(conts))
+}
+
+#[tokio::test]
+async fn transposition_is_not_expanded_twice() {
+    let (eval, stats) = transposition_fixture();
+    let trans = fen_after(&["Nf3", "Nf6", "Nc3"]);
+    let cfg = TreeConfig {
+        max_depth: 6,
+        max_children: 5,
+        max_nodes: 1000,
+        min_frequency: 0.05,
+        eval_margin_cp: 10_000, // wide ⇒ eval never prunes; frequency decides
+    };
+    let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg, STD)
+        .await
+        .unwrap();
+
+    // The transposed position appears as TWO nodes (the move stays visible from
+    // both orders) but is expanded exactly once.
+    let trans_zobrist = format!("{:016x}", zobrist_of_fen(&trans, STD).unwrap());
+    let trans_nodes: Vec<&VariationNode> = tree
+        .nodes
+        .iter()
+        .filter(|n| n.zobrist == trans_zobrist)
+        .collect();
+    assert_eq!(trans_nodes.len(), 2, "transposing move stays visible twice");
+    let expanded = trans_nodes
+        .iter()
+        .filter(|n| !n.children.is_empty())
+        .count();
+    let leaves = trans_nodes.iter().filter(|n| n.children.is_empty()).count();
+    assert_eq!(expanded, 1, "only the first occurrence expands its subtree");
+    assert_eq!(leaves, 1, "the transposition becomes a leaf");
+
+    // The engine evaluates each unique position at most once, even the one
+    // reached by both move orders.
+    assert_eq!(eval.calls_for(&trans), 1, "transposition evaluated once");
+    for f in [
+        fen_after(&[]),
+        fen_after(&["Nf3"]),
+        fen_after(&["Nc3"]),
+        fen_after(&["Nf3", "Nf6"]),
+        fen_after(&["Nc3", "Nf6"]),
+    ] {
+        assert_eq!(eval.calls_for(&f), 1, "{f} evaluated once");
+    }
+}
+
+#[tokio::test]
+async fn builds_under_chess960_castling_mode() {
+    // King e1 with the a-side rook on b1: X-FEN keeps `KQkq`, but those rights
+    // only parse under Chess960 mode (see position.rs tests).
+    let fen = "1r2k2r/8/8/8/8/8/8/1R2K2R w KQkq - 0 1";
+    let eval = FakeEval(HashMap::new());
+    let stats = FakeStats(HashMap::new());
+    let cfg = TreeConfig::default();
+
+    // Under Chess960 the root hash is computed correctly and the build succeeds.
+    let tree = build_tree(&eval, &stats, fen, &cfg, CastlingMode::Chess960)
+        .await
+        .unwrap();
+    assert_eq!(tree.nodes.len(), 1);
+    let expected = format!(
+        "{:016x}",
+        zobrist_of_fen(fen, CastlingMode::Chess960).unwrap()
+    );
+    assert_eq!(tree.nodes[tree.root].zobrist, expected);
+
+    // The same FEN under Standard mode mishandles the castling rights and errors.
+    let err = build_tree(&eval, &stats, fen, &cfg, CastlingMode::Standard)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, TreeError::InvalidFen(_)));
 }
