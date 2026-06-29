@@ -55,6 +55,37 @@ pub async fn rpc_with_engine(
     (status, value)
 }
 
+/// POST a raw (possibly malformed) body to `/mcp` with the seeded service token
+/// and return (status, parsed-or-null body). Used to exercise the JSON-RPC
+/// parse/invalid-request error envelopes (issue #97).
+pub async fn rpc_raw(body: &'static str) -> (StatusCode, Value) {
+    let db = connect(&DbConfig::in_memory()).await.unwrap();
+    let token = ensure_local_service_token(&db).await.unwrap();
+    let app = build_router(AppState {
+        db,
+        mode: Mode::Local,
+        engine_service: None,
+    });
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    (status, value)
+}
+
 /// Build a local-mode app over an in-memory DB seeded with `pgns` in a global
 /// database (owner `NULL`, so visible to the local-admin caller), POST `body` to
 /// `/mcp` with the seeded service token, and return (status, parsed body).

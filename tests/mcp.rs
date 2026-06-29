@@ -16,7 +16,7 @@ use tower::ServiceExt;
 use chess_base::db::{connect, DbConfig};
 use chess_base::engine::{EngineConfig, EngineService};
 use chess_base::server::{build_router, AppState, Mode};
-use common::{engine_path, rpc, rpc_with_engine};
+use common::{engine_path, rpc, rpc_raw, rpc_with_engine};
 
 #[tokio::test]
 async fn initialize_reports_protocol_server_info_and_capabilities() {
@@ -91,6 +91,27 @@ async fn unknown_tool_returns_invalid_params() {
     .await;
 
     assert_eq!(v["error"]["code"], -32602);
+}
+
+#[tokio::test]
+async fn invalid_json_body_returns_a_framed_parse_error() {
+    // A malformed body must not surface as axum's bare-text 400; the client gets
+    // a 200 carrying a -32700 envelope (issue #97).
+    let (status, v) = rpc_raw("{not json").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["jsonrpc"], "2.0");
+    assert_eq!(v["error"]["code"], -32700);
+}
+
+#[tokio::test]
+async fn structurally_invalid_request_returns_invalid_request_echoing_id() {
+    // Missing `method` ⇒ -32600, with the caller's id echoed for correlation.
+    let (status, v) = rpc_raw(r#"{"jsonrpc":"2.0","id":42}"#).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["error"]["code"], -32600);
+    assert_eq!(v["id"], 42);
 }
 
 #[tokio::test]
