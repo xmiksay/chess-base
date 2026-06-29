@@ -22,6 +22,13 @@ over `Engine` exposing one one-shot method,
 - The pool spawns engines lazily, reuses idle ones, and caps live processes with
   a semaphore (permit held for the whole search). A failed search discards its
   engine rather than returning a mid-state handle to the pool.
+- Because the pool is single-permit, user-supplied limits are bounded so one
+  request can't pin it (issue #93): `Limits::clamped` caps `depth`/`movetime_ms`
+  (`MAX_DEPTH` 60, `MAX_MOVETIME_MS` 30s) — applied both at the MCP arg boundary
+  (which also rejects `< 1` and avoids the `depth as u32` wrap) and inside
+  `bounded` as defence in depth — and the whole search runs under an overall
+  deadline (movetime + grace, else a 60s ceiling) so a stuck engine can't hang
+  forever; a timed-out search discards its engine.
 - **Two facades, one pool.** The batch pipeline calls `analyse` directly
   in-process — the eval/PV is plain Rust data that never touches the LLM. The MCP
   endpoint registers an `engine_analyse` tool that routes through the *same*

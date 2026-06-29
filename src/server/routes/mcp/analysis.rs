@@ -21,6 +21,7 @@ use serde_json::{json, Value};
 
 use super::db_tools::{json_outcome, report_error};
 use super::{Tool, ToolOutcome, ToolRegistry};
+use crate::engine::{MAX_DEPTH, MAX_MOVETIME_MS};
 use crate::features::features_of_fen;
 use crate::search::report::PositionReportService;
 use crate::server::identity::CurrentUser;
@@ -49,12 +50,12 @@ fn analyse_position_tool() -> Tool {
             "properties": {
                 "fen": { "type": "string", "description": "Position to explain, in FEN." },
                 "depth": {
-                    "type": "integer", "minimum": 1,
-                    "description": "Engine search depth in plies (optional; a fixed depth by default)."
+                    "type": "integer", "minimum": 1, "maximum": MAX_DEPTH,
+                    "description": "Engine search depth in plies (optional; a fixed depth by default); capped server-side."
                 },
                 "movetime_ms": {
-                    "type": "integer", "minimum": 1,
-                    "description": "Engine search time budget in milliseconds (optional)."
+                    "type": "integer", "minimum": 1, "maximum": MAX_MOVETIME_MS,
+                    "description": "Engine search time budget in milliseconds (optional); capped server-side."
                 }
             },
             "required": ["fen"]
@@ -113,7 +114,13 @@ async fn engine_analysis(
         return None;
     };
 
-    let limits = super::db_tools::limits_arg(args);
+    let limits = match super::db_tools::limits_arg(args) {
+        Ok(limits) => limits,
+        Err(msg) => {
+            notes.push(msg);
+            return None;
+        }
+    };
 
     match service.analyse(fen, &limits, &BTreeMap::new()).await {
         Ok(analysis) => match serde_json::to_value(&analysis) {

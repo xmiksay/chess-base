@@ -8,7 +8,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::{Tool, ToolOutcome, ToolRegistry};
-use crate::engine::Limits;
+use crate::engine::{Limits, MAX_DEPTH, MAX_MOVETIME_MS};
 use crate::search::report::PositionReportService;
 use crate::search::SearchError;
 use crate::server::identity::CurrentUser;
@@ -16,6 +16,10 @@ use crate::server::state::AppState;
 
 /// Reference games returned when the caller gives no explicit `limit`.
 const DEFAULT_REFERENCE_LIMIT: u64 = 20;
+
+/// Cap on `db_reference_games`' `limit`: a huge value would scan/serialise an
+/// unbounded result set (issue #93).
+const MAX_REFERENCE_LIMIT: u64 = 200;
 
 /// Register the pre-chewed DB query tools into `registry`.
 pub fn register(registry: &mut ToolRegistry) {
@@ -67,8 +71,8 @@ fn reference_games_tool() -> Tool {
             "properties": {
                 "fen": { "type": "string", "description": "Position to look up, in FEN." },
                 "limit": {
-                    "type": "integer", "minimum": 1,
-                    "description": "Max games to return (default 20)."
+                    "type": "integer", "minimum": 1, "maximum": MAX_REFERENCE_LIMIT,
+                    "description": "Max games to return (default 20); capped server-side."
                 }
             },
             "required": ["fen"]
@@ -81,10 +85,10 @@ async fn reference_games(app: AppState, user: CurrentUser, args: Value) -> ToolO
     let Some(fen) = fen_arg(&args) else {
         return ToolOutcome::error("Invalid arguments: missing string field `fen`.");
     };
-    let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
-        .unwrap_or(DEFAULT_REFERENCE_LIMIT);
+    let limit = match opt_bounded_u64(&args, "limit", MAX_REFERENCE_LIMIT) {
+        Ok(limit) => limit.unwrap_or(DEFAULT_REFERENCE_LIMIT),
+        Err(msg) => return ToolOutcome::error(msg),
+    };
     let service = PositionReportService::new(app.db.clone());
     match service.references(&user, &fen, Some(limit)).await {
         Ok(games) => json_outcome(&games),
@@ -102,13 +106,32 @@ pub(super) fn fen_arg(args: &Value) -> Option<String> {
 }
 
 /// Extract the engine search [`Limits`] (`depth` / `movetime_ms`) from a tool's
-/// arguments. Shared by the engine and interactive-analysis tools so the parsing
-/// lives in one place. No clamping — bounds are applied downstream.
-pub(super) fn limits_arg(args: &Value) -> Limits {
-    Limits {
-        depth: args.get("depth").and_then(Value::as_u64).map(|d| d as u32),
-        movetime_ms: args.get("movetime_ms").and_then(Value::as_u64),
+/// arguments. Shared by the engine and interactive-analysis tools. Values `< 1`
+/// are rejected and oversized ones clamped (issue #93) — clamping the `depth`
+/// `u64` before the `u32` cast also avoids a silent wrap. The service applies the
+/// same clamp again as defence in depth.
+pub(super) fn limits_arg(args: &Value) -> Result<Limits, String> {
+    let depth = opt_bounded_u64(args, "depth", MAX_DEPTH as u64)?.map(|d| d as u32);
+    let movetime_ms = opt_bounded_u64(args, "movetime_ms", MAX_MOVETIME_MS)?;
+    Ok(Limits {
+        depth,
+        movetime_ms,
         nodes: None,
+    })
+}
+
+/// Parse an optional positive-integer argument: absent ⇒ `Ok(None)`; a present
+/// value `< 1` (or non-integer) ⇒ `Err`; otherwise clamped to `max`.
+pub(super) fn opt_bounded_u64(args: &Value, key: &str, max: u64) -> Result<Option<u64>, String> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => {
+            let n = value
+                .as_u64()
+                .filter(|&n| n >= 1)
+                .ok_or_else(|| format!("Invalid arguments: `{key}` must be an integer >= 1."))?;
+            Ok(Some(n.min(max)))
+        }
     }
 }
 
@@ -158,6 +181,45 @@ mod tests {
         assert!(outcome, "empty arguments must yield no FEN");
         assert!(fen_arg(&json!({ "fen": "  " })).is_none());
         assert_eq!(fen_arg(&json!({ "fen": "x" })).as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn limits_are_clamped_and_never_wrap() {
+        // Way past u32 and the movetime cap: clamped, not wrapped.
+        let limits = limits_arg(&json!({ "depth": 100_000, "movetime_ms": 600_000 })).unwrap();
+        assert_eq!(limits.depth, Some(MAX_DEPTH));
+        assert_eq!(limits.movetime_ms, Some(MAX_MOVETIME_MS));
+
+        // In-range values pass through untouched.
+        let limits = limits_arg(&json!({ "depth": 18, "movetime_ms": 5_000 })).unwrap();
+        assert_eq!(limits.depth, Some(18));
+        assert_eq!(limits.movetime_ms, Some(5_000));
+
+        // Omitted ⇒ unset (the service supplies a default depth).
+        let limits = limits_arg(&json!({})).unwrap();
+        assert_eq!(limits.depth, None);
+        assert_eq!(limits.movetime_ms, None);
+    }
+
+    #[test]
+    fn limits_below_one_are_rejected() {
+        assert!(limits_arg(&json!({ "depth": 0 })).is_err());
+        assert!(limits_arg(&json!({ "movetime_ms": 0 })).is_err());
+        // Negative numbers are not valid u64s either.
+        assert!(limits_arg(&json!({ "depth": -5 })).is_err());
+    }
+
+    #[test]
+    fn reference_limit_is_clamped_and_validated() {
+        assert_eq!(
+            opt_bounded_u64(&json!({ "limit": 10_000 }), "limit", MAX_REFERENCE_LIMIT),
+            Ok(Some(MAX_REFERENCE_LIMIT))
+        );
+        assert_eq!(
+            opt_bounded_u64(&json!({}), "limit", MAX_REFERENCE_LIMIT),
+            Ok(None)
+        );
+        assert!(opt_bounded_u64(&json!({ "limit": 0 }), "limit", MAX_REFERENCE_LIMIT).is_err());
     }
 
     #[test]

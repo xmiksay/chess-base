@@ -5,6 +5,15 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Upper bound on user-supplied search depth. Past this, a single request can
+/// pin the shared single-permit engine pool for minutes (issue #93); a `u32`
+/// cast of a huge value would also silently wrap.
+pub const MAX_DEPTH: u32 = 60;
+
+/// Upper bound on user-supplied `movetime` (30s). Keeps one client's
+/// `movetime_ms` from blocking every other engine consumer (issue #93).
+pub const MAX_MOVETIME_MS: u64 = 30_000;
+
 /// Search limits for a `go` command. An all-default value (no field set) maps to
 /// `go infinite` — analyse until told to `stop`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +37,17 @@ impl Limits {
 
     fn is_unbounded(&self) -> bool {
         self.depth.is_none() && self.movetime_ms.is_none() && self.nodes.is_none()
+    }
+
+    /// Cap user-supplied `depth`/`movetime` to their safe maxima ([`MAX_DEPTH`],
+    /// [`MAX_MOVETIME_MS`]) so no single request can pin the shared engine pool
+    /// (issue #93). Unset bounds stay unset; `nodes` is not user-exposed.
+    pub fn clamped(self) -> Self {
+        Self {
+            depth: self.depth.map(|d| d.min(MAX_DEPTH)),
+            movetime_ms: self.movetime_ms.map(|ms| ms.min(MAX_MOVETIME_MS)),
+            nodes: self.nodes,
+        }
     }
 }
 
@@ -93,6 +113,30 @@ mod tests {
             go_command(&limits),
             "go depth 18 movetime 5000 nodes 1000000"
         );
+    }
+
+    #[test]
+    fn clamp_caps_depth_and_movetime() {
+        let clamped = Limits {
+            depth: Some(9_999),
+            movetime_ms: Some(600_000),
+            nodes: Some(42),
+        }
+        .clamped();
+        assert_eq!(clamped.depth, Some(MAX_DEPTH));
+        assert_eq!(clamped.movetime_ms, Some(MAX_MOVETIME_MS));
+        // nodes is not user-exposed and passes through untouched.
+        assert_eq!(clamped.nodes, Some(42));
+    }
+
+    #[test]
+    fn clamp_leaves_in_range_values_and_unset_fields() {
+        let limits = Limits {
+            depth: Some(18),
+            movetime_ms: None,
+            nodes: None,
+        };
+        assert_eq!(limits.clone().clamped(), limits);
     }
 
     #[test]

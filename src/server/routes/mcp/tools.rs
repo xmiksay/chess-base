@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use serde_json::{json, Value};
 
 use super::{Tool, ToolOutcome, ToolRegistry};
+use crate::engine::{MAX_DEPTH, MAX_MOVETIME_MS};
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 use crate::studies::{StudyError, StudyService};
@@ -69,12 +70,12 @@ fn engine_analyse_tool() -> Tool {
             "properties": {
                 "fen": { "type": "string", "description": "Position to analyse, in FEN." },
                 "depth": {
-                    "type": "integer", "minimum": 1,
-                    "description": "Search depth in plies. Defaults to a fixed depth if omitted."
+                    "type": "integer", "minimum": 1, "maximum": MAX_DEPTH,
+                    "description": "Search depth in plies. Defaults to a fixed depth if omitted; values are capped server-side."
                 },
                 "movetime_ms": {
-                    "type": "integer", "minimum": 1,
-                    "description": "Search time budget in milliseconds (optional)."
+                    "type": "integer", "minimum": 1, "maximum": MAX_MOVETIME_MS,
+                    "description": "Search time budget in milliseconds (optional); capped server-side."
                 }
             },
             "required": ["fen"]
@@ -103,7 +104,10 @@ async fn engine_analyse(app: AppState, args: Value) -> ToolOutcome {
         None => return ToolOutcome::error("Invalid arguments: missing string field `fen`."),
     };
 
-    let limits = super::db_tools::limits_arg(&args);
+    let limits = match super::db_tools::limits_arg(&args) {
+        Ok(limits) => limits,
+        Err(msg) => return ToolOutcome::error(msg),
+    };
 
     match service.analyse(&fen, &limits, &BTreeMap::new()).await {
         Ok(analysis) => match serde_json::to_string_pretty(&analysis) {
