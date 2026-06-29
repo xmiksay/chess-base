@@ -22,6 +22,12 @@ pub struct Shape {
     pub brush: String,
 }
 
+/// Whether a NAG is a move-quality glyph ($1–$6: !, ?, !!, ??, !?, ?!). These
+/// are mutually exclusive — a move carries at most one.
+fn is_move_quality_nag(nag: u8) -> bool {
+    (1..=6).contains(&nag)
+}
+
 /// A single node in a study move tree.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Node {
@@ -114,9 +120,26 @@ impl MoveTree {
         self.nodes[id].shapes = shapes;
     }
 
-    /// Append a Numeric Annotation Glyph to a node.
+    /// Append a Numeric Annotation Glyph to a node (used when building a tree).
     pub fn add_nag(&mut self, id: usize, nag: u8) {
         self.nodes[id].nags.push(nag);
+    }
+
+    /// Toggle a NAG on a node for interactive editing: remove it if already
+    /// present, otherwise add it. Adding a move-quality glyph ($1–$6: !, ?, !!,
+    /// ??, !?, ?!) first clears any other move-quality glyph, so a move never
+    /// carries two contradictory assessments (matches the editor's single-select
+    /// quality buttons). Positional NAGs stack freely.
+    pub fn toggle_nag(&mut self, id: usize, nag: u8) {
+        let nags = &mut self.nodes[id].nags;
+        if let Some(pos) = nags.iter().position(|&n| n == nag) {
+            nags.remove(pos);
+        } else {
+            if is_move_quality_nag(nag) {
+                nags.retain(|&n| !is_move_quality_nag(n));
+            }
+            nags.push(nag);
+        }
     }
 
     /// SAN moves from the root down to `id` (inclusive), or `None` if `id` is not
@@ -265,6 +288,30 @@ mod tests {
         t.add_nag(e4, 1);
         t.add_nag(e4, 22);
         assert_eq!(t.nodes[e4].nags, vec![1, 22]);
+    }
+
+    #[test]
+    fn toggle_nag_adds_removes_and_replaces() {
+        let mut t = MoveTree::new();
+        let e4 = t.add_move(t.root, "e4");
+
+        // First click adds; re-clicking the same glyph removes it.
+        t.toggle_nag(e4, 1);
+        assert_eq!(t.nodes[e4].nags, vec![1]);
+        t.toggle_nag(e4, 1);
+        assert_eq!(t.nodes[e4].nags, Vec::<u8>::new());
+
+        // Move-quality glyphs ($1–$6) are mutually exclusive: a new one replaces
+        // the old instead of stacking (the f5!!??!?… bug).
+        t.toggle_nag(e4, 1); // !
+        t.toggle_nag(e4, 6); // ?!  replaces !
+        assert_eq!(t.nodes[e4].nags, vec![6]);
+
+        // A positional NAG ($14) coexists with the move-quality one.
+        t.toggle_nag(e4, 14);
+        assert_eq!(t.nodes[e4].nags, vec![6, 14]);
+        t.toggle_nag(e4, 3); // !!  replaces ?! but keeps $14
+        assert_eq!(t.nodes[e4].nags, vec![14, 3]);
     }
 
     #[test]

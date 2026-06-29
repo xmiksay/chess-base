@@ -98,6 +98,28 @@ async fn annotate_persists_comment_and_nag() {
 }
 
 #[tokio::test]
+async fn annotate_toggles_nag_off_and_replaces_quality() {
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+    let study = svc.create(&alice, db_id, "Notes", false).await.unwrap();
+    let e4 = svc.add_move(&alice, study.id, 0, "e4").await.unwrap();
+
+    // Re-sending the same NAG removes it (no more endless `!!!?!??` stacking).
+    svc.annotate(&alice, study.id, e4, None, Some(1)).await.unwrap();
+    assert_eq!(tree_of(&svc, &alice, study.id).await.nodes[e4].nags, vec![1]);
+    svc.annotate(&alice, study.id, e4, None, Some(1)).await.unwrap();
+    assert_eq!(
+        tree_of(&svc, &alice, study.id).await.nodes[e4].nags,
+        Vec::<u8>::new()
+    );
+
+    // A different move-quality glyph replaces, not stacks.
+    svc.annotate(&alice, study.id, e4, None, Some(1)).await.unwrap();
+    svc.annotate(&alice, study.id, e4, None, Some(6)).await.unwrap();
+    assert_eq!(tree_of(&svc, &alice, study.id).await.nodes[e4].nags, vec![6]);
+}
+
+#[tokio::test]
 async fn set_shapes_pins_and_clears_a_node_plan() {
     let (svc, db_id) = setup().await;
     let alice = user("alice");

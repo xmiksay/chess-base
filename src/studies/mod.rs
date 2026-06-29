@@ -251,7 +251,9 @@ impl StudyService {
         Ok(new_id)
     }
 
-    /// Attach a comment and/or a NAG to a node of a study the caller may write.
+    /// Set the comment and/or toggle a NAG on a node of a study the caller may
+    /// write. Re-sending the same NAG removes it; a move-quality glyph replaces
+    /// any other ($1–$6 are mutually exclusive). See [`MoveTree::toggle_nag`].
     pub async fn annotate(
         &self,
         user: &CurrentUser,
@@ -269,7 +271,7 @@ impl StudyService {
             tree.set_comment(node_id, comment);
         }
         if let Some(nag) = nag {
-            tree.add_nag(node_id, nag);
+            tree.toggle_nag(node_id, nag);
         }
         self.persist(study, &tree).await?;
         Ok(())
