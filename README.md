@@ -21,6 +21,20 @@ AI-assisted studies.
 | Local | SQLite (file) | single (admin) | auto-opens | `make run` |
 | Server | Postgres | multi-user | no | `chess-base --server --database-url postgres://…` |
 
+### Bulk-import a master database
+
+To load a large master collection (e.g. Lumbras Giga Base or TWIC, plain `.pgn`
+or `.pgn.zst`) into a global **master** database without starting the server:
+
+```sh
+chess-base import-pgn games.pgn.zst            # into chess-base.db, "Master Database"
+chess-base import-pgn games.pgn.zst --name "TWIC" --batch-size 2000
+```
+
+The file is streamed in bounded memory (`.zst` is decompressed on the fly),
+games are committed in batched transactions, and duplicates are skipped by a
+content hash — so an interrupted import can simply be re-run to resume.
+
 On first run, with no engine configured, chess-base **auto-downloads** Stockfish
 (and Lc0 + Maia weights where available) into `engines/` — verifying each file's
 checksum — so live analysis works out of the box. Override the directory with
