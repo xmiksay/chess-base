@@ -1,16 +1,22 @@
 //! chess-base CLI entry point. Parses flags into an [`AppConfig`] and serves.
 
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
-use chess_base::db::DbConfig;
+use chess_base::collectors::bulk::{find_or_create_master, BulkImporter};
+use chess_base::db::{self, DbConfig};
 use chess_base::engine::EngineConfig;
 use chess_base::server::{self, AppConfig, Mode};
 
 #[derive(Parser, Debug)]
 #[command(name = "chess-base", version, about)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Run in multi-user server mode against Postgres (requires --database-url).
     #[arg(long)]
     server: bool,
@@ -53,6 +59,60 @@ struct Cli {
     no_engine_download: bool,
 }
 
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Bulk-import a (optionally `.zst`-compressed) PGN file into a global master
+    /// database, then exit without serving. Streams in bounded memory, dedups by
+    /// content hash and is restartable (issue #4).
+    ImportPgn {
+        /// Path to the `.pgn` or `.pgn.zst` file to import.
+        path: PathBuf,
+
+        /// SQLite file to import into (local mode).
+        #[arg(long, default_value = "chess-base.db")]
+        db_path: String,
+
+        /// Postgres connection URL; overrides --db-path when set.
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: Option<String>,
+
+        /// Name of the global master database to create or append to.
+        #[arg(long, default_value = "Master Database")]
+        name: String,
+
+        /// Games committed per transaction.
+        #[arg(long, default_value_t = 1000)]
+        batch_size: usize,
+    },
+}
+
+/// Run the bulk PGN import subcommand and report its tally.
+async fn run_import(
+    path: PathBuf,
+    db_path: String,
+    database_url: Option<String>,
+    name: String,
+    batch_size: usize,
+) -> Result<()> {
+    let cfg = match database_url {
+        Some(url) => DbConfig::postgres(url),
+        None => DbConfig::sqlite(db_path),
+    };
+    let conn = db::connect(&cfg).await.context("connecting to database")?;
+    let database_id = find_or_create_master(&conn, &name).await?;
+
+    let report = BulkImporter::new()
+        .with_batch_size(batch_size)
+        .import_path(&conn, database_id, &path)
+        .await?;
+
+    println!(
+        "imported {} games ({} duplicates skipped, {} errors) into '{name}'",
+        report.imported, report.duplicates, report.errors
+    );
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -62,6 +122,17 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    if let Some(Command::ImportPgn {
+        path,
+        db_path,
+        database_url,
+        name,
+        batch_size,
+    }) = cli.command
+    {
+        return run_import(path, db_path, database_url, name, batch_size).await;
+    }
 
     let (mode, db) = if cli.server {
         let url = cli

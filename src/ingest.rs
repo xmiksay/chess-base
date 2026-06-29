@@ -18,6 +18,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait,
     QueryFilter, Set, TransactionTrait,
 };
+use sha2::{Digest, Sha256};
 
 use crate::db::entities::{databases, events, games, players, position_index};
 use crate::position::{self, zobrist_of_fen, CastlingMode, STARTPOS_FEN};
@@ -84,18 +85,55 @@ struct Headers {
 }
 
 /// A parsed PGN: its headers and the mainline SAN tokens (variations dropped).
-struct ParsedGame {
+pub(crate) struct ParsedGame {
     headers: Headers,
     mainline: Vec<String>,
 }
 
+impl ParsedGame {
+    /// A content-derived dedup key for a game that carries no provider permalink
+    /// (master bases like TWIC / Lumbras), so the bulk importer can skip
+    /// duplicates and restart safely (issue #4). Stable across re-runs.
+    pub(crate) fn content_hash(&self) -> String {
+        game_hash(&self.headers, &self.mainline)
+    }
+}
+
 /// A validated game ready to store: its headers, the resolved variant, the
 /// replayed mainline, and the start position's Zobrist key.
-struct PreparedGame {
+pub(crate) struct PreparedGame {
     headers: Headers,
     variant: String,
     plies: Vec<position::Ply>,
     start_zobrist: u64,
+}
+
+/// SHA-256 over a game's normalized seven-tag roster, variant/start position and
+/// mainline SAN — the dedup key for permalink-less games (issue #4). The
+/// `sha256:` prefix keeps it disjoint from URL `source_ref`s.
+fn game_hash(headers: &Headers, mainline: &[String]) -> String {
+    let mut hasher = Sha256::new();
+    let fields = [
+        headers.white.as_deref(),
+        headers.black.as_deref(),
+        headers.event.as_deref(),
+        headers.site.as_deref(),
+        headers.round.as_deref(),
+        headers.date.as_deref(),
+        headers.result.as_deref(),
+        headers.variant.as_deref(),
+        headers.start_fen.as_deref(),
+    ];
+    for field in fields {
+        hasher.update(field.unwrap_or("").as_bytes());
+        // NUL separator so adjacent fields can't blur into one another.
+        hasher.update([0u8]);
+    }
+    for san in mainline {
+        hasher.update(san.as_bytes());
+        hasher.update([b' ']);
+    }
+    format!("sha256:{:x}", hasher.finalize())
 }
 
 /// Validate a parsed game — replay the mainline and hash the start position.
@@ -103,7 +141,7 @@ struct PreparedGame {
 /// unparseable set-up FEN); failures return a client-safe message. No storage
 /// happens here, so a caller can skip a bad game without ever opening a
 /// transaction.
-fn prepare_game(parsed: ParsedGame) -> std::result::Result<PreparedGame, String> {
+pub(crate) fn prepare_game(parsed: ParsedGame) -> std::result::Result<PreparedGame, String> {
     let variant = parsed
         .headers
         .variant
@@ -152,18 +190,54 @@ pub async fn ingest_pgn(
         }
     }
 
+    let prepared = prepare_game(parsed).map_err(IngestError::BadGame)?;
+    let index_depth = load_index_depth(db, database_id).await?;
+
+    let txn = db.begin().await?;
+    let ingested =
+        store_prepared(&txn, database_id, &prepared, pgn, source_ref, index_depth).await?;
+    txn.commit().await?;
+
+    Ok(Some(ingested))
+}
+
+/// The `index_depth` policy for a database (ADR-0003), looked up once so callers
+/// can pass it into [`store_prepared`] instead of re-querying per game. The
+/// caller has already confirmed the database exists; a miss is an internal
+/// inconsistency, not a bad game.
+pub(crate) async fn load_index_depth(
+    db: &DatabaseConnection,
+    database_id: i32,
+) -> std::result::Result<Option<i32>, DbErr> {
+    let model = databases::Entity::find_by_id(database_id)
+        .one(db)
+        .await?
+        .ok_or_else(|| DbErr::RecordNotFound(format!("database {database_id}")))?;
+    Ok(model.index_depth)
+}
+
+/// Store one prepared game and its position-index rows inside an existing
+/// transaction. Shared by [`ingest_pgn`] (one game per txn) and the bulk importer
+/// (many games per batched txn, issue #4). `source_ref` is the game's dedup key
+/// (permalink or content hash); `index_depth` is the caller's pre-fetched policy.
+pub(crate) async fn store_prepared<C: ConnectionTrait>(
+    txn: &C,
+    database_id: i32,
+    prepared: &PreparedGame,
+    pgn: &str,
+    source_ref: Option<String>,
+    index_depth: Option<i32>,
+) -> std::result::Result<Ingested, DbErr> {
     let PreparedGame {
         headers,
         variant,
         plies,
         start_zobrist,
-    } = prepare_game(parsed).map_err(IngestError::BadGame)?;
+    } = prepared;
 
-    let txn = db.begin().await?;
-
-    let white_id = intern_player(&txn, headers.white.as_deref()).await?;
-    let black_id = intern_player(&txn, headers.black.as_deref()).await?;
-    let event_id = intern_event(&txn, headers.event.as_deref()).await?;
+    let white_id = intern_player(txn, headers.white.as_deref()).await?;
+    let black_id = intern_player(txn, headers.black.as_deref()).await?;
+    let event_id = intern_event(txn, headers.event.as_deref()).await?;
 
     let game = games::ActiveModel {
         database_id: Set(database_id),
@@ -177,7 +251,7 @@ pub async fn ingest_pgn(
         eco: Set(headers.eco.clone()),
         white_elo: Set(headers.white_elo),
         black_elo: Set(headers.black_elo),
-        variant: Set(variant),
+        variant: Set(variant.clone()),
         // Stored only when non-standard; `None` means the startpos for the variant.
         start_fen: Set(headers.start_fen.clone()),
         ply_count: Set(Some(plies.len() as i32)),
@@ -185,17 +259,10 @@ pub async fn ingest_pgn(
         source_ref: Set(source_ref),
         ..Default::default()
     }
-    .insert(&txn)
+    .insert(txn)
     .await?;
 
-    let depth = databases::Entity::find_by_id(database_id)
-        .one(&txn)
-        .await?
-        // The service confirms the database exists before ingest; a miss here is
-        // an internal inconsistency, not a bad game.
-        .ok_or_else(|| DbErr::RecordNotFound(format!("database {database_id}")))?
-        .index_depth
-        .map(|d| d.max(0) as usize);
+    let depth = index_depth.map(|d| d.max(0) as usize);
     let limit = depth.map_or(plies.len(), |cap| cap.min(plies.len()));
 
     // One row per indexed position: its Zobrist plus the move played *from* it.
@@ -205,7 +272,7 @@ pub async fn ingest_pgn(
     let rows: Vec<position_index::ActiveModel> = (0..limit)
         .map(|i| {
             let zobrist = if i == 0 {
-                start_zobrist
+                *start_zobrist
             } else {
                 plies[i - 1].zobrist
             };
@@ -221,15 +288,13 @@ pub async fn ingest_pgn(
         .collect();
 
     if !rows.is_empty() {
-        position_index::Entity::insert_many(rows).exec(&txn).await?;
+        position_index::Entity::insert_many(rows).exec(txn).await?;
     }
 
-    txn.commit().await?;
-
-    Ok(Some(Ingested {
+    Ok(Ingested {
         game_id: game.id,
         indexed_plies: limit,
-    }))
+    })
 }
 
 /// The stable provider key for a game — the permalink — used to dedup re-syncs
@@ -246,8 +311,9 @@ fn source_ref(headers: &Headers) -> Option<String> {
     }
 }
 
-/// Whether `database_id` already holds a game with this provider `source_ref`.
-async fn game_exists(
+/// Whether `database_id` already holds a game with this `source_ref` (permalink
+/// or content hash). The cross-run dedup the bulk importer relies on to restart.
+pub(crate) async fn game_exists(
     db: &DatabaseConnection,
     database_id: i32,
     source_ref: &str,
@@ -395,7 +461,7 @@ fn castling_mode(variant: &str) -> CastlingMode {
 }
 
 /// Parse the first game's headers and mainline SAN from `pgn`.
-fn parse_pgn(pgn: &str) -> Result<ParsedGame> {
+pub(crate) fn parse_pgn(pgn: &str) -> Result<ParsedGame> {
     let mut reader = Reader::new(Cursor::new(pgn.as_bytes()));
     match reader.read_game(&mut Importer) {
         Ok(Some(game)) => Ok(game),

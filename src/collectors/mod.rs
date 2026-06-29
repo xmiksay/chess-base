@@ -2,6 +2,7 @@
 //! adapters. The scaffold provides the types, endpoint builders and sync-cursor
 //! model; the actual networked fetch/import is implemented by the Epic 2 issues.
 
+pub mod bulk;
 pub mod chesscom;
 pub mod lichess;
 
