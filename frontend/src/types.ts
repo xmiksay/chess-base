@@ -181,6 +181,23 @@ export interface Score {
   value: number
 }
 
+/** One piece's path across a plan line: the moving piece (color-cased FEN char)
+ * and the squares it visits, origin included (`{piece:'N', squares:['g1','f3','g5']}`). */
+export interface Trajectory {
+  piece: string
+  squares: Square[]
+}
+
+/** A PV line enriched with per-piece trajectories for the Plans overlay; the
+ * `planline` WS frame emitted alongside each PV-bearing `info` (`src/plans.rs`). */
+export interface PlanLine {
+  multipv: number
+  depth: number | null
+  score: Score | null
+  pv: string[]
+  trajectories: Trajectory[]
+}
+
 /** Engine-analysis WebSocket events (`src/server/engine_ws.rs`). */
 export type EngineMessage =
   | { type: 'ready'; name: string }
@@ -194,6 +211,14 @@ export type EngineMessage =
       nps?: number | null
       time_ms?: number | null
       pv?: string[]
+    }
+  | {
+      type: 'planline'
+      multipv?: number | null
+      depth?: number | null
+      score?: Score | null
+      pv: string[]
+      trajectories: Trajectory[]
     }
   | { type: 'bestmove'; best_move: string; ponder?: string | null }
   | { type: 'error'; message: string }

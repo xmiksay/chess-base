@@ -8,7 +8,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed, shallowRef } from 'vue'
 import { parseEngineMessage, reduceInfo, sortedLines } from '../lib/engineStream'
-import type { BestMove, EngineLine } from '../types'
+import { plansToShapes } from '../lib/plansToShapes'
+import type { BestMove, EngineLine, PlanLine } from '../types'
 
 const ENDPOINT = '/api/engine/analyse'
 
@@ -25,6 +26,10 @@ export const useEngineStore = defineStore('engine', () => {
   const depth = ref<number | null>(null)
   const nps = ref<number | null>(null)
   const lines = ref<EngineLine[]>([])
+  // Per-piece trajectories per MultiPV line, for the Plans overlay (#60).
+  const plans = ref<PlanLine[]>([])
+  // MultiPV of the line the UI is hovering; drives which plan is highlighted.
+  const activeLine = ref<number | null>(null)
   // Last terminal bestmove; `seq` makes successive identical moves observable.
   const bestMove = shallowRef<BestMove | null>(null)
 
@@ -35,10 +40,14 @@ export const useEngineStore = defineStore('engine', () => {
 
   const ready = computed(() => status.value === 'ready' || status.value === 'analysing')
   const analysing = computed(() => status.value === 'analysing')
+  // Chessground auto-shapes for the active overlay; the active line keeps full
+  // opacity, the rest are dimmed. Empty until a `planline` frame arrives.
+  const shapes = computed(() => plansToShapes(plans.value, { active: activeLine.value, labels: true }))
 
   let socket: WebSocket | null = null
   let makeSocket: (url: string) => WebSocket = (url) => new WebSocket(url)
   let lineMap = new Map<number, EngineLine>()
+  let planMap = new Map<number, PlanLine>()
   let bestSeq = 0
   let pending = false
   // last analyse request
@@ -53,6 +62,10 @@ export const useEngineStore = defineStore('engine', () => {
     }
   }
 
+  function _refreshPlans() {
+    plans.value = [...planMap.values()].sort((a, b) => a.multipv - b.multipv)
+  }
+
   function _onMessage(ev: MessageEvent) {
     const msg = parseEngineMessage(ev.data)
     if (!msg) return
@@ -65,6 +78,18 @@ export const useEngineStore = defineStore('engine', () => {
         reduceInfo(lineMap, msg)
         _refreshLines()
         break
+      case 'planline': {
+        const idx = msg.multipv ?? 1
+        planMap.set(idx, {
+          multipv: idx,
+          depth: msg.depth ?? null,
+          score: msg.score ?? null,
+          pv: msg.pv ?? [],
+          trajectories: msg.trajectories ?? [],
+        })
+        _refreshPlans()
+        break
+      }
       case 'bestmove':
         bestMove.value = { move: msg.best_move, ponder: msg.ponder ?? null, seq: ++bestSeq }
         if (status.value === 'analysing') status.value = 'ready'
@@ -119,6 +144,8 @@ export const useEngineStore = defineStore('engine', () => {
     }
     lineMap = new Map()
     lines.value = []
+    planMap = new Map()
+    plans.value = []
     if (_send({ type: 'analyse', fen: current.fen, limits: current.limits, options })) {
       status.value = 'analysing'
       return true
@@ -138,6 +165,11 @@ export const useEngineStore = defineStore('engine', () => {
   /** Stop the current search; the engine still emits a final bestmove. */
   function stop() {
     _send({ type: 'stop' })
+  }
+
+  /** Highlight one MultiPV line's plan (dimming the rest); null clears it. */
+  function setActiveLine(multipv: number | null) {
+    activeLine.value = multipv
   }
 
   /** Re-issue the current search after an option change (MultiPV/Threads/Hash). */
@@ -170,6 +202,9 @@ export const useEngineStore = defineStore('engine', () => {
     depth,
     nps,
     lines,
+    plans,
+    activeLine,
+    shapes,
     bestMove,
     multipv,
     threads,
@@ -179,6 +214,7 @@ export const useEngineStore = defineStore('engine', () => {
     connect,
     analyse,
     stop,
+    setActiveLine,
     reconfigure,
     disconnect,
     _setSocketFactory,
