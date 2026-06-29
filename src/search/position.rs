@@ -37,9 +37,9 @@ pub enum SearchError {
 }
 
 /// One continuation played from the queried position, with its game outcomes
-/// aggregated. `count` is the number of indexed occurrences; `white`/`draws`/
-/// `black` break those down by game result (`1-0` / `1/2-1/2` / `0-1`). Games
-/// with an unknown result (`*`) count toward `count` only.
+/// aggregated. `count` is the number of distinct games that played this move;
+/// `white`/`draws`/`black` break those down by game result (`1-0` / `1/2-1/2` /
+/// `0-1`). Games with an unknown result (`*`) count toward `count` only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MoveStat {
     /// SAN of the continuation (e.g. `Nf3`).
@@ -132,25 +132,35 @@ impl PositionSearchService {
 
         let results = self.results_for(rows.iter().map(|(_, g)| *g)).await?;
 
-        let mut stats: HashMap<String, MoveStat> = HashMap::new();
+        // Count distinct games per continuation, not raw index rows: a game that
+        // revisits this Zobrist (maneuvering/repetition — the Polyglot key ignores
+        // clocks) must contribute its single result once, not once per occurrence.
+        let mut games_by_san: HashMap<String, HashSet<i32>> = HashMap::new();
         for (san, game_id) in rows {
-            let entry = stats.entry(san.clone()).or_insert_with(|| MoveStat {
-                san,
-                count: 0,
-                white: 0,
-                draws: 0,
-                black: 0,
-            });
-            entry.count += 1;
-            match results.get(&game_id).and_then(Option::as_deref) {
-                Some("1-0") => entry.white += 1,
-                Some("0-1") => entry.black += 1,
-                Some("1/2-1/2") => entry.draws += 1,
-                _ => {}
-            }
+            games_by_san.entry(san).or_default().insert(game_id);
         }
 
-        let mut tree: Vec<MoveStat> = stats.into_values().collect();
+        let mut tree: Vec<MoveStat> = games_by_san
+            .into_iter()
+            .map(|(san, game_ids)| {
+                let mut stat = MoveStat {
+                    san,
+                    count: game_ids.len() as u64,
+                    white: 0,
+                    draws: 0,
+                    black: 0,
+                };
+                for game_id in game_ids {
+                    match results.get(&game_id).and_then(Option::as_deref) {
+                        Some("1-0") => stat.white += 1,
+                        Some("0-1") => stat.black += 1,
+                        Some("1/2-1/2") => stat.draws += 1,
+                        _ => {}
+                    }
+                }
+                stat
+            })
+            .collect();
         tree.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.san.cmp(&b.san)));
         Ok(tree)
     }
@@ -259,6 +269,10 @@ mod tests {
     /// Black wins, also opening 1. e4 e5 (shares the start continuation with the mate).
     const BLACK_WIN_E4: &str =
         "[White \"Nepo\"]\n[Black \"Ding\"]\n[Result \"0-1\"]\n\n1. e4 e5 2. Nf3 Nc6 0-1\n";
+    /// A knight shuffle that returns to the start position before playing on: the
+    /// start (and its `Nf3` continuation) is indexed twice for this single game.
+    const KNIGHT_SHUFFLE: &str =
+        "[White \"Loop\"]\n[Black \"Back\"]\n[Result \"1-0\"]\n\n1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 1-0\n";
 
     fn user(id: &str) -> CurrentUser {
         CurrentUser {
@@ -319,6 +333,24 @@ mod tests {
         let sans: Vec<&str> = tree.iter().map(|m| m.san.as_str()).collect();
         assert_eq!(sans, vec!["Bc4", "Nf3"]);
         assert!(tree.iter().all(|m| m.count == 1));
+    }
+
+    #[tokio::test]
+    async fn revisited_position_counts_each_game_once() {
+        let (conn, db_id) = db_for("alice").await;
+        // This game reaches the start position twice (knight shuffle) and plays
+        // Nf3 from it both times; it must count as one game, not two.
+        ingest_pgn(&conn, db_id, KNIGHT_SHUFFLE).await.unwrap();
+        let svc = PositionSearchService::new(conn);
+
+        let tree = svc
+            .opening_tree(&user("alice"), STARTPOS_FEN)
+            .await
+            .unwrap();
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].san, "Nf3");
+        assert_eq!(tree[0].count, 1); // distinct games, not the 2 indexed rows
+        assert_eq!(tree[0].white, 1); // the single 1-0 result, counted once
     }
 
     #[tokio::test]
