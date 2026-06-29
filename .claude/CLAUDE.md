@@ -27,7 +27,10 @@ src/
   db/              SeaORM: config (SQLite/Postgres), entities, migrations
   ingest.rs        ingest_pgn: parse PGN → store game → replay → position_index   ← shared by collectors
   collectors/      GameSource trait + Lichess / Chess.com adapters
-  engine.rs        UCI engine config + parsing (Stockfish, Lc0/Maia)
+  engine.rs        UCI engine config + parsing (Stockfish, Lc0/Maia); analyse_multi (top-N MultiPV)
+  review/          Mode A (#119): engine-only full-game review — classify (pure
+                   buckets + accuracy), explain (pure MoveFact "why" + the seam to
+                   Mode B), service.review_game, POST /api/games/{id}/analyse   ← unit-tested
   ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
   study_gen/       study-gen stages (Epic 9): tree (#29) builds a pruned VariationTree;
                    features.rs (#30) pure pawn-structure & key-square concepts;

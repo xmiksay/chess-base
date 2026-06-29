@@ -29,6 +29,9 @@ export interface BoardMove {
 
 export interface Health {
   mode: Mode
+  /** Capability flags (issue #119): whether an engine / LLM is configured. */
+  engine?: boolean
+  llm?: boolean
 }
 
 export interface User {
@@ -275,6 +278,82 @@ export interface ViewerPosition {
   san: string | null
   fen: string | undefined
   lastMove: [Square, Square] | null
+}
+
+// --- game review (issue #119, Mode A) ---------------------------------------
+
+/** Engine-only move quality buckets, worst → best (backend `MoveReview`). */
+export type MoveClassification =
+  | 'best'
+  | 'great'
+  | 'good'
+  | 'inaccuracy'
+  | 'mistake'
+  | 'blunder'
+
+/** One reviewed ply (`POST /api/games/{id}/analyse`). Eval is White's perspective. */
+export interface MoveReview {
+  ply: number // 1-based
+  san: string // played move, normalized SAN
+  eval_cp: number // centipawns, mate clamped to ±1000
+  mate?: number // signed mate distance, White's perspective; omitted if not mate
+  best_move?: string // engine's preferred move (SAN); omitted when played was best
+  played_rank?: number // 1 = best; omitted when outside the top engine lines
+  classification: MoveClassification
+  explanation: string
+}
+
+/** Per-side review aggregates. */
+export interface SideSummary {
+  acpl: number
+  accuracy: number
+  inaccuracies: number
+  mistakes: number
+  blunders: number
+}
+
+export interface ReviewSummary {
+  white: SideSummary
+  black: SideSummary
+}
+
+/** Full engine-only game review. */
+export interface GameReview {
+  start_fen: string
+  moves: MoveReview[]
+  summary: ReviewSummary
+}
+
+// --- study generation (issue #119, Mode B) ----------------------------------
+
+/** Tree-shaping knobs for LLM study generation; mirrors `src/study_gen/tree.rs`. */
+export interface TreeConfig {
+  max_depth?: number // default 6 (variation depth in plies)
+  max_children?: number // default 3 (continuations per node)
+  max_nodes?: number // default 64
+  min_frequency?: number // default 0.05
+  eval_margin_cp?: number // default 100
+}
+
+/** Request body for `POST /api/studies/generate`. */
+export interface GenerateBody {
+  database_id: number
+  name: string
+  global?: boolean
+  start_fen?: string // defaults to startpos server-side
+  model?: string
+  engine_depth?: number // per-position search depth, capped server-side
+  tree?: TreeConfig
+}
+
+/** Result of a generation run. */
+export interface GenerateView {
+  id: number
+  database_id: number
+  name: string
+  global: boolean
+  node_count: number
+  rejected: number
 }
 
 // --- settings ---------------------------------------------------------------

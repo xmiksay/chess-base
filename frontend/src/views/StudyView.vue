@@ -7,6 +7,7 @@ import Board from '../components/Board.vue'
 import MoveTree from '../components/MoveTree.vue'
 import AnnotationEditor from '../components/AnnotationEditor.vue'
 import StudyAnalysis from '../components/StudyAnalysis.vue'
+import GenerateStudyDialog from '../components/GenerateStudyDialog.vue'
 import { api } from '../api'
 import { useStudiesStore } from '../stores/studies'
 import { useStudyEditorStore } from '../stores/studyEditor'
@@ -27,6 +28,14 @@ const databases = ref<Database[]>([])
 const newName = ref('')
 const newDb = ref<number | null>(null)
 const loadError = ref<string | null>(null)
+// LLM capability flag from `/api/health`, and the generate-dialog toggle.
+const llmEnabled = ref(false)
+const showGenerate = ref(false)
+
+async function onGenerated(id: number) {
+  showGenerate.value = false
+  await editor.open(id)
+}
 
 const hasStudy = computed(() => !!studies.current)
 
@@ -86,6 +95,7 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
+  api.health().then((h) => (llmEnabled.value = h.llm === true)).catch(() => {})
   try {
     await studies.refresh()
     databases.value = await api.databases.list()
@@ -107,7 +117,22 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       <h2 class="text-lg font-semibold">
         Studies
       </h2>
+      <button
+        type="button"
+        data-test="open-generate"
+        class="ml-auto rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+        @click="showGenerate = true"
+      >
+        Generate study
+      </button>
     </header>
+
+    <GenerateStudyDialog
+      v-if="showGenerate"
+      :llm-enabled="llmEnabled"
+      @close="showGenerate = false"
+      @open="onGenerated"
+    />
 
     <p
       v-if="loadError || studies.error"

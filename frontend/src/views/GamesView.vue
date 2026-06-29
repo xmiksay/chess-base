@@ -1,19 +1,29 @@
 <script setup lang="ts">
 // Game browser (issue #68): pick a database, page through its games, open one on
 // the board and step through its moves (buttons, ply selector, arrow keys).
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Board from '../components/Board.vue'
+import EvalGraph from '../components/EvalGraph.vue'
 import { api } from '../api'
 import { useGamesStore } from '../stores/games'
+import { useReviewStore } from '../stores/review'
 import { useSettingsStore } from '../stores/settings'
+import {
+  classificationClass,
+  classificationGlyph,
+  formatReviewEval,
+} from '../lib/reviewFormat'
 import type { Database, GameRow } from '../types'
 
 const games = useGamesStore()
+const review = useReviewStore()
 const settings = useSettingsStore()
 
 const databases = ref<Database[]>([])
 const selectedDb = ref<number | null>(null)
 const loadError = ref<string | null>(null)
+// Engine capability flag from `/api/health`; null until fetched.
+const engineEnabled = ref<boolean | null>(null)
 
 /** A "White – Black" label for a game row, tolerating missing names. */
 function players(g: GameRow): string {
@@ -22,6 +32,27 @@ function players(g: GameRow): string {
 
 // SAN moves of the open game (ply 1+), for the move list.
 const moves = computed(() => games.positions.slice(1).map((p) => p.san))
+
+// The reviewed move at the currently selected ply (for the why-note), if any.
+const currentMove = computed(() => review.byPly.get(games.ply) ?? null)
+
+/** White accuracy first, formatted as "xx.x%". */
+function pct(n: number): string {
+  return `${n.toFixed(1)}%`
+}
+
+async function onAnalyse() {
+  if (!games.openGame) return
+  await review.analyse(games.openGame.id)
+}
+
+// Clear the review when a different game is opened so stale data never shows.
+watch(
+  () => games.openGame?.id,
+  (id) => {
+    if (review.gameId !== id) review.clear()
+  },
+)
 
 async function onSelectDatabase() {
   if (selectedDb.value == null) return
@@ -47,6 +78,7 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
+  api.health().then((h) => (engineEnabled.value = h.engine === true)).catch(() => {})
   try {
     databases.value = await api.databases.list()
     // Preselect the user's default database, else the first available.
@@ -159,6 +191,32 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         v-if="games.openGame"
         class="lg:w-1/2"
       >
+        <div class="mb-3 flex items-center gap-2">
+          <button
+            type="button"
+            data-test="analyse"
+            class="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700 disabled:opacity-50"
+            :disabled="review.loading || engineEnabled === false"
+            :title="engineEnabled === false ? 'No engine configured on the server.' : ''"
+            @click="onAnalyse"
+          >
+            {{ review.loading ? 'Analyzing…' : 'Analyze game' }}
+          </button>
+          <span
+            v-if="engineEnabled === false"
+            class="text-xs text-neutral-500"
+          >
+            No engine configured.
+          </span>
+          <span
+            v-if="review.error"
+            class="text-xs text-red-600"
+            data-test="review-error"
+          >
+            {{ review.error }}
+          </span>
+        </div>
+
         <Board
           :fen="games.fen"
           :last-move="games.lastMove"
@@ -218,17 +276,78 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           <li
             v-for="(san, i) in moves"
             :key="i"
+            data-test="move"
             class="cursor-pointer rounded px-1"
-            :class="{ 'bg-yellow-200': games.ply === i + 1 }"
+            :class="[
+              { 'bg-yellow-200': games.ply === i + 1 },
+              review.byPly.get(i + 1) ? classificationClass(review.byPly.get(i + 1)!.classification) : '',
+            ]"
             @click="games.go(i + 1)"
           >
             <span
               v-if="i % 2 === 0"
               class="text-neutral-400"
             >{{ i / 2 + 1 }}.</span>
-            {{ san }}
+            {{ san }}<span
+              v-if="review.byPly.get(i + 1)"
+              class="font-semibold"
+            >{{ classificationGlyph(review.byPly.get(i + 1)!.classification) }}</span>
           </li>
         </ol>
+
+        <!-- Engine review: graph, accuracy summary, and the selected-ply note. -->
+        <div
+          v-if="review.review"
+          class="mt-4"
+          data-test="review-panel"
+        >
+          <EvalGraph
+            :moves="review.review.moves"
+            :current-ply="games.ply"
+            @select="games.go($event)"
+          />
+
+          <div class="mt-3 grid grid-cols-2 gap-3 text-xs">
+            <div
+              v-for="side in (['white', 'black'] as const)"
+              :key="side"
+              class="rounded border border-neutral-200 p-2"
+              :data-test="`summary-${side}`"
+            >
+              <p class="mb-1 font-medium capitalize">
+                {{ side }}
+              </p>
+              <p>Accuracy: {{ pct(review.review.summary[side].accuracy) }}</p>
+              <p>ACPL: {{ review.review.summary[side].acpl }}</p>
+              <p class="text-neutral-500">
+                {{ review.review.summary[side].inaccuracies }} inacc ·
+                {{ review.review.summary[side].mistakes }} mist ·
+                {{ review.review.summary[side].blunders }} blun
+              </p>
+            </div>
+          </div>
+
+          <div
+            v-if="currentMove"
+            class="mt-3 rounded border border-neutral-200 p-2 text-sm"
+            data-test="why-note"
+          >
+            <span
+              class="font-medium"
+              :class="classificationClass(currentMove.classification)"
+            >
+              {{ currentMove.san }}{{ classificationGlyph(currentMove.classification) }}
+            </span>
+            <span class="text-neutral-500"> {{ formatReviewEval(currentMove) }}</span>
+            <span
+              v-if="currentMove.best_move"
+              class="text-neutral-500"
+            > · best: {{ currentMove.best_move }}</span>
+            <p class="mt-1 text-neutral-700">
+              {{ currentMove.explanation }}
+            </p>
+          </div>
+        </div>
       </section>
     </div>
   </div>

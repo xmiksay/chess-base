@@ -30,6 +30,7 @@ pub fn router(state: AppState) -> Router {
     api.merge(crate::auth::router(state.clone()))
         .merge(crate::databases::routes::router(state.clone()))
         .merge(crate::games::routes::router(state.clone()))
+        .merge(crate::review::routes::router(state.clone()))
         .merge(crate::imports::routes::router(state.clone()))
         .merge(engines::router(state.clone()))
         .merge(crate::search::routes::router(state.clone()))
@@ -56,6 +57,10 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
         "name": "chess-base",
         "version": env!("CARGO_PKG_VERSION"),
         "mode": mode,
+        // Capability flags so the SPA can enable engine review (Mode A) and gate
+        // the LLM study generator (Mode B) without probing the endpoints.
+        "engine": state.engine_service.is_some(),
+        "llm": state.llm_provider.is_some(),
     }))
 }
 

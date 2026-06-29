@@ -177,6 +177,44 @@ impl EngineService {
         }
     }
 
+    /// Run a bounded search returning up to `multipv` principal variations, each
+    /// the deepest `info` seen for that line. Line 0 is the engine's best move;
+    /// later lines are the runners-up. Used by the full-game review pass (#119)
+    /// to read a position's best move, its closest alternative, and the played
+    /// move's rank among them.
+    ///
+    /// Like [`analyse`](Self::analyse) it holds one pool permit for the whole
+    /// search and runs under the same overall deadline.
+    pub async fn analyse_multi(
+        &self,
+        fen: &str,
+        limits: &Limits,
+        multipv: u16,
+    ) -> Result<Vec<Analysis>> {
+        let _permit = self
+            .permits
+            .acquire()
+            .await
+            .map_err(|_| anyhow!("engine pool is closed"))?;
+
+        let mut options = BTreeMap::new();
+        if multipv > 1 {
+            options.insert("MultiPV".to_string(), multipv.to_string());
+        }
+
+        let mut engine = self.checkout().await?;
+        match run_to_lines(&mut engine, fen, &bounded(limits), &options, multipv).await {
+            Ok(lines) => {
+                self.idle.lock().await.push(engine);
+                Ok(lines)
+            }
+            Err(e) => {
+                let _ = engine.quit().await;
+                Err(e)
+            }
+        }
+    }
+
     /// Take an idle engine or spawn a fresh one. A permit is already held, so
     /// the live-process count stays within the pool size.
     async fn checkout(&self) -> Result<Engine> {
@@ -229,6 +267,70 @@ async fn run_to_bestmove(
                 None => bail!("engine exited before returning a best move"),
             }
         }
+    };
+
+    timeout(deadline, search).await.map_err(|_| {
+        anyhow!(
+            "engine search exceeded the {}s deadline",
+            deadline.as_secs()
+        )
+    })?
+}
+
+/// Configure and search, folding the event stream into one [`Analysis`] per
+/// MultiPV line (deepest `info` per line). Mirrors [`run_to_bestmove`] but keeps
+/// every line rather than only the primary, for the review pass.
+async fn run_to_lines(
+    engine: &mut Engine,
+    fen: &str,
+    limits: &Limits,
+    options: &BTreeMap<String, String>,
+    multipv: u16,
+) -> Result<Vec<Analysis>> {
+    let deadline = search_deadline(limits);
+    let slots = multipv.max(1) as usize;
+    let search = async {
+        for (name, value) in options {
+            engine.set_option(name, value).await?;
+        }
+        if !options.is_empty() {
+            engine.wait_ready().await?;
+        }
+        engine.set_position(fen).await?;
+        engine.go(limits).await?;
+
+        // Deepest meaningful `info` per line; index 0 is MultiPV 1 (the best).
+        let mut lines: Vec<Option<AnalysisInfo>> = vec![None; slots];
+        let (best_move, ponder) = loop {
+            match engine.next_event().await? {
+                Some(AnalysisEvent::Info(info)) => {
+                    let idx = info.multipv.unwrap_or(1).saturating_sub(1) as usize;
+                    if idx < lines.len() {
+                        lines[idx] = Some(info);
+                    }
+                }
+                Some(AnalysisEvent::BestMove { best_move, ponder }) => break (best_move, ponder),
+                None => bail!("engine exited before returning a best move"),
+            }
+        };
+
+        let mut out = Vec::with_capacity(slots);
+        for (i, slot) in lines.into_iter().enumerate() {
+            let Some(info) = slot else { continue };
+            // Line 0 carries the terminal `bestmove`/`ponder`; a runner-up's move
+            // is the head of its own PV.
+            let (mv, ponder) = if i == 0 {
+                (best_move.clone(), ponder.clone())
+            } else {
+                (info.pv.first().cloned().unwrap_or_default(), None)
+            };
+            out.push(Analysis::from_search(Some(info), mv, ponder));
+        }
+        // A search that ended without a usable info line still reports its move.
+        if out.is_empty() {
+            out.push(Analysis::from_search(None, best_move, ponder));
+        }
+        Ok(out)
     };
 
     timeout(deadline, search).await.map_err(|_| {

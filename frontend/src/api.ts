@@ -10,8 +10,11 @@ import type {
   EngineConfig,
   EngineDefault,
   GameDetail,
+  GameReview,
   GamesPage,
   GameRow,
+  GenerateBody,
+  GenerateView,
   Health,
   HeaderPage,
   ImportResult,
@@ -159,6 +162,9 @@ export const api = {
       send<Study>('POST', `/api/studies/${id}/nodes/${nodeId}/reorder`, { index }),
     deleteNode: (id: number, nodeId: number) =>
       send<Study>('DELETE', `/api/studies/${id}/nodes/${nodeId}`),
+    // LLM study generation (issue #119): tree → annotate/verify → persisted study.
+    // 503 when no LLM is configured.
+    generate: (body: GenerateBody) => send<GenerateView>('POST', '/api/studies/generate', body),
   },
 
   // Ownable databases (issue #6): collections to search/import into. `list`
@@ -184,6 +190,10 @@ export const api = {
       return getJson<GamesPage>(`/api/games?${params}`)
     },
     get: (id: number) => getJson<GameDetail>(`/api/games/${id}`),
+    // Fast engine-only full-game review (issue #119). `depth` omitted ⇒ backend
+    // chooses. 503 (no engine), 422 (bad game), 404 (not found) → thrown Error.
+    analyse: (id: number, depth?: number) =>
+      send<GameReview>('POST', `/api/games/${id}/analyse` + (depth != null ? `?depth=${depth}` : '')),
   },
 
   // Game search (issues #6/#7). Header/metadata search (`headers`) is keyset-

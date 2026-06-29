@@ -8,6 +8,7 @@ vi.mock('../api', () => ({
       list: vi.fn(),
       get: vi.fn(),
       create: vi.fn(),
+      generate: vi.fn(),
       importPgn: vi.fn(),
       exportPgn: vi.fn(),
       rename: vi.fn(),
@@ -71,6 +72,29 @@ describe('studies store', () => {
     expect(api.studies.importPgn).toHaveBeenCalledWith(7, 'Imported', '1. e4 e5 *', false)
     expect(store.current!.id).toBe(3)
     expect(store.list).toHaveLength(1)
+  })
+
+  it('generate calls the api and refreshes the list', async () => {
+    const view = {
+      id: 8,
+      database_id: 2,
+      name: 'Repertoire',
+      global: false,
+      node_count: 40,
+      rejected: 3,
+    }
+    vi.mocked(api.studies.generate).mockResolvedValue(view)
+    vi.mocked(api.studies.list).mockResolvedValue([
+      { id: 8, database_id: 2, name: 'Repertoire', global: false, owner_id: null },
+    ])
+    const store = useStudiesStore()
+    const body = { database_id: 2, name: 'Repertoire', engine_depth: 18 }
+    const result = await store.generate(body)
+
+    expect(api.studies.generate).toHaveBeenCalledWith(body)
+    expect(result).toEqual(view)
+    expect(store.list).toHaveLength(1)
+    expect(store.list[0].id).toBe(8)
   })
 
   it('exportPgn returns the PGN string', async () => {
