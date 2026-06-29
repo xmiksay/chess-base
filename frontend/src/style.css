@@ -13,12 +13,6 @@ body {
   margin: 0;
 }
 
-/* chessground requires the board container to be sized explicitly */
-.cg-wrap {
-  width: 100%;
-  height: 100%;
-}
-
 /*
  * Board themes (issue #13). `brown` uses the imported chessground SVG; the
  * others override the board square colors with a CSS checkerboard gradient

@@ -6,16 +6,22 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Board from '../components/Board.vue'
 import MoveTree from '../components/MoveTree.vue'
 import AnnotationEditor from '../components/AnnotationEditor.vue'
+import StudyAnalysis from '../components/StudyAnalysis.vue'
 import { api } from '../api'
 import { useStudiesStore } from '../stores/studies'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { useSettingsStore } from '../stores/settings'
+import { useEngineStore } from '../stores/engine'
 import type { DrawShape } from 'chessground/draw'
-import type { BoardMove, Database } from '../types'
+import type { BoardMove, Database, Shape } from '../types'
 
 const studies = useStudiesStore()
 const editor = useStudyEditorStore()
 const settings = useSettingsStore()
+const engine = useEngineStore()
+
+// Live engine PV arrows, overlaid on the board without touching pinned plans.
+const engineShapes = computed(() => engine.shapes as unknown as DrawShape[])
 
 const databases = ref<Database[]>([])
 const newName = ref('')
@@ -33,6 +39,19 @@ const pinnedShapes = computed(
 async function onBoardMove({ from, to }: BoardMove) {
   try {
     await editor.playMove({ from, to })
+  } catch (e) {
+    loadError.value = String((e as Error)?.message ?? e)
+  }
+}
+
+// Persist the arrows/highlights the user drew on the board as the node's pinned
+// plan (#61). Normalise to the stored `Shape` shape so no transient chessground
+// fields leak into `tree_json`.
+async function onShapesDrawn(shapes: Shape[]) {
+  try {
+    await editor.setShapes(
+      shapes.map((s) => ({ orig: s.orig, dest: s.dest ?? null, brush: s.brush || 'green' })),
+    )
   } catch (e) {
     loadError.value = String((e as Error)?.message ?? e)
   }
@@ -163,8 +182,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           :last-move="editor.lastMove"
           :board-theme="settings.boardTheme"
           :shapes="pinnedShapes"
+          :overlay-shapes="engineShapes"
           :persist-shapes="true"
+          :editable-shapes="true"
           @move="onBoardMove"
+          @drawn="onShapesDrawn"
         />
 
         <div class="mt-3 flex items-center gap-2">
@@ -209,6 +231,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             Clear pinned plan
           </button>
         </div>
+
+        <!-- Engine analysis for the selected node (#5 in studies). -->
+        <StudyAnalysis class="mt-4" />
       </section>
 
       <!-- Tree + annotations -->
