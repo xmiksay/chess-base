@@ -21,7 +21,7 @@ commented PGN studies, and integrates UCI engines.
 | `features` | Factual position **feature tags** (`features_of_fen`, #33): material census + balance, game phase, side to move, check/mate/stalemate, insufficient material, mobility, castling rights, plus a short human-readable `tags` list; grounded facts the interactive analysis tool hands the model (deeper pawn-structure classification #30 layers on) | none (pure) |
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `databases` | Transport-agnostic `DatabaseService`: collection CRUD (create/list/get/rename/delete) over the `databases` table; `kind ∈ {lichess,chesscom,master,own}`, `index_depth` derived from `kind`. Ownership read scope + write guards (ADR 0007/0011) — global (`owner_id IS NULL`) create/mutate requires admin. HTTP routes (`databases/routes.rs`, `/api/databases`) are thin callers | DB |
-| `studies` | Transport-agnostic `StudyService`: study lifecycle CRUD (`create`/`list`/`get`/`rename`/`delete`) + PGN import/export (`import_pgn`/`export_pgn` via `pgn_tree::pgn`, issue #9; `export_lichess` emits a header-tagged Lichess-study chapter, issue #32) + node-level `MoveTree` mutations (`add_move`/variation SAN-validated via `position::legal_sans`, `annotate`, `promote_variation`/`reorder_variation`/`delete_node`, issue #18; `set_shapes` pins a plan's board shapes to a node, issue #61); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — both the HTTP routes (`studies/routes.rs`, `/api/studies`) and the scoped MCP study tools (`server/routes/mcp_tools.rs`, issue #17 / ADR-0016) are thin callers | DB |
+| `studies` | Transport-agnostic `StudyService`: study lifecycle CRUD (`create`/`list`/`get`/`rename`/`delete`) + PGN import/export (`import_pgn`/`export_pgn` via `pgn_tree::pgn`, issue #9; `export_lichess` emits a header-tagged Lichess-study chapter, issue #32) + node-level `MoveTree` mutations (`add_move`/variation SAN-validated via `position::legal_sans`, `annotate`, `promote_variation`/`reorder_variation`/`delete_node`, issue #18; `set_shapes` pins a plan's board shapes to a node, issue #61); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — both the HTTP routes (`studies/routes.rs`, `/api/studies`) and the scoped MCP study tools (`server/routes/mcp/tools.rs`, issue #17 / ADR-0016) are thin callers | DB |
 | `settings` | Transport-agnostic `SettingsService`: per-user UI preferences (theme, board theme, piece set, default database) stored as one JSON blob per user under a `user_settings:{id}` key in the key/value `settings` table — no new entity. Validates the theme value and that `default_database_id` is visible to the caller (own ∪ global). HTTP routes (`settings/routes.rs`, `GET/PUT /api/settings`) are thin callers | DB |
 | `auth` | Server-mode auth (ADR 0015): `users`/`sessions` tables, Argon2 hashing, transport-agnostic `AuthService` (register/login/logout/authenticate), `/api/auth/*` routes. Inert in local mode | DB |
 | `ingest` | Shared game-ingest path (`ingest_pgn`): parses a PGN, dedups players/event, stores the game, replays the mainline via `position::replay`, and bulk-inserts the `position_index` rows (one per ply, capped by the database's `index_depth`; ADR-0003). One transaction per game; every collector funnels through it. A game carrying a provider permalink (`source_ref`) already present in the target database is skipped (returns `Ok(None)`), so a re-sync never doubles games (issue #95). `ingest_pgn_all` ingests every game in a multi-game blob (splitting on `[Event ` — the helper shared with the streaming collectors), returning only the newly-stored games; used by PGN upload. The store path is factored into reusable seams — `parse_pgn`, `prepare_game` (validate/replay), `load_index_depth` and `store_prepared` (write one game + its index rows in a caller-supplied transaction) — so the bulk importer can batch many games per transaction. `ParsedGame::content_hash` is a SHA-256 dedup key (stored as `source_ref`) for permalink-less master games | DB |
@@ -31,7 +31,7 @@ commented PGN studies, and integrates UCI engines.
 | `imports` | Transport-agnostic `ImportService` (issue #70): trigger a provider `sync` (Lichess/Chess.com) or ingest an uploaded PGN (`import_pgn` → `ingest_pgn_all`) into a target database, behind the same write guard as `databases` (ADR 0007/0011). A `sync` loads the cursor persisted per `(database, source)` (`imports/cursor.rs` ⇄ `sync_cursors`), runs the collector from it and saves the advanced cursor, so re-syncs fetch only new games (issue #95). HTTP routes (`imports/routes.rs`): `POST /api/import/sync` and `POST /api/import/pgn`, both returning `{ imported }`; thin callers. The SPA surface is `ImportView` (`/import`) | DB / HTTP |
 | `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis), the pooled `service::EngineService` facade — one-shot `analyse` for batch + MCP (ADR 0014) — and the `download` auto-download manager (platform catalog → fetch + checksum + register, #11) (Stockfish, Lc0/Maia) | process / HTTP |
 | `ai/llm` | Provider-agnostic LLM client: `LlmProvider` trait + Anthropic Messages API client (ADR 0013); HTTP behind an injectable `Transport` seam | HTTP |
-| `study_gen` | Study-generation pipeline stages (Epic 9 / ADR-0009): deterministic preprocessing (`tree`, `features`) feeding the LLM annotation pass (`annotate`). `tree` (#29): from a start FEN, breadth-first builds a bounded, pruned `VariationTree` of DB-played continuations, each node tagged with an engine eval + the pre-chewed DB stats; pruning (`select_continuations`) drops moves below a frequency floor or outside an eval margin, capped by `max_children`/`max_depth`/`max_nodes` (`TreeConfig`). Tree types, pruning and the BFS walk are I/O-free over two seams (`Evaluator`, `ContinuationSource`); the concrete engine/DB adapters (`EngineEvaluator`, `ReportContinuations`) live in the module root. `features` (#30): pure pawn-structure & key-square classifier — `concepts_of_fen` pattern-matches the pawn skeleton into structure tags (IQP, hanging pawns, Carlsbad, hedgehog, Maroczy, Stonewall, French chain), key squares (blockade / bind / outpost / break / chain-base, each with beneficiary), open/half-open files, isolated/doubled/passed/backward pawns, a king-safety signal and material imbalance (bishop pair, opposite-coloured bishops); the builder attaches the resulting `Concepts` to every node. `annotate` (#31): **batch** LLM annotation pass over the finished tagged tree → comments + NAG glyphs + training questions. `build_prompt` feeds the model only the moves, concept tags and opening name — **no tools, and no engine eval / PV / DB stats in the context** (ADR-0009). The model's draft attaches machine-checkable `Claim`s (`only_move`, `best_move`, `blunder`, `loses_material`/`wins_material`), and `verify_and_commit` confirms each against ground truth (legal-move legality + the tree's stored engine eval) before committing into a `MoveTree`; a claim ground truth contradicts is dropped, taking the prose that rested on it with it (`Rejection` records what fell). Pure verification (stored eval + chess rules), so the whole loop is unit-tested with a stub provider and no engine. `generate` (#115): the **orchestrator** that ties the three stages into one user-invokable operation — `generate_study` runs the tree builder → batch annotation/verification pass → persists the verified `MoveTree` as a `studies` row owned by the caller (`StudyService::create_with_tree`), returning the new study id + a summary (node count, rejected-claim count). Generic over the `Evaluator`/`ContinuationSource`/`LlmProvider` seams (unit-tested with injected fakes + a real in-memory study service); `generate_study_live` is the production wrapper. Exposed two ways, both thin callers: the MCP `generate_study` tool and `POST /api/studies/generate` | none (pure core) + engine/DB adapters + `ai/llm` provider |
+| `study_gen` | Study-generation pipeline stages (Epic 9 / ADR-0009): deterministic preprocessing (`tree`, `features`) feeding the LLM annotation pass (`annotate`). `tree` (#29): from a start FEN, breadth-first builds a bounded, pruned `VariationTree` of DB-played continuations, each node tagged with an engine eval + the pre-chewed DB stats; pruning (`select_continuations`) drops moves below a frequency floor or outside an eval margin, capped by `max_children`/`max_depth`/`max_nodes` (`TreeConfig`). Tree types, pruning and the BFS walk are I/O-free over two seams (`Evaluator`, `ContinuationSource`); the concrete engine/DB adapters (`EngineEvaluator`, `ReportContinuations`) live in the module root. `features` (#30, `features.rs` + `features/derived.rs`): pure pawn-structure & key-square classifier — `concepts_of_fen` pattern-matches the pawn skeleton into structure tags (IQP, hanging pawns, Carlsbad, hedgehog, Maroczy, Stonewall, French chain), key squares (blockade / bind / outpost / break / chain-base, each with beneficiary), open/half-open files, isolated/doubled/passed/backward pawns, a king-safety signal and material imbalance (bishop pair, opposite-coloured bishops); the builder attaches the resulting `Concepts` to every node. `annotate` (#31): **batch** LLM annotation pass over the finished tagged tree → comments + NAG glyphs + training questions. `build_prompt` feeds the model only the moves, concept tags and opening name — **no tools, and no engine eval / PV / DB stats in the context** (ADR-0009). The model's draft attaches machine-checkable `Claim`s (`only_move`, `best_move`, `blunder`, `loses_material`/`wins_material`), and `verify_and_commit` confirms each against ground truth (legal-move legality + the tree's stored engine eval) before committing into a `MoveTree`; a claim ground truth contradicts is dropped, taking the prose that rested on it with it (`Rejection` records what fell). Pure verification (stored eval + chess rules), so the whole loop is unit-tested with a stub provider and no engine. `generate` (#115): the **orchestrator** that ties the three stages into one user-invokable operation — `generate_study` runs the tree builder → batch annotation/verification pass → persists the verified `MoveTree` as a `studies` row owned by the caller (`StudyService::create_with_tree`), returning the new study id + a summary (node count, rejected-claim count). Generic over the `Evaluator`/`ContinuationSource`/`LlmProvider` seams (unit-tested with injected fakes + a real in-memory study service); `generate_study_live` is the production wrapper. Exposed two ways, both thin callers: the MCP `generate_study` tool and `POST /api/studies/generate` | none (pure core) + engine/DB adapters + `ai/llm` provider |
 | `server` | Axum router, app state, request identity, MCP `/mcp` endpoint + its auth (OAuth 2.1 / service token, ADR 0016), engine analysis WebSocket, embedded SPA, browser launch, lifecycle | HTTP |
 
 The **pure** modules (`position`, `pgn_tree`, `openings`, `plans`) carry the chess logic and are unit-tested without any
@@ -59,14 +59,15 @@ view in `views/`: `AnalysisView` (`/`, the board + analysis panel), `GamesView`
 see "Study editor" below), `ImportView` (`/import`, the game-import UI — see
 "Game import" below), `SearchView` (`/search`, see "Search UI" below) and
 `LoginView` (`/login`, the server-mode register/login form, see "Auth UI" below)
-plus a stub for `collections`. Deep links work because the server's
+plus `CollectionsView` (`/collections`, the collections manager — create/list/rename/delete
+databases via `/api/databases`, store `stores/collections.ts`). Deep links work because the server's
 `static_handler` falls back to `index.html` for unknown paths
 (`src/server/routes/mod.rs`).
 
-State lives in Pinia stores: `stores/game.js` (chess.js-backed position,
-legal-move `dests`, play-vs-engine moves), `stores/games.js` (the game browser —
+State lives in Pinia stores: `stores/game.ts` (chess.js-backed position,
+legal-move `dests`, play-vs-engine moves), `stores/games.ts` (the game browser —
 keyset-paginated list for a selected database plus the opened game's replay state;
-backed by `/api/games`), `stores/engine.js` (the
+backed by `/api/games`), `stores/engine.ts` (the
 `/api/engine/analyse` WebSocket — folds streamed `info`/`bestmove` events into
 reactive eval/PV state, and `planline` frames into per-MultiPV `plans` plus a
 derived `shapes` overlay for the board; the socket factory is injectable for
@@ -75,13 +76,13 @@ tests) and
 instant load; see "User settings" below) and `stores/auth.ts` (server-mode
 session: register/login/logout + the resolved caller; see "Auth UI" below). The
 WebSocket protocol parsing/formatting is isolated in the pure, unit-tested
-`lib/engineStream.js` (and `lib/pv.js` for UCI→SAN). The pure, unit-tested
-`lib/plansToShapes.js` maps the engine's per-piece `trajectories` into chessground
+`lib/engineStream.ts` (and `lib/pv.ts` for UCI→SAN). The pure, unit-tested
+`lib/plansToShapes.ts` maps the engine's per-piece `trajectories` into chessground
 auto-shapes — one brush per line (`plan1…3` + dimmed variants), a chained arrow
 per square pair, the hovered line full-opacity and the rest dimmed (issue #60,
 ADR 0017). Replaying a stored game's
 PGN into one board position per ply, plus the pure ply-navigation logic, lives in
-the unit-tested `lib/pgnViewer.js`. `components/AnalysisPanel.vue`
+the unit-tested `lib/pgnViewer.ts`. `components/AnalysisPanel.vue`
 (+ `EvalBar.vue`) renders the eval bar, MultiPV lines, depth/nps, engine options
 and play-vs-engine controls — hovering a PV row sets the store's active line so
 its plan highlights and the others dim. `Board.vue` is presentational (it also
@@ -91,8 +92,8 @@ drawings survive), cleared on every position change — unless `persist-shapes` 
 set (the study editor's pinned plans, issue #61).
 
 The **study editor** (issue #8, `views/StudyView.vue`) builds and annotates
-commented PGN trees. `stores/studies.js` owns the open study (`current`, with its
-`MoveTree`) and its lifecycle CRUD/import/export; `stores/studyEditor.js` layers
+commented PGN trees. `stores/studies.ts` owns the open study (`current`, with its
+`MoveTree`) and its lifecycle CRUD/import/export; `stores/studyEditor.ts` layers
 the editing state on top — the selected node id, the chess.js position derived for
 that node (FEN, legal `dests`, last move), and the mutations: a board drag is
 turned into SAN and either navigates to the matching child or appends a new
@@ -101,10 +102,10 @@ move/variation (`addMove`), plus annotate/promote/reorder/delete and `setShapes`
 `api.studies` and re-rendering from the returned tree. Pinned shapes are drawn on
 `Board.vue` (chessground `autoShapes`, with `persist-shapes` so a node's plan
 survives navigation); `AnalysisPanel.vue`'s per-line **Pin** button converts that
-line's plan trajectories (`lib/plansToShapes.js`) into stored `Shape`s. The pure tree walking
+line's plan trajectories (`lib/plansToShapes.ts`) into stored `Shape`s. The pure tree walking
 (path/line to a node, child lookup, and flattening the tree into renderable
 move/variation tokens with move numbers + NAG glyphs) is the unit-tested
-`lib/moveTree.js`. `components/MoveTree.vue` renders those tokens (click to
+`lib/moveTree.ts`. `components/MoveTree.vue` renders those tokens (click to
 navigate, variations dimmed by depth); `components/AnnotationEditor.vue` edits the
 selected node's comment/NAG and promotes/deletes variations.
 
@@ -146,28 +147,28 @@ service signature changed.
 ### Auth UI (#71)
 
 The SPA's auth surface is server-mode only; local mode is the implicit admin and
-shows no login controls. `api.js` keeps the session token in memory plus a
+shows no login controls. `api.ts` keeps the session token in memory plus a
 `localStorage` mirror (`setAuthToken`/`getAuthToken`) and attaches it as
 `Authorization: Bearer <token>` to every request (the HttpOnly `session` cookie
 the backend sets still works too — the Bearer header just lets the client decide
-when it authenticates and drop it on logout). `stores/auth.js` resolves the run
+when it authenticates and drop it on logout). `stores/auth.ts` resolves the run
 mode from `/api/health` once (`init()`), restores the user via `/api/whoami` when
 a token is present, and exposes `register`/`login`/`logout` plus `needsAuth`. The
-router guard (`authRedirect` in `router/index.js`) bounces gated navigations to
+router guard (`authRedirect` in `router/index.ts`) bounces gated navigations to
 `LoginView` (`/login`) with a `redirect` query and sends already-authenticated
 callers away from it. Backend error messages are pre-sanitized (generic for 5xx),
 so the form surfaces them verbatim without leaking internals.
 
 ## MCP endpoint (ADR 0008)
 
-`server/routes/mcp.rs` is a hand-rolled JSON-RPC 2.0 endpoint at `POST /mcp`
+`server/routes/mcp/mod.rs` is a hand-rolled JSON-RPC 2.0 endpoint at `POST /mcp`
 (protocol `2025-03-26`), no MCP server crate. It is transport/dispatch plumbing:
 `initialize` (serverInfo + capabilities + instructions), `tools/list`,
 `tools/call`, and the `notifications/initialized` ack. A `ToolRegistry` holds
 `Tool`s (name + JSON input schema + async handler); each handler returns a
 `ToolOutcome` the dispatcher wraps into the MCP `content`/`isError` envelope.
 Unknown method → `-32601`, unknown tool → `-32602`. The tool builders live in
-`server/routes/mcp_tools.rs`: an `echo` stub proves dispatch, the engine facade
+`server/routes/mcp/tools.rs`: an `echo` stub proves dispatch, the engine facade
 registers `engine_analyse` (#27, see ADR 0014), and the study tools
 (`study_create` / `study_add_move` / `study_annotate`, #17) edit the caller's
 studies through `StudyService`. The **study-generation tool** `generate_study`
@@ -175,11 +176,11 @@ studies through `StudyService`. The **study-generation tool** `generate_study`
 orchestrator (tree → annotate/verify → persist) and needs both an engine and an
 LLM provider configured (a miss returns a graceful `isError`, never a panic). The
 **pre-chewed DB tools** live in
-`server/routes/mcp_db_tools.rs` (#28): `db_position_report` (ECO + per-move
+`server/routes/mcp/db_tools.rs` (#28): `db_position_report` (ECO + per-move
 win/draw/loss with frequency/score + transpositions) and `db_reference_games`
 (scoped reference games), both thin callers of `search::PositionReportService`
 returning synthesized JSON the LLM consumes but never recomputes (ADR-0009). The
-**interactive analysis tool** lives in `server/routes/mcp_analysis.rs` (#33):
+**interactive analysis tool** lives in `server/routes/mcp/analysis.rs` (#33):
 `analyse_position` is the one-shot "explain this position" entry point — it
 bundles the engine eval/PV, the `db_position_report`, and the pure
 `features::features_of_fen` feature tags (material, game phase, check/mate,
@@ -428,8 +429,9 @@ builds the provider once at startup from `ANTHROPIC_API_KEY` and holds it on
 Indices cover `zobrist`, the games header columns (`database_id`, player/event FKs,
 `date`, `eco`, `result`) and `database_id`/`owner_id` scoping, plus the two unique
 indices from issue #95 (`games(database_id, source_ref)` and
-`sync_cursors(database_id, source)`). Migration `m0002_core_schema` adds the core
-domain; `m0003_auth` adds `users`/`sessions`; `m0004_oauth` adds the MCP-auth tables
+`sync_cursors(database_id, source)`). Migration `m0001_init` seeds the `settings` + `databases`
+tables; `m0002_core_schema` adds the rest of the core domain
+(`players`/`events`/`games`/`position_index`/`studies`); `m0003_auth` adds `users`/`sessions`; `m0004_oauth` adds the MCP-auth tables
 (`service_tokens`, `oauth_clients`, `oauth_codes`, `oauth_tokens`); `m0005_sync_dedup`
 adds `games.source_ref` and the `sync_cursors` table. All run on both SQLite and Postgres.
 
@@ -483,9 +485,9 @@ results render as a games table with a "Load more" button that follows the
 reuses `Board.vue`: dragging a piece (or clicking a move-stats row) descends the
 opening tree, "back"/"start" walk the line, and the table shows each continuation's
 frequency and a W/D/L bar alongside the games reaching the position. Both are
-driven by `stores/search.js`. The pure, unit-tested logic is split out:
-`lib/headerQuery.js` owns the query state (empty shape, blank detection,
-snake_case param mapping) and `lib/openingTree.js` owns tree navigation (replay a
+driven by `stores/search.ts`. The pure, unit-tested logic is split out:
+`lib/headerQuery.ts` owns the query state (empty shape, blank detection,
+snake_case param mapping) and `lib/openingTree.ts` owns tree navigation (replay a
 SAN line to a FEN + legal `dests` via chess.js, board-drag→SAN, stat math). The
 store calls `api.search.{headers,tree,games}` — `headers` returns a JSON page,
 `tree`/`games` parse the NDJSON streams.
