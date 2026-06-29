@@ -25,3 +25,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0017 | Plan trajectories: pure `plans` module, thin WS/MCP callers |
 | 0018 | Pre-chewed DB query layer: ECO + frequency/score + transpositions + references |
 | 0019 | Interactive analysis mode: `analyse_position` bundles engine + DB + feature tags |
+| 0020 | Incremental sync: persisted cursor + per-game `source_ref` dedup |

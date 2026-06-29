@@ -2,8 +2,9 @@
 //!
 //! Games stream from `GET /api/user/{username}/games` (PGN). A personal API
 //! token (optional) raises rate limits; on HTTP 429 callers must back off ≥60s.
-//! Incremental sync uses the `since` query parameter and the persisted
-//! [`SyncCursor::last_game_ms`].
+//! Incremental sync uses the `since` query parameter set to the persisted
+//! [`SyncCursor::last_game_ms`]; the boundary game it re-fetches is deduped by
+//! ingest (issue #95), so games are never doubled.
 //!
 //! The networked [`Lichess::sync`] is a thin adapter: it streams the export body
 //! chunk-by-chunk, splits it into individual games and funnels each through the
@@ -24,11 +25,6 @@ const MIN_BACKOFF: Duration = Duration::from_secs(60);
 
 /// Number of 429 retries before giving up on a request.
 const MAX_RETRIES: u32 = 5;
-
-/// One second in epoch-ms. The export PGN carries game start time at second
-/// precision (`UTCDate`/`UTCTime`), so the incremental `since` is advanced a full
-/// second past the last synced game to guarantee it is not re-fetched.
-const SECOND_MS: i64 = 1_000;
 
 pub struct Lichess {
     pub username: String,
@@ -64,8 +60,9 @@ impl Lichess {
 
     /// Sync this user's games into `database_id`, resuming from `cursor`.
     ///
-    /// Streams the export, ingests every game and returns the advanced cursor so
-    /// a re-sync only fetches games newer than the most recent one stored.
+    /// Streams the export, ingests every game and returns the advanced cursor. A
+    /// re-sync resumes from the last game's second; the boundary game(s) it
+    /// re-fetches are deduped by ingest, so games are never doubled (issue #95).
     pub async fn sync(
         &self,
         db: &DatabaseConnection,
@@ -167,20 +164,26 @@ async fn ingest_blob(
 ) -> Result<usize> {
     let mut imported = 0;
     for game in split_games(blob) {
-        ingest_pgn(db, database_id, &game)
+        let ingested = ingest_pgn(db, database_id, &game)
             .await
             .context("ingesting lichess game")?;
+        // Advance the cursor for every game seen (even a deduped re-fetch), so it
+        // always tracks the newest game's timestamp.
         cursor.last_game_ms = advance_ms(cursor.last_game_ms, game_epoch_ms(&game));
-        imported += 1;
+        if ingested.is_some() {
+            imported += 1;
+        }
     }
     Ok(imported)
 }
 
-/// `since` query value for an incremental sync: one second past the last synced
-/// game (or `None` for a first, full sync). The extra second skips the boundary
-/// game, whose second-precision start time the cursor already holds.
+/// `since` query value for an incremental sync: the epoch-ms of the last synced
+/// game (or `None` for a first, full sync). It is deliberately *not* nudged
+/// forward — Lichess game times are second-precision, so advancing past the
+/// boundary would skip other games sharing that same second. The boundary game
+/// is re-fetched and dropped by ingest dedup instead (issue #95).
 fn since_param(cursor: &SyncCursor) -> Option<i64> {
-    cursor.last_game_ms.map(|ms| ms + SECOND_MS)
+    cursor.last_game_ms
 }
 
 /// Advance a cursor timestamp to the newer of the current value and `candidate`.
@@ -263,16 +266,17 @@ mod tests {
     }
 
     #[test]
-    fn first_sync_has_no_since_then_resumes_past_last_game() {
+    fn first_sync_has_no_since_then_resumes_at_last_game() {
         // No cursor ⇒ full sync.
         assert_eq!(since_param(&SyncCursor::default()), None);
-        // With a cursor ⇒ resume one second past the last synced game so the
-        // second-precision boundary game is not re-fetched.
+        // With a cursor ⇒ resume *at* the last synced game's second (not past it),
+        // so games sharing that second are not skipped. The boundary game is
+        // deduped by ingest rather than skipped by the cursor (issue #95).
         let cursor = SyncCursor {
             last_game_ms: Some(1_705_350_645_000),
             ..Default::default()
         };
-        assert_eq!(since_param(&cursor), Some(1_705_350_646_000));
+        assert_eq!(since_param(&cursor), Some(1_705_350_645_000));
     }
 
     #[test]
@@ -357,8 +361,8 @@ mod tests {
         assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 2);
         // Cursor sits on the newer (second) game.
         assert_eq!(cursor.last_game_ms, Some(1_705_350_705_000));
-        // A re-sync would resume strictly after it.
-        assert_eq!(since_param(&cursor), Some(1_705_350_706_000));
+        // A re-sync resumes *at* it; the boundary game is deduped, not skipped.
+        assert_eq!(since_param(&cursor), Some(1_705_350_705_000));
     }
 
     #[tokio::test]
@@ -378,5 +382,25 @@ mod tests {
         assert_eq!(imported, 1);
         assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 3);
         assert_eq!(cursor.last_game_ms, Some(1_705_395_600_000)); // 2024-01-16 09:00 UTC
+    }
+
+    #[tokio::test]
+    async fn re_ingesting_the_same_blob_imports_nothing() {
+        let (conn, database_id) = own_database().await;
+        let mut cursor = SyncCursor::default();
+        ingest_blob(&conn, database_id, TWO_GAMES, &mut cursor)
+            .await
+            .unwrap();
+
+        // The boundary re-fetch a resumed sync produces: the same two games (same
+        // Lichess permalinks) are deduped, so nothing is added and the cursor
+        // still tracks the newest game.
+        let again = ingest_blob(&conn, database_id, TWO_GAMES, &mut cursor)
+            .await
+            .unwrap();
+
+        assert_eq!(again, 0);
+        assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 2);
+        assert_eq!(cursor.last_game_ms, Some(1_705_350_705_000));
     }
 }
