@@ -14,7 +14,7 @@ use anyhow::{anyhow, Context, Result};
 use sea_orm::DatabaseConnection;
 use std::time::Duration;
 
-use super::{GameSource, SyncCursor, SyncOutcome};
+use super::{backoff_delay, retry_after_secs, GameSource, SyncCursor, SyncOutcome};
 use crate::ingest::{event_offsets, ingest_pgn, split_games};
 
 const API_BASE: &str = "https://lichess.org";
@@ -138,7 +138,7 @@ impl Lichess {
                         "lichess rate limit: gave up after {MAX_RETRIES} retries"
                     ));
                 }
-                let delay = backoff_delay(retry_after_secs(&resp));
+                let delay = backoff_delay(retry_after_secs(&resp), MIN_BACKOFF);
                 tracing::warn!(?delay, attempt, "lichess 429; backing off");
                 tokio::time::sleep(delay).await;
                 continue;
@@ -191,26 +191,6 @@ fn advance_ms(current: Option<i64>, candidate: Option<i64>) -> Option<i64> {
         (cur, None) => cur,
         (None, new) => new,
     }
-}
-
-/// Back-off delay for an HTTP 429: at least [`MIN_BACKOFF`], or the server's
-/// `Retry-After` (seconds) when it asks for longer.
-fn backoff_delay(retry_after: Option<u64>) -> Duration {
-    match retry_after {
-        Some(secs) => MIN_BACKOFF.max(Duration::from_secs(secs)),
-        None => MIN_BACKOFF,
-    }
-}
-
-/// Parse the `Retry-After` header (delay in seconds) if present and numeric.
-fn retry_after_secs(resp: &reqwest::Response) -> Option<u64> {
-    resp.headers()
-        .get(reqwest::header::RETRY_AFTER)?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
 }
 
 /// Byte offset at which the trailing, possibly-incomplete game begins, or `None`
@@ -306,11 +286,17 @@ mod tests {
 
     #[test]
     fn backoff_is_at_least_one_minute() {
-        assert_eq!(backoff_delay(None), Duration::from_secs(60));
+        assert_eq!(backoff_delay(None, MIN_BACKOFF), Duration::from_secs(60));
         // Server asks for less than the mandated minimum ⇒ floored to 60s.
-        assert_eq!(backoff_delay(Some(10)), Duration::from_secs(60));
+        assert_eq!(
+            backoff_delay(Some(10), MIN_BACKOFF),
+            Duration::from_secs(60)
+        );
         // Server asks for longer ⇒ honoured.
-        assert_eq!(backoff_delay(Some(120)), Duration::from_secs(120));
+        assert_eq!(
+            backoff_delay(Some(120), MIN_BACKOFF),
+            Duration::from_secs(120)
+        );
     }
 
     #[test]

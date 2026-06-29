@@ -5,7 +5,30 @@
 pub mod chesscom;
 pub mod lichess;
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
+
+/// Back-off delay for an HTTP 429: at least `min_backoff`, or the server's
+/// `Retry-After` (seconds) when it asks for longer. Shared by every collector;
+/// each passes its own provider-specific floor.
+pub(crate) fn backoff_delay(retry_after: Option<u64>, min_backoff: Duration) -> Duration {
+    match retry_after {
+        Some(secs) => min_backoff.max(Duration::from_secs(secs)),
+        None => min_backoff,
+    }
+}
+
+/// Parse the `Retry-After` header (delay in seconds) if present and numeric.
+pub(crate) fn retry_after_secs(resp: &reqwest::Response) -> Option<u64> {
+    resp.headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
 
 /// Incremental sync position, persisted per source so re-syncs are cheap.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

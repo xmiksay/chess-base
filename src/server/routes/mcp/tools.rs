@@ -1,5 +1,5 @@
 //! The concrete MCP tools registered into the [`ToolRegistry`]. The dispatch
-//! plumbing (auth, JSON-RPC framing, the envelope) lives in [`super::mcp`]; this
+//! plumbing (auth, JSON-RPC framing, the envelope) lives in [`super`]; this
 //! module is just the tool builders + handlers. Every handler receives the
 //! resolved [`CurrentUser`] so its reads/writes scope to the caller (ADR-0016).
 
@@ -7,8 +7,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 
-use super::mcp::{Tool, ToolOutcome, ToolRegistry};
-use crate::engine::Limits;
+use super::{Tool, ToolOutcome, ToolRegistry};
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 use crate::studies::{StudyError, StudyService};
@@ -25,8 +24,8 @@ pub fn default_registry() -> ToolRegistry {
     registry.register(study_create_tool());
     registry.register(study_add_move_tool());
     registry.register(study_annotate_tool());
-    super::mcp_db_tools::register(&mut registry);
-    super::mcp_analysis::register(&mut registry);
+    super::db_tools::register(&mut registry);
+    super::analysis::register(&mut registry);
     registry
 }
 
@@ -99,16 +98,12 @@ async fn engine_analyse(app: AppState, args: Value) -> ToolOutcome {
         }
     };
 
-    let fen = match args.get("fen").and_then(Value::as_str) {
-        Some(fen) if !fen.trim().is_empty() => fen.to_string(),
-        _ => return ToolOutcome::error("Invalid arguments: missing string field `fen`."),
+    let fen = match super::db_tools::fen_arg(&args) {
+        Some(fen) => fen,
+        None => return ToolOutcome::error("Invalid arguments: missing string field `fen`."),
     };
 
-    let limits = Limits {
-        depth: args.get("depth").and_then(Value::as_u64).map(|d| d as u32),
-        movetime_ms: args.get("movetime_ms").and_then(Value::as_u64),
-        nodes: None,
-    };
+    let limits = super::db_tools::limits_arg(&args);
 
     match service.analyse(&fen, &limits, &BTreeMap::new()).await {
         Ok(analysis) => match serde_json::to_string_pretty(&analysis) {

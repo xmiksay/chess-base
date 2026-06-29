@@ -5,6 +5,7 @@ pub mod browser;
 pub mod config;
 pub mod embed;
 pub mod engine_ws;
+pub(crate) mod error;
 pub mod identity;
 pub mod routes;
 pub mod state;

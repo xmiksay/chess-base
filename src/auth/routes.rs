@@ -16,6 +16,7 @@ use serde_json::json;
 use crate::auth::service::{AuthService, AuthServiceError, Authenticated};
 use crate::auth::token_from_headers;
 use crate::server::config::Mode;
+use crate::server::error::error_response;
 use crate::server::state::AppState;
 
 /// Session lifetime mirrored onto the cookie `Max-Age` (30 days, in seconds).
@@ -137,14 +138,10 @@ impl IntoResponse for AuthApiError {
                         StatusCode::INTERNAL_SERVER_ERROR
                     }
                 };
-                // 5xx details are internal; clients get a generic message.
-                let message = match status {
-                    StatusCode::INTERNAL_SERVER_ERROR => "internal error".to_string(),
-                    _ => e.to_string(),
-                };
-                (status, message)
+                (status, e.to_string())
             }
         };
-        (status, Json(json!({ "error": message }))).into_response()
+        // 5xx details are internal; clients get a generic message.
+        error_response(status, message)
     }
 }

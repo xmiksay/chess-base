@@ -2,12 +2,13 @@
 //! returns synthesized data — ECO, per-move win/draw/loss + frequency/score,
 //! transpositions, reference games — from [`PositionReportService`], scoped to
 //! the authenticated caller (ADR-0016). The model consumes conclusions; it never
-//! computes them (ADR-0009). Dispatch/JSON-RPC framing lives in [`super::mcp`].
+//! computes them (ADR-0009). Dispatch/JSON-RPC framing lives in [`super`].
 
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use super::mcp::{Tool, ToolOutcome, ToolRegistry};
+use super::{Tool, ToolOutcome, ToolRegistry};
+use crate::engine::Limits;
 use crate::search::report::PositionReportService;
 use crate::search::SearchError;
 use crate::server::identity::CurrentUser;
@@ -91,11 +92,23 @@ async fn reference_games(app: AppState, user: CurrentUser, args: Value) -> ToolO
     }
 }
 
-/// Extract a non-empty `fen` string argument.
-fn fen_arg(args: &Value) -> Option<String> {
+/// Extract a non-empty `fen` string argument. Shared by the analysis/engine
+/// tools, which turn a `None` into their own "missing `fen`" tool error.
+pub(super) fn fen_arg(args: &Value) -> Option<String> {
     match args.get("fen").and_then(Value::as_str) {
         Some(fen) if !fen.trim().is_empty() => Some(fen.to_string()),
         _ => None,
+    }
+}
+
+/// Extract the engine search [`Limits`] (`depth` / `movetime_ms`) from a tool's
+/// arguments. Shared by the engine and interactive-analysis tools so the parsing
+/// lives in one place. No clamping — bounds are applied downstream.
+pub(super) fn limits_arg(args: &Value) -> Limits {
+    Limits {
+        depth: args.get("depth").and_then(Value::as_u64).map(|d| d as u32),
+        movetime_ms: args.get("movetime_ms").and_then(Value::as_u64),
+        nodes: None,
     }
 }
 

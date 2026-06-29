@@ -8,8 +8,6 @@
 //! scan no matter how deep it sits. The opaque `cursor` is the base64url of that
 //! key; the client echoes it back to advance.
 
-use std::collections::{HashMap, HashSet};
-
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use sea_orm::sea_query::{Expr, Func, IntoCondition, SimpleExpr};
 use sea_orm::{
@@ -18,9 +16,9 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::db::entities::{databases, events, games, players};
-use crate::search::position::GameHit;
-use crate::server::identity::{scope, CurrentUser};
+use crate::db::entities::{events, games, players};
+use crate::search::position::{GameHit, PositionSearchService, SearchError};
+use crate::server::identity::CurrentUser;
 
 /// Page size when the caller omits `limit`.
 const DEFAULT_LIMIT: u64 = 50;
@@ -216,7 +214,16 @@ impl HeaderSearchService {
         user: &CurrentUser,
         query: &HeaderQuery,
     ) -> Result<HeaderPage, HeaderSearchError> {
-        let visible = self.visible_database_ids(user).await?;
+        // Scope is the caller's own ∪ global databases; reuse position search's
+        // canonical lookup rather than re-deriving it here.
+        let visible = PositionSearchService::new(self.db.clone())
+            .visible_database_ids(user)
+            .await
+            .map_err(|e| match e {
+                SearchError::Db(e) => HeaderSearchError::Db(e),
+                SearchError::InvalidFen(m) => HeaderSearchError::BadRequest(m),
+                SearchError::Serialize(e) => HeaderSearchError::Serialize(e),
+            })?;
         if visible.is_empty() {
             return Ok(HeaderPage::empty());
         }
@@ -281,23 +288,12 @@ impl HeaderSearchService {
             None
         };
 
-        let names = self.player_names(&rows).await?;
-        let games = rows.into_iter().map(|g| hit(g, &names)).collect();
+        let names = crate::games::player_names(&self.db, &rows).await?;
+        let games = rows
+            .into_iter()
+            .map(|g| GameHit::from_model(g, &names))
+            .collect();
         Ok(HeaderPage { games, next_cursor })
-    }
-
-    /// The database ids visible to the caller (own ∪ global), the search scope.
-    async fn visible_database_ids(
-        &self,
-        user: &CurrentUser,
-    ) -> Result<Vec<i32>, HeaderSearchError> {
-        Ok(databases::Entity::find()
-            .filter(scope(databases::Column::OwnerId, user))
-            .select_only()
-            .column(databases::Column::Id)
-            .into_tuple()
-            .all(&self.db)
-            .await?)
     }
 
     /// Player ids whose name contains `name` (case-insensitive on SQLite's ASCII
@@ -321,31 +317,6 @@ impl HeaderSearchService {
             .into_tuple()
             .all(&self.db)
             .await?)
-    }
-
-    /// `player_id -> name` for every player referenced by `games`, in one query.
-    async fn player_names(
-        &self,
-        games: &[games::Model],
-    ) -> Result<HashMap<i32, String>, HeaderSearchError> {
-        let ids: HashSet<i32> = games
-            .iter()
-            .flat_map(|g| [g.white_player_id, g.black_player_id])
-            .flatten()
-            .collect();
-        if ids.is_empty() {
-            return Ok(HashMap::new());
-        }
-        Ok(players::Entity::find()
-            .filter(players::Column::Id.is_in(ids))
-            .select_only()
-            .column(players::Column::Id)
-            .column(players::Column::Name)
-            .into_tuple::<(i32, String)>()
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .collect())
     }
 }
 
@@ -403,24 +374,6 @@ fn keyset(sort: SortField, dir: SortDir, cursor: &Cursor) -> Condition {
                         .add(past_id),
                 )
         }
-    }
-}
-
-/// Project a game row to a [`GameHit`], resolving player ids to names.
-fn hit(g: games::Model, names: &HashMap<i32, String>) -> GameHit {
-    GameHit {
-        white: g.white_player_id.and_then(|id| names.get(&id).cloned()),
-        black: g.black_player_id.and_then(|id| names.get(&id).cloned()),
-        id: g.id,
-        database_id: g.database_id,
-        site: g.site,
-        round: g.round,
-        date: g.date,
-        result: g.result,
-        eco: g.eco,
-        white_elo: g.white_elo,
-        black_elo: g.black_elo,
-        ply_count: g.ply_count,
     }
 }
 

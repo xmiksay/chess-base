@@ -12,7 +12,7 @@ use sea_orm::{DatabaseConnection, DbErr, EntityTrait};
 use crate::collectors::{chesscom::ChessCom, lichess::Lichess, SyncCursor};
 use crate::db::entities::databases;
 use crate::ingest::ingest_pgn_all;
-use crate::server::identity::{assert_admin, CurrentUser};
+use crate::server::identity::{assert_can_write, CurrentUser};
 
 pub mod routes;
 
@@ -144,18 +144,8 @@ impl ImportService {
             .one(&self.db)
             .await?
             .ok_or(ImportError::NotFound)?;
-        assert_can_write(&model, user)?;
+        assert_can_write(model.owner_id.as_deref(), user).map_err(|_| ImportError::Forbidden)?;
         Ok(model)
-    }
-}
-
-/// Write guard (ADR 0007 / 0011): a database is writable only by its owner; a
-/// global database (`owner_id IS NULL`) requires admin.
-fn assert_can_write(model: &databases::Model, user: &CurrentUser) -> Result<(), ImportError> {
-    match &model.owner_id {
-        None => assert_admin(user).map_err(|_| ImportError::Forbidden),
-        Some(owner) if *owner == user.id => Ok(()),
-        Some(_) => Err(ImportError::Forbidden),
     }
 }
 

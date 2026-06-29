@@ -55,6 +55,8 @@ set `CARGO_BUILD_JOBS=4` for cargo (the Makefile does both).
 
 ## Engineering standards (project-specific)
 
+- **KISS.** Most direct expression; no premature abstraction or indirection where a plain function works.
+- **DRY.** Extract shared logic on the second occurrence — never copy a helper into a third file.
 - **File cap: 500 lines.** Split along a natural seam before crossing it.
 - **Coverage target ~40–60%**, measured by `make coverage`.
 - **Testable-first**: pure logic in `position`/`pgn_tree`; adapters injected.
