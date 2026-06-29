@@ -40,6 +40,18 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
     if let Some(engine) = cfg.engine.clone() {
         registry.seed_default(engine).await?;
     }
+    // Bundled engine (ADR 0005 / #54): in a `bundled-stockfish` build, extract the
+    // embedded Stockfish to the OS cache dir so the bundled resolution slot points
+    // at a real binary — letting analysis work offline with no `--engine` and no
+    // download. A no-op (returns `None`) in the default build. Best-effort: a
+    // failed extraction is logged, never fatal.
+    match crate::engine::bundled::extract() {
+        Ok(Some(cfg)) => tracing::info!(path = %cfg.path.display(), "bundled engine ready"),
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "could not extract bundled engine")
+        }
+    }
     // First-run auto-download (ADR 0005 / #11): when enabled and nothing is
     // configured yet, fetch Stockfish + Maia into the engines dir and register
     // them in the lowest-priority resolution slot. Best-effort — a download or

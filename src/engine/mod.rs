@@ -17,6 +17,7 @@
 //! env var.
 
 pub mod analysis;
+pub mod bundled;
 pub mod command;
 pub mod download;
 pub mod manager;
@@ -28,6 +29,7 @@ use std::path::PathBuf;
 use vampirc_uci::{parse_one, UciMessage};
 
 pub use analysis::{AnalysisEvent, AnalysisInfo, Score};
+pub use bundled::BUNDLED_ENGINE_NAME;
 pub use command::{Limits, MAX_DEPTH, MAX_MOVETIME_MS};
 pub use download::{
     catalog, download_default_engines, Asset, Fetch, HttpFetcher, Manager, Plan, Platform,
