@@ -91,10 +91,17 @@ impl ChessCom {
             // A month archive always has games, but guard against an empty body
             // so a blank month never trips the empty-PGN rejection.
             if !pgn.trim().is_empty() {
-                imported += ingest_pgn_all(db, database_id, &pgn)
+                let report = ingest_pgn_all(db, database_id, &pgn)
                     .await
-                    .with_context(|| format!("ingesting chess.com month {month}"))?
-                    .len();
+                    .with_context(|| format!("ingesting chess.com month {month}"))?;
+                if !report.errors.is_empty() {
+                    tracing::warn!(
+                        month = %month,
+                        skipped = report.errors.len(),
+                        "skipped malformed games in chess.com archive"
+                    );
+                }
+                imported += report.imported.len();
             }
             cursor.last_month = Some(month);
         }

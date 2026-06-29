@@ -137,8 +137,10 @@ async fn pgn_upload_reports_malformed_input() {
     let alice = register(&app, "alice").await;
     let id = create_db(&app, &alice, json!({"name": "Mine", "kind": "own"})).await;
 
-    // An illegal continuation: Black cannot answer 1. e4 with a second e4.
-    let (status, _) = send(
+    // An illegal continuation: Black cannot answer 1. e4 with a second e4. Under
+    // skip-and-continue (issue #96) a bad game is reported, not fatal — the upload
+    // succeeds with zero imported and the game recorded in `errors`.
+    let (status, body) = send(
         &app,
         json_req(
             "POST",
@@ -148,7 +150,46 @@ async fn pgn_upload_reports_malformed_input() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["imported"], 0);
+    assert_eq!(body["skipped"], 1);
+    let errors = body["errors"].as_array().unwrap();
+    assert_eq!(errors.len(), 1);
+    // The message is client-safe and indexed, never a raw SQL/anyhow chain.
+    assert!(errors[0].as_str().unwrap().starts_with("game 1:"));
+}
+
+#[tokio::test]
+async fn pgn_upload_skips_a_bad_game_and_keeps_the_rest() {
+    let app = server_app().await;
+    let alice = register(&app, "alice").await;
+    let id = create_db(&app, &alice, json!({"name": "Mine", "kind": "own"})).await;
+
+    // A good game followed by an illegal one: the good game commits, the bad one
+    // is skipped — no all-or-nothing abort that would strand the client (issue #96).
+    let pgn = "[Event \"Good\"]\n[White \"A\"]\n[Black \"B\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0\n\n[Event \"Bad\"]\n\n1. e4 e4 *\n";
+    let (status, body) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/import/pgn",
+            &alice,
+            json!({"database_id": id, "pgn": pgn}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["imported"], 1);
+    assert_eq!(body["skipped"], 1);
+
+    // Only the good game landed in the database.
+    let (status, list) = send(
+        &app,
+        get_req(&format!("/api/games?database_id={id}"), &alice),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["games"].as_array().unwrap().len(), 1);
 }
 
 #[tokio::test]
