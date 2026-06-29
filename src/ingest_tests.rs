@@ -24,7 +24,10 @@ async fn db_with_own_collection() -> (DatabaseConnection, i32) {
 async fn ingests_game_with_one_index_row_per_mainline_ply() {
     let (conn, database_id) = db_with_own_collection().await;
 
-    let result = ingest_pgn(&conn, database_id, SCHOLARS_MATE).await.unwrap();
+    let result = ingest_pgn(&conn, database_id, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .unwrap();
     // 7 half-moves: e4 e5 Bc4 Nc6 Qh5 Nf6 Qxf7#.
     assert_eq!(result.indexed_plies, 7);
 
@@ -50,7 +53,10 @@ async fn ingests_game_with_one_index_row_per_mainline_ply() {
 #[tokio::test]
 async fn indexed_positions_are_searchable_by_zobrist() {
     let (conn, database_id) = db_with_own_collection().await;
-    let result = ingest_pgn(&conn, database_id, SCHOLARS_MATE).await.unwrap();
+    let result = ingest_pgn(&conn, database_id, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .unwrap();
 
     // Spot-check a mid-game position: after 1. e4 e5 (the position from which
     // White plays 2. Bc4, i.e. ply 2 in the index).
@@ -71,7 +77,10 @@ async fn indexed_positions_are_searchable_by_zobrist() {
 #[tokio::test]
 async fn start_position_is_indexed_at_ply_zero() {
     let (conn, database_id) = db_with_own_collection().await;
-    let result = ingest_pgn(&conn, database_id, SCHOLARS_MATE).await.unwrap();
+    let result = ingest_pgn(&conn, database_id, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .unwrap();
 
     let start = zobrist_of_fen(STARTPOS_FEN, CastlingMode::Standard).unwrap();
     let hit = position_index::Entity::find()
@@ -99,7 +108,10 @@ async fn index_depth_caps_indexed_positions() {
     .await
     .unwrap();
 
-    let result = ingest_pgn(&conn, db.id, SCHOLARS_MATE).await.unwrap();
+    let result = ingest_pgn(&conn, db.id, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .unwrap();
     // Mainline is 7 plies but indexing is capped at 3; the game still records
     // the full ply count.
     assert_eq!(result.indexed_plies, 3);
@@ -134,10 +146,87 @@ async fn players_and_event_are_deduplicated_across_games() {
     assert_eq!(games[0].event_id, games[1].event_id);
 }
 
+// Same scholars-mate movetext, but tagged with a Lichess permalink so it carries
+// a stable `source_ref` (unlike the `[Site "London"]` of `SCHOLARS_MATE`).
+const KEYED_GAME: &str = "[Event \"Rated blitz game\"]\n[Site \"https://lichess.org/abcd1234\"]\n[White \"alice\"]\n[Black \"bob\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0\n";
+
+#[tokio::test]
+async fn re_ingesting_a_keyed_game_is_deduped() {
+    let (conn, database_id) = db_with_own_collection().await;
+
+    // First ingest stores the game and records its permalink as `source_ref`.
+    let first = ingest_pgn(&conn, database_id, KEYED_GAME).await.unwrap();
+    assert!(first.is_some());
+    // Re-syncing the same game returns `None` and writes nothing — the dedup that
+    // makes revisiting the cursor boundary safe (issue #95).
+    let second = ingest_pgn(&conn, database_id, KEYED_GAME).await.unwrap();
+    assert!(second.is_none());
+
+    assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn same_keyed_game_dedups_per_database_not_across() {
+    let conn = connect(&DbConfig::in_memory()).await.unwrap();
+    let db_a = databases::ActiveModel {
+        owner_id: Set(Some("alice".to_string())),
+        name: Set("A".to_string()),
+        kind: Set("lichess".to_string()),
+        ..Default::default()
+    }
+    .insert(&conn)
+    .await
+    .unwrap();
+    let db_b = databases::ActiveModel {
+        owner_id: Set(Some("alice".to_string())),
+        name: Set("B".to_string()),
+        kind: Set("lichess".to_string()),
+        ..Default::default()
+    }
+    .insert(&conn)
+    .await
+    .unwrap();
+
+    // The same permalink lands once in each database (dedup is per-database).
+    assert!(ingest_pgn(&conn, db_a.id, KEYED_GAME)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(ingest_pgn(&conn, db_b.id, KEYED_GAME)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(ingest_pgn(&conn, db_a.id, KEYED_GAME)
+        .await
+        .unwrap()
+        .is_none());
+
+    assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn keyless_games_are_never_deduped() {
+    let (conn, database_id) = db_with_own_collection().await;
+    // `SCHOLARS_MATE` has `[Site "London"]`, not a permalink ⇒ no `source_ref`, so
+    // re-ingesting it stores a second copy (the existing player/event-dedup case).
+    assert!(ingest_pgn(&conn, database_id, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(ingest_pgn(&conn, database_id, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 2);
+}
+
 #[tokio::test]
 async fn missing_player_tags_yield_null_ids() {
     let (conn, database_id) = db_with_own_collection().await;
-    let result = ingest_pgn(&conn, database_id, "1. d4 d5 *").await.unwrap();
+    let result = ingest_pgn(&conn, database_id, "1. d4 d5 *")
+        .await
+        .unwrap()
+        .unwrap();
 
     let game = games::Entity::find_by_id(result.game_id)
         .one(&conn)
@@ -224,7 +313,7 @@ async fn ingests_chess960_game_honoring_variant_and_setup() {
         "[Event \"Casual Chess960\"]\n[White \"Carlsen, Magnus\"]\n[Black \"Nakamura, Hikaru\"]\n[Result \"*\"]\n[Variant \"Chess960\"]\n[SetUp \"1\"]\n[FEN \"{CHESS960_FEN}\"]\n\n1. d4 d5 *\n"
     );
 
-    let result = ingest_pgn(&conn, database_id, &pgn).await.unwrap();
+    let result = ingest_pgn(&conn, database_id, &pgn).await.unwrap().unwrap();
     assert_eq!(result.indexed_plies, 2);
 
     let game = games::Entity::find_by_id(result.game_id)
@@ -255,7 +344,7 @@ async fn setup_position_game_replays_from_fen() {
     let setup_fen = "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1";
     let pgn = format!("[Event \"Study\"]\n[SetUp \"1\"]\n[FEN \"{setup_fen}\"]\n\n1. e4 *\n");
 
-    let result = ingest_pgn(&conn, database_id, &pgn).await.unwrap();
+    let result = ingest_pgn(&conn, database_id, &pgn).await.unwrap().unwrap();
     assert_eq!(result.indexed_plies, 1);
 
     let game = games::Entity::find_by_id(result.game_id)

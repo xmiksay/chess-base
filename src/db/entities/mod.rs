@@ -16,6 +16,7 @@ pub mod service_tokens;
 pub mod sessions;
 pub mod settings;
 pub mod studies;
+pub mod sync_cursors;
 pub mod users;
 
 #[cfg(test)]

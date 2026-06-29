@@ -9,11 +9,12 @@
 
 use sea_orm::{DatabaseConnection, DbErr, EntityTrait};
 
-use crate::collectors::{chesscom::ChessCom, lichess::Lichess, SyncCursor};
+use crate::collectors::{chesscom::ChessCom, lichess::Lichess};
 use crate::db::entities::databases;
 use crate::ingest::ingest_pgn_all;
 use crate::server::identity::{assert_can_write, CurrentUser};
 
+mod cursor;
 pub mod routes;
 
 /// Why an import failed. Transport-agnostic — the HTTP / MCP layer maps each
@@ -53,6 +54,14 @@ impl ImportSource {
             "lichess" => Some(Self::Lichess),
             "chesscom" | "chess.com" => Some(Self::ChessCom),
             _ => None,
+        }
+    }
+
+    /// Canonical tag stored in `sync_cursors.source` (matches `GameSource::kind`).
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Lichess => "lichess",
+            Self::ChessCom => "chesscom",
         }
     }
 }
@@ -95,8 +104,10 @@ impl ImportService {
     }
 
     /// Trigger a provider sync into a database the caller may write. A blank
-    /// `token` is treated as absent. Syncs start from a fresh cursor (full sync);
-    /// persisting the returned cursor for incremental re-syncs is a later epic.
+    /// `token` is treated as absent. The sync resumes from the cursor persisted
+    /// per `(database, source)` and saves the advanced cursor afterwards, so a
+    /// re-sync only fetches new games (issue #95); ingest dedup keeps the boundary
+    /// month/second the cursor re-fetches from doubling games.
     pub async fn sync(
         &self,
         user: &CurrentUser,
@@ -112,21 +123,25 @@ impl ImportService {
         }
         let token = token.map(str::trim).filter(|t| !t.is_empty());
 
+        let cursor = cursor::load(&self.db, database_id, source.as_str()).await?;
+
         let outcome = match source {
             ImportSource::Lichess => {
                 let mut src = Lichess::new(username);
                 if let Some(token) = token {
                     src = src.with_token(token);
                 }
-                src.sync(&self.db, database_id, SyncCursor::default()).await
+                src.sync(&self.db, database_id, cursor).await
             }
             ImportSource::ChessCom => {
                 ChessCom::new(username)
-                    .sync(&self.db, database_id, SyncCursor::default())
+                    .sync(&self.db, database_id, cursor)
                     .await
             }
         }
         .map_err(|e| ImportError::Failed(e.to_string()))?;
+
+        cursor::save(&self.db, database_id, source.as_str(), &outcome.cursor).await?;
 
         Ok(ImportSummary {
             imported: outcome.imported,

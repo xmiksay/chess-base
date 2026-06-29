@@ -137,7 +137,10 @@ async fn list_sees_global_database() {
 #[tokio::test]
 async fn get_returns_game_with_pgn() {
     let (conn, db_id) = db_for(Some("alice")).await;
-    let ingested = ingest_pgn(&conn, db_id, SCHOLARS_MATE).await.unwrap();
+    let ingested = ingest_pgn(&conn, db_id, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .unwrap();
     let svc = GameService::new(conn);
 
     let game = svc.get(&user("alice"), ingested.game_id).await.unwrap();
@@ -151,7 +154,10 @@ async fn get_returns_game_with_pgn() {
 #[tokio::test]
 async fn get_hides_game_in_another_users_database() {
     let (conn, alice_db) = db_for(Some("alice")).await;
-    let ingested = ingest_pgn(&conn, alice_db, SCHOLARS_MATE).await.unwrap();
+    let ingested = ingest_pgn(&conn, alice_db, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .unwrap();
     let svc = GameService::new(conn);
 
     let err = svc.get(&user("bob"), ingested.game_id).await;

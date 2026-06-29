@@ -32,6 +32,10 @@ pub struct Model {
     pub ply_count: Option<i32>,
     /// PGN movetext (mainline SAN plus any variations/comments).
     pub pgn: Option<String>,
+    /// Stable provider game key — the Lichess/Chess.com permalink — used to dedup
+    /// re-syncs (issue #95). Unique per `database_id`; `None` for games without a
+    /// provider permalink (e.g. manual PGN uploads), which are never deduped.
+    pub source_ref: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

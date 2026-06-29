@@ -47,6 +47,8 @@ struct Headers {
     black_elo: Option<i32>,
     variant: Option<String>,
     start_fen: Option<String>,
+    /// Chess.com permalink (`[Link]`); Lichess carries its permalink in `site`.
+    link: Option<String>,
 }
 
 /// A parsed PGN: its headers and the mainline SAN tokens (variations dropped).
@@ -60,9 +62,25 @@ struct ParsedGame {
 /// Players and the event are deduplicated by name; the mainline is replayed to
 /// derive the per-ply Zobrist keys. All writes happen in one transaction, so a
 /// malformed PGN or an illegal move leaves the database untouched.
-pub async fn ingest_pgn(db: &DatabaseConnection, database_id: i32, pgn: &str) -> Result<Ingested> {
+///
+/// Returns `Ok(None)` when the game is a duplicate — a game with the same
+/// provider `source_ref` (permalink) already exists in `database_id` — so a
+/// re-sync revisiting the cursor boundary appends nothing instead of doubling
+/// every game (issue #95). Games without a permalink are always ingested.
+pub async fn ingest_pgn(
+    db: &DatabaseConnection,
+    database_id: i32,
+    pgn: &str,
+) -> Result<Option<Ingested>> {
     let parsed = parse_pgn(pgn)?;
     let headers = &parsed.headers;
+
+    let source_ref = source_ref(headers);
+    if let Some(key) = &source_ref {
+        if game_exists(db, database_id, key).await? {
+            return Ok(None);
+        }
+    }
 
     let variant = headers
         .variant
@@ -99,6 +117,7 @@ pub async fn ingest_pgn(db: &DatabaseConnection, database_id: i32, pgn: &str) ->
         start_fen: Set(headers.start_fen.clone()),
         ply_count: Set(Some(plies.len() as i32)),
         pgn: Set(Some(pgn.to_string())),
+        source_ref: Set(source_ref),
         ..Default::default()
     }
     .insert(&txn)
@@ -144,10 +163,35 @@ pub async fn ingest_pgn(db: &DatabaseConnection, database_id: i32, pgn: &str) ->
 
     txn.commit().await?;
 
-    Ok(Ingested {
+    Ok(Some(Ingested {
         game_id: game.id,
         indexed_plies: limit,
-    })
+    }))
+}
+
+/// The stable provider key for a game — the permalink — used to dedup re-syncs
+/// (issue #95). Chess.com carries it in `[Link]`; Lichess puts the game URL in
+/// `[Site]`. A non-URL `Site` (e.g. `"London"`) is not a game key, so it yields
+/// `None` and the game is never deduped.
+fn source_ref(headers: &Headers) -> Option<String> {
+    if let Some(link) = &headers.link {
+        return Some(link.clone());
+    }
+    match &headers.site {
+        Some(site) if site.starts_with("http") => Some(site.clone()),
+        _ => None,
+    }
+}
+
+/// Whether `database_id` already holds a game with this provider `source_ref`.
+async fn game_exists(db: &DatabaseConnection, database_id: i32, source_ref: &str) -> Result<bool> {
+    let found = games::Entity::find()
+        .filter(games::Column::DatabaseId.eq(database_id))
+        .filter(games::Column::SourceRef.eq(source_ref))
+        .one(db)
+        .await
+        .context("checking for an existing game")?;
+    Ok(found.is_some())
 }
 
 /// Parse, store and index **every** game in a multi-game PGN into `database_id`,
@@ -157,6 +201,9 @@ pub async fn ingest_pgn(db: &DatabaseConnection, database_id: i32, pgn: &str) ->
 /// convention shared by Lichess / Chess.com and `pgn-reader`). Each game is its
 /// own [`ingest_pgn`] transaction, so a malformed or illegal game aborts that
 /// game only — the ones already ingested before it stay committed.
+///
+/// Returns one [`Ingested`] per game **newly stored** this run; games skipped as
+/// duplicates (see [`ingest_pgn`]) are omitted, so `.len()` is the import count.
 pub async fn ingest_pgn_all(
     db: &DatabaseConnection,
     database_id: i32,
@@ -166,14 +213,17 @@ pub async fn ingest_pgn_all(
     // A blob with no `[Event]` header is still a single (headerless) game; defer
     // the empty-input rejection to `ingest_pgn`.
     if games.is_empty() {
-        return Ok(vec![ingest_pgn(db, database_id, pgn).await?]);
+        return Ok(ingest_pgn(db, database_id, pgn)
+            .await?
+            .into_iter()
+            .collect());
     }
     let mut out = Vec::with_capacity(games.len());
     for (i, game) in games.iter().enumerate() {
         let ingested = ingest_pgn(db, database_id, game)
             .await
             .with_context(|| format!("ingesting game {}", i + 1))?;
-        out.push(ingested);
+        out.extend(ingested);
     }
     Ok(out)
 }
@@ -334,6 +384,7 @@ fn set_header(headers: &mut Headers, name: &[u8], value: Cow<'_, str>) {
         b"BlackElo" => headers.black_elo = value.parse().ok(),
         b"Variant" => headers.variant = Some(value.to_ascii_lowercase()),
         b"FEN" => headers.start_fen = Some(value.to_string()),
+        b"Link" => headers.link = Some(value.to_string()),
         _ => {}
     }
 }

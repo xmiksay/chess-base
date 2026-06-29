@@ -54,11 +54,11 @@ impl ChessCom {
 
     /// Sync this user's games into `database_id`, resuming from `cursor`.
     ///
-    /// Lists the monthly archives, fetches every month newer than the cursor and
+    /// Lists the monthly archives, fetches every month at or after the cursor and
     /// ingests its games, returning the cursor advanced to the latest month
-    /// synced. Chess.com has no per-game dedup, so a re-sync that revisits a
-    /// month would re-import it; the month cursor keeps re-syncs to genuinely new
-    /// months only.
+    /// synced. The cursor month is re-synced so games added to it after the last
+    /// sync are caught; games already stored are deduped by ingest (issue #95),
+    /// so a re-sync never doubles them.
     pub async fn sync(
         &self,
         db: &DatabaseConnection,
@@ -164,15 +164,17 @@ fn month_key(url: &str) -> Option<String> {
     }
 }
 
-/// The months to sync, ascending: every archive newer than `last_month` (all of
+/// The months to sync, ascending: every archive at or after `last_month` (all of
 /// them on a first sync), paired with its `…/pgn` URL. String comparison on the
-/// `"YYYY/MM"` key is chronological.
+/// `"YYYY/MM"` key is chronological. The cursor month itself is re-synced (`>=`,
+/// not `>`) so games added to it after the last sync are not missed forever; the
+/// already-imported games are deduped by ingest (issue #95).
 fn months_to_sync(archives: &[String], last_month: Option<&str>) -> Vec<(String, String)> {
     let mut months: Vec<(String, String)> = archives
         .iter()
         .filter_map(|url| {
             let key = month_key(url)?;
-            if last_month.is_none_or(|last| key.as_str() > last) {
+            if last_month.is_none_or(|last| key.as_str() >= last) {
                 Some((key, format!("{}/pgn", url.trim_end_matches('/'))))
             } else {
                 None
@@ -244,11 +246,13 @@ mod tests {
     }
 
     #[test]
-    fn incremental_sync_skips_months_at_or_before_the_cursor() {
+    fn incremental_sync_reincludes_the_cursor_month() {
         let urls = parse_archives(ARCHIVES).unwrap();
+        // The cursor month is re-synced (its later games are caught; already-stored
+        // ones are deduped by ingest) — only strictly earlier months are skipped.
         let months = months_to_sync(&urls, Some("2024/01"));
         let keys: Vec<&str> = months.iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(keys, vec!["2024/02"]);
+        assert_eq!(keys, vec!["2024/01", "2024/02"]);
     }
 
     #[test]
