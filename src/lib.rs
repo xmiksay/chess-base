@@ -19,6 +19,7 @@ pub mod openings;
 pub mod pgn_tree;
 pub mod plans;
 pub mod position;
+pub mod review;
 pub mod search;
 pub mod server;
 pub mod settings;

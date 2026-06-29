@@ -7,7 +7,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api } from '../api'
-import type { Study, StudySummary } from '../types'
+import type { GenerateBody, Study, StudySummary } from '../types'
 
 export const useStudiesStore = defineStore('studies', () => {
   const list = ref<StudySummary[]>([])
@@ -57,6 +57,13 @@ export const useStudiesStore = defineStore('studies', () => {
     return study
   }
 
+  /** Generate an LLM-assisted study (issue #119); refresh the list on success. */
+  async function generate(body: GenerateBody) {
+    const view = await _run(() => api.studies.generate(body))
+    await refresh()
+    return view
+  }
+
   /** Export a study to PGN movetext. */
   function exportPgn(id: number) {
     return _run(() => api.studies.exportPgn(id))
@@ -86,6 +93,7 @@ export const useStudiesStore = defineStore('studies', () => {
     refresh,
     open,
     create,
+    generate,
     importPgn,
     exportPgn,
     rename,

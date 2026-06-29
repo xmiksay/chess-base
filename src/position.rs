@@ -177,6 +177,33 @@ pub fn apply_uci(fen: &str, uci: &str, mode: CastlingMode) -> Result<(String, u6
     Ok((fen_of_position(&next), zobrist_of_position(&next)))
 }
 
+/// Convert a SAN move to its UCI long-algebraic form (`Nf3` → `g1f3`) in the
+/// position described by `fen`. Errors like [`apply_san`] on syntactically
+/// invalid or illegal/ambiguous SAN. Used by the game-review pass to compare a
+/// played move against the engine's UCI output (#119).
+pub fn san_to_uci(fen: &str, san: &str, mode: CastlingMode) -> Result<String, PositionError> {
+    let pos = position_from_fen(fen, mode)?;
+    let mv = san_to_move(&pos, san)?;
+    Ok(mv.to_uci(mode).to_string())
+}
+
+/// Convert a UCI move to its SAN form (`g1f3` → `Nf3`, no check/mate suffix) in
+/// the position described by `fen`. Errors on invalid FEN, unparseable UCI, or a
+/// move that is illegal in this position. Used to render the engine's preferred
+/// move and PV as SAN in review notes (#119).
+pub fn uci_to_san(fen: &str, uci: &str, mode: CastlingMode) -> Result<String, PositionError> {
+    let pos = position_from_fen(fen, mode)?;
+    let parsed = UciMove::from_ascii(uci.as_bytes())
+        .map_err(|_| PositionError::InvalidUci(uci.to_string()))?;
+    let mv = parsed
+        .to_move(&pos)
+        .map_err(|e| PositionError::IllegalMove {
+            mv: uci.to_string(),
+            reason: e.to_string(),
+        })?;
+    Ok(San::from_move(&pos, mv).to_string())
+}
+
 /// Whether `san` is a legal move in the position described by `fen`.
 ///
 /// Reused by studies and MCP tools to validate user input. Invalid FEN still
@@ -304,6 +331,23 @@ mod tests {
     fn invalid_uci_errors() {
         let err = apply_uci(STARTPOS_FEN, "nonsense", STD).unwrap_err();
         assert!(matches!(err, PositionError::InvalidUci(_)));
+    }
+
+    #[test]
+    fn san_uci_round_trip() {
+        assert_eq!(san_to_uci(STARTPOS_FEN, "Nf3", STD).unwrap(), "g1f3");
+        assert_eq!(uci_to_san(STARTPOS_FEN, "g1f3", STD).unwrap(), "Nf3");
+        // A castling move and a promotion survive the round trip.
+        let castle = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
+        assert_eq!(san_to_uci(castle, "O-O", STD).unwrap(), "e1g1");
+        assert_eq!(uci_to_san(castle, "e1g1", STD).unwrap(), "O-O");
+    }
+
+    #[test]
+    fn san_uci_reject_illegal_input() {
+        assert!(san_to_uci(STARTPOS_FEN, "e5", STD).is_err());
+        assert!(uci_to_san(STARTPOS_FEN, "e2e5", STD).is_err());
+        assert!(uci_to_san(STARTPOS_FEN, "nonsense", STD).is_err());
     }
 
     #[test]
