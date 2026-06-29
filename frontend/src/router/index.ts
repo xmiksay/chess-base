@@ -9,7 +9,7 @@ import {
 import { useAuthStore } from '../stores/auth'
 
 // Lazy-load views so each surface is split into its own chunk. The analysis
-// view is the landing page; the rest are stubs filled in by follow-up issues.
+// view (`/`) is the landing page.
 export const routes: RouteRecordRaw[] = [
   { path: '/', name: 'analysis', component: () => import('../views/AnalysisView.vue') },
   { path: '/collections', name: 'collections', component: () => import('../views/CollectionsView.vue') },
