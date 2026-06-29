@@ -37,6 +37,29 @@ release: frontend ## Build the locked, self-contained release binary for this ho
 run: frontend ## Run locally (SQLite, opens a browser)
 	cargo run --
 
+.PHONY: bundle-stockfish
+bundle-stockfish: ## Fetch this host's Stockfish into engines-bundled/<target>/ (for --features bundled-stockfish)
+	@target=$$(rustc -vV | sed -n 's/host: //p'); \
+	case "$$target" in \
+	  x86_64-*-linux-*)   slug=stockfish-ubuntu-x86-64-avx2;      bin=stockfish ;; \
+	  aarch64-*-linux-*)  slug=stockfish-android-armv8;           bin=stockfish ;; \
+	  x86_64-apple-*)     slug=stockfish-macos-x86-64-avx2;       bin=stockfish ;; \
+	  aarch64-apple-*)    slug=stockfish-macos-m1-apple-silicon;  bin=stockfish ;; \
+	  x86_64-*-windows-*) slug=stockfish-windows-x86-64-avx2;     bin=stockfish.exe ;; \
+	  *) echo "no Stockfish asset catalogued for target $$target" >&2; exit 1 ;; \
+	esac; \
+	dir="engines-bundled/$$target"; mkdir -p "$$dir"; \
+	url="https://github.com/official-stockfish/Stockfish/releases/download/sf_16.1/$$slug"; \
+	echo "Fetching $$url"; \
+	curl -fsSL "$$url" -o "$$dir/$$bin"; \
+	chmod +x "$$dir/$$bin"; \
+	( cd "$$dir" && { sha256sum "$$bin" || shasum -a 256 "$$bin"; } | awk '{print $$1}' > "$$bin.sha256" ); \
+	echo "Bundled $$dir/$$bin (LICENSING: Stockfish is GPLv3 — a bundled build is GPLv3)"
+
+.PHONY: build-bundled
+build-bundled: frontend bundle-stockfish ## Build the release binary with Stockfish embedded (GPLv3 artifact)
+	cargo build --release --features bundled-stockfish
+
 .PHONY: dev
 dev: ## Run backend (:3030) + Vite dev server with hot reload
 	@echo "Backend: cargo run -- --port 3030   |   Frontend: cd frontend && npm run dev"

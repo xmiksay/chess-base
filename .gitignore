@@ -16,6 +16,10 @@
 # Downloaded engines / weights
 /engines
 
+# Per-target Stockfish embedded by the `bundled-stockfish` feature
+# (`make bundle-stockfish`); a GPLv3 binary that must not be committed.
+/engines-bundled
+
 # Env / editor
 .env
 .DS_Store

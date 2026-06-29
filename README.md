@@ -76,6 +76,30 @@ make release       # build the locked, self-contained release binary
 Tagging `vX.Y.Z` runs the [release workflow](.github/workflows/release.yml),
 which builds the SPA, embeds it, and publishes a binary per platform.
 
+### Offline builds: bundled Stockfish (opt-in)
+
+For **air-gapped / offline** local builds, an opt-in `bundled-stockfish` Cargo
+feature embeds a per-target Stockfish binary so live analysis works with no
+`--engine` and no download — it is extracted to the OS cache dir on first run and
+registered as the default engine (below any user override, above auto-download).
+The default build embeds nothing, so its size and licensing are unaffected.
+
+```sh
+make build-bundled     # fetch this host's Stockfish, embed it, build the release
+# equivalently:
+make bundle-stockfish  # fetch into engines-bundled/<target>/ (network, once)
+cargo build --release --features bundled-stockfish   # then builds fully offline
+```
+
+The build **checksum-verifies** the embedded binary; a mismatch fails the build.
+
+> **LICENSING — GPLv3.** Stockfish is licensed under the **GPLv3**. Enabling
+> `bundled-stockfish` embeds Stockfish into the binary, so **that build artifact
+> is GPLv3** and must be distributed accordingly. The default download build is
+> **unaffected** (a separately-fetched child process is mere aggregation). The
+> feature is never silently on — it requires this explicit opt-in. Lc0/Maia are
+> never bundled (large weights, per-target binaries — download only).
+
 ## Server deployment (Docker + Postgres)
 
 Server mode runs multi-user against Postgres. The repo ships a multi-stage

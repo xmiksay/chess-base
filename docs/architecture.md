@@ -226,7 +226,7 @@ persists several `EngineConfig`s plus a `default_engine` selector in the key/val
 a launch wrapper (script, `wine`, `docker exec` shim) prepended to the binary, so
 the engine spawns as `<runner> <path> …`. `resolve_default` applies the resolution
 order (first wins): a user-configured registry default → the embedded
-`bundled-stockfish` build (still a seam returning `None`) → an auto-downloaded
+`bundled-stockfish` build (issue #54, `engine/bundled.rs`) → an auto-downloaded
 binary (#11, persisted under the `downloaded_engines` settings key, kept apart
 from the user-facing `engines` list). `server/routes/engines.rs`
 exposes the CRUD (`GET/POST /api/engines`, `DELETE /api/engines/{name}`,
@@ -255,6 +255,29 @@ result via `EngineRegistry::set_downloaded`; a failure is logged and the server
 still starts. The engines dir is `--engines-dir` / `CHESS_BASE_ENGINES_DIR`
 (default `engines/`); individual engine paths remain overridable through the
 registry settings.
+
+### Bundled Stockfish — optional embedded engine (ADR 0005 / #54)
+
+`engine/bundled.rs` adds an **opt-in** `bundled-stockfish` Cargo feature (off by
+default) for offline / air-gapped local builds. When on, `build.rs` checks the
+per-target binary is present under `engines-bundled/<target>/` and **checksum-
+verifies it at build time** (a mismatch fails the build; an absent binary fails
+with guidance to run `make bundle-stockfish`), and `EngineAssets` (`rust-embed`,
+mirroring the SPA embedding of ADR 0004) embeds it into the binary. At startup
+`serve` calls `bundled::extract()`, which writes the embedded binary to the OS
+cache dir (`dirs::cache_dir()/chess-base/engines-bundled/`), sets the executable
+bit via a temp-file + atomic rename, and is idempotent (skipped when the on-disk
+bytes already match). `bundled::bundled_engine()` is the pure resolution seam
+`EngineRegistry::resolve_default` consults — the bundled build slots in below a
+user override and above an auto-downloaded binary. The default build embeds
+nothing (both functions are `None`/`Ok(None)` no-ops), so binary size is
+unchanged and there is **no GPLv3 obligation**. The fetch step lives in
+`make bundle-stockfish` (not `build.rs`) so the feature build stays
+offline-capable and pulls no HTTP stack into the toolchain. **LICENSING:**
+Stockfish is GPLv3, so a `bundled-stockfish` build artifact is GPLv3; the default
+download build (a separately-fetched child process — mere aggregation) is
+unaffected. Never bundles Lc0/Maia (large weights, per-target binary — download
+only).
 
 ### User settings — per-user UI preferences (issue #13)
 

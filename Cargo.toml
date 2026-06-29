@@ -11,6 +11,14 @@ default-run = "chess-base"
 name = "chess_base"
 path = "src/lib.rs"
 
+[features]
+default = []
+# Opt-in: embed a per-target Stockfish binary so local builds analyse offline
+# with no download (issue #54, ADR 0005). LICENSING: Stockfish is GPLv3, so a
+# build with this feature on is GPLv3; the default download build is unaffected.
+# `make bundle-stockfish` fetches the binary into engines-bundled/<target>/.
+bundled-stockfish = ["dep:dirs"]
+
 [[bin]]
 name = "chess-base"
 path = "src/bin/chess-base.rs"
@@ -60,13 +68,17 @@ rust-embed = { version = "8", features = ["mime-guess"] }
 open = "5"
 zstd = "0.13"
 uuid = { version = "1", features = ["v4"] }
+# `bundled-stockfish` only: locate the OS cache dir to extract the embedded engine.
+dirs = { version = "6", optional = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 
 [build-dependencies]
-# build.rs ensures frontend/dist exists so rust-embed always compiles.
+# build.rs ensures frontend/dist exists so rust-embed always compiles, and (when
+# the `bundled-stockfish` feature is on) checksum-verifies the embedded engine.
+sha2 = "0.10"
 
 [profile.release]
 strip = true

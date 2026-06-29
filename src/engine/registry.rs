@@ -229,11 +229,12 @@ pub fn resolve(
     user.or(bundled).or(downloaded)
 }
 
-/// The embedded `bundled-stockfish` engine when that opt-in build feature is on.
-/// A seam for the bundled-engine work tracked alongside this issue; until it
-/// lands there is no embedded binary, so this is always `None`.
+/// The embedded `bundled-stockfish` engine when that opt-in build feature is on
+/// (issue #54). In the default build nothing is embedded, so this is `None` and
+/// the resolution order is unchanged. The binary is extracted to the OS cache dir
+/// at startup; the path returned here matches what that extraction writes.
 fn bundled_engine() -> Option<EngineConfig> {
-    None
+    super::bundled::bundled_engine()
 }
 
 #[cfg(test)]

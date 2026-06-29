@@ -66,3 +66,24 @@ direct-download URLs and (eventually) checksums. Where upstream ships only an
 archive, hosting a direct binary or adding archive extraction is follow-up
 maintenance; until a checksum is pinned, an asset has `sha256: None` and is
 installed unverified (logged).
+
+## Amendment (2026-06-29) — bundled-stockfish feature implemented (#54)
+
+The optional bundled engine now exists in `src/engine/bundled.rs`, gated behind a
+`bundled-stockfish` Cargo feature (off by default). `build.rs` checksum-verifies a
+per-target Stockfish under `engines-bundled/<target>/` at build time — a mismatch
+**fails the build**, and an absent binary fails with guidance to run
+`make bundle-stockfish` (which fetches the upstream release and writes a `.sha256`
+sidecar). `EngineAssets` (`rust-embed`) embeds the binary; at startup `serve` calls
+`bundled::extract()`, which writes it to the OS cache dir (`dirs::cache_dir()`),
+sets the executable bit via temp-file + atomic rename, and is idempotent.
+`bundled::bundled_engine()` is the pure resolution seam `resolve_default` consults,
+slotting the embedded build below a user override and above an auto-downloaded
+binary.
+
+The default build embeds nothing (both entry points are `None`/`Ok(None)`
+no-ops): binary size is unchanged and there is no GPLv3 obligation. Fetching lives
+in the Makefile rather than `build.rs`, keeping the feature build offline-capable
+and pulling no HTTP stack into the toolchain. **LICENSING:** Stockfish is GPLv3, so
+a `bundled-stockfish` build artifact is GPLv3 (documented in the README); the
+default download build is unaffected. Lc0/Maia are never bundled.
