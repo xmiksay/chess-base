@@ -15,13 +15,13 @@ commented PGN studies, and integrates UCI engines.
 | Module | Responsibility | I/O |
 |---|---|---|
 | `position` | FEN/SAN/UCI parsing, legal moves, move application & game replay, Zobrist hashing (shakmaty); variant-aware via threaded `CastlingMode` (Standard / Chess960) | none (pure) |
-| `pgn_tree` | Study move-tree: variations, comments, NAGs; `pgn` submodule streams standard PGN ⇄ `MoveTree` (`from_pgn`/`to_pgn`, SAN validated via `position`) | none (pure) |
+| `pgn_tree` | Study move-tree: variations, comments, NAGs, and pinned board `Shape`s (arrows/highlights mirroring chessground, `set_shapes`, issue #61 — `serde(default)` so pre-#61 `tree_json` still loads, no migration); `pgn` submodule streams standard PGN ⇄ `MoveTree` (`from_pgn`/`to_pgn`, SAN validated via `position`) | none (pure) |
 | `openings` | ECO classification: embedded lichess `chess-openings` dataset → O(1) `zobrist -> (eco, name)` lookup; classifies a game by the longest match along its mainline (`eco_of_position`, `classify_mainline`) | none (pure) |
 | `plans` | Engine-PV → per-piece trajectories (`plan_from_pv`, ADR 0017): traces only the start FEN's side-to-move, chaining moves by square continuity into `Trajectory{piece,squares}` paths (`g1→f3→g5`); opponent replies applied but not traced; `max_moves`-capped, panic-free | none (pure) |
 | `features` | Factual position **feature tags** (`features_of_fen`, #33): material census + balance, game phase, side to move, check/mate/stalemate, insufficient material, mobility, castling rights, plus a short human-readable `tags` list; grounded facts the interactive analysis tool hands the model (deeper pawn-structure classification #30 layers on) | none (pure) |
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `databases` | Transport-agnostic `DatabaseService`: collection CRUD (create/list/get/rename/delete) over the `databases` table; `kind ∈ {lichess,chesscom,master,own}`, `index_depth` derived from `kind`. Ownership read scope + write guards (ADR 0007/0011) — global (`owner_id IS NULL`) create/mutate requires admin. HTTP routes (`databases/routes.rs`, `/api/databases`) are thin callers | DB |
-| `studies` | Transport-agnostic `StudyService`: study lifecycle CRUD (`create`/`list`/`get`/`rename`/`delete`) + PGN import/export (`import_pgn`/`export_pgn` via `pgn_tree::pgn`, issue #9) + node-level `MoveTree` mutations (`add_move`/variation SAN-validated via `position::legal_sans`, `annotate`, `promote_variation`/`reorder_variation`/`delete_node`, issue #18); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — both the HTTP routes (`studies/routes.rs`, `/api/studies`) and the scoped MCP study tools (`server/routes/mcp_tools.rs`, issue #17 / ADR-0016) are thin callers | DB |
+| `studies` | Transport-agnostic `StudyService`: study lifecycle CRUD (`create`/`list`/`get`/`rename`/`delete`) + PGN import/export (`import_pgn`/`export_pgn` via `pgn_tree::pgn`, issue #9) + node-level `MoveTree` mutations (`add_move`/variation SAN-validated via `position::legal_sans`, `annotate`, `promote_variation`/`reorder_variation`/`delete_node`, issue #18; `set_shapes` pins a plan's board shapes to a node, issue #61); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — both the HTTP routes (`studies/routes.rs`, `/api/studies`) and the scoped MCP study tools (`server/routes/mcp_tools.rs`, issue #17 / ADR-0016) are thin callers | DB |
 | `settings` | Transport-agnostic `SettingsService`: per-user UI preferences (theme, board theme, piece set, default database) stored as one JSON blob per user under a `user_settings:{id}` key in the key/value `settings` table — no new entity. Validates the theme value and that `default_database_id` is visible to the caller (own ∪ global). HTTP routes (`settings/routes.rs`, `GET/PUT /api/settings`) are thin callers | DB |
 | `auth` | Server-mode auth (ADR 0015): `users`/`sessions` tables, Argon2 hashing, transport-agnostic `AuthService` (register/login/logout/authenticate), `/api/auth/*` routes. Inert in local mode | DB |
 | `ingest` | Shared game-ingest path (`ingest_pgn`): parses a PGN, dedups players/event, stores the game, replays the mainline via `position::replay`, and bulk-inserts the `position_index` rows (one per ply, capped by the database's `index_depth`; ADR-0003). One transaction per game; every collector funnels through it. A game carrying a provider permalink (`source_ref`) already present in the target database is skipped (returns `Ok(None)`), so a re-sync never doubles games (issue #95). `ingest_pgn_all` ingests every game in a multi-game blob (splitting on `[Event ` — the helper shared with the streaming collectors), returning only the newly-stored games; used by PGN upload. The store path is factored into reusable seams — `parse_pgn`, `prepare_game` (validate/replay), `load_index_depth` and `store_prepared` (write one game + its index rows in a caller-supplied transaction) — so the bulk importer can batch many games per transaction. `ParsedGame::content_hash` is a SHA-256 dedup key (stored as `source_ref`) for permalink-less master games | DB |
@@ -87,7 +87,8 @@ and play-vs-engine controls — hovering a PV row sets the store's active line s
 its plan highlights and the others dim. `Board.vue` is presentational (it also
 drives the read-only game viewer in `GamesView`), emits user moves, and renders
 the plan overlay via `setAutoShapes` (auto-shapes, so a user's right-click
-drawings survive), cleared on every position change.
+drawings survive), cleared on every position change — unless `persist-shapes` is
+set (the study editor's pinned plans, issue #61).
 
 The **study editor** (issue #8, `views/StudyView.vue`) builds and annotates
 commented PGN trees. `stores/studies.js` owns the open study (`current`, with its
@@ -95,8 +96,12 @@ commented PGN trees. `stores/studies.js` owns the open study (`current`, with it
 the editing state on top — the selected node id, the chess.js position derived for
 that node (FEN, legal `dests`, last move), and the mutations: a board drag is
 turned into SAN and either navigates to the matching child or appends a new
-move/variation (`addMove`), plus annotate/promote/reorder/delete — each calling
-`api.studies` and re-rendering from the returned tree. The pure tree walking
+move/variation (`addMove`), plus annotate/promote/reorder/delete and `setShapes`
+(pin an engine plan's arrows to the current node, issue #61) — each calling
+`api.studies` and re-rendering from the returned tree. Pinned shapes are drawn on
+`Board.vue` (chessground `autoShapes`, with `persist-shapes` so a node's plan
+survives navigation); `AnalysisPanel.vue`'s per-line **Pin** button converts that
+line's plan trajectories (`lib/plansToShapes.js`) into stored `Shape`s. The pure tree walking
 (path/line to a node, child lookup, and flattening the tree into renderable
 move/variation tokens with move numbers + NAG glyphs) is the unit-tested
 `lib/moveTree.js`. `components/MoveTree.vue` renders those tokens (click to

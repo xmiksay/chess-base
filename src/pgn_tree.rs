@@ -7,6 +7,19 @@ use serde::{Deserialize, Serialize};
 
 pub mod pgn;
 
+/// A board annotation pinned to a node: an arrow or square highlight mirroring
+/// the chessground shape model (`{ orig, dest?, brush }`) so it round-trips
+/// straight to the board. A pinned [`crate::plans::Plan`] becomes a `Vec<Shape>`
+/// (issue #61). `dest` is `None` for a single-square highlight, `Some` for an
+/// arrow from `orig` to `dest`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Shape {
+    pub orig: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dest: Option<String>,
+    pub brush: String,
+}
+
 /// A single node in a study move tree.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Node {
@@ -18,6 +31,11 @@ pub struct Node {
     pub comment: Option<String>,
     /// Numeric Annotation Glyphs (e.g. 1 = `!`, 2 = `?`).
     pub nags: Vec<u8>,
+    /// Pinned board shapes (arrows / highlights) rendered on the position at this
+    /// node. `serde(default)` keeps pre-#61 `tree_json` rows (no `shapes` key)
+    /// deserializing — the tree is a JSON blob, so there is no DB migration.
+    #[serde(default)]
+    pub shapes: Vec<Shape>,
     /// Child node ids; `children[0]` is the mainline continuation.
     pub children: Vec<usize>,
 }
@@ -56,6 +74,7 @@ impl MoveTree {
             san: None,
             comment: None,
             nags: Vec::new(),
+            shapes: Vec::new(),
             children: Vec::new(),
         };
         MoveTree {
@@ -76,6 +95,7 @@ impl MoveTree {
             san: Some(san.into()),
             comment: None,
             nags: Vec::new(),
+            shapes: Vec::new(),
             children: Vec::new(),
         });
         self.nodes[parent].children.push(id);
@@ -85,6 +105,11 @@ impl MoveTree {
     /// Attach a comment to a node.
     pub fn set_comment(&mut self, id: usize, comment: impl Into<String>) {
         self.nodes[id].comment = Some(comment.into());
+    }
+
+    /// Replace the pinned board shapes on a node (an empty vec clears them).
+    pub fn set_shapes(&mut self, id: usize, shapes: Vec<Shape>) {
+        self.nodes[id].shapes = shapes;
     }
 
     /// Append a Numeric Annotation Glyph to a node.
@@ -181,6 +206,7 @@ impl MoveTree {
                 san: src.san.clone(),
                 comment: src.comment.clone(),
                 nags: src.nags.clone(),
+                shapes: src.shapes.clone(),
                 children: Vec::with_capacity(src.children.len()),
             });
             for &child in &src.children {
@@ -315,5 +341,52 @@ mod tests {
         let json = serde_json::to_string(&t).unwrap();
         let back: MoveTree = serde_json::from_str(&json).unwrap();
         assert_eq!(t, back);
+    }
+
+    #[test]
+    fn set_shapes_pins_and_clears_board_annotations() {
+        let mut t = MoveTree::new();
+        let e4 = t.add_move(t.root, "e4");
+        assert!(t.nodes[e4].shapes.is_empty(), "fresh node has no shapes");
+
+        let shapes = vec![
+            Shape {
+                orig: "g1".into(),
+                dest: Some("f3".into()),
+                brush: "green".into(),
+            },
+            Shape {
+                orig: "e4".into(),
+                dest: None,
+                brush: "blue".into(),
+            },
+        ];
+        t.set_shapes(e4, shapes.clone());
+        assert_eq!(t.nodes[e4].shapes, shapes);
+
+        // Shapes survive a JSON round trip (arrow keeps its dest, highlight drops it).
+        let back: MoveTree = serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap();
+        assert_eq!(back.nodes[e4].shapes, shapes);
+
+        // An empty vec clears them again.
+        t.set_shapes(e4, Vec::new());
+        assert!(t.nodes[e4].shapes.is_empty());
+    }
+
+    #[test]
+    fn old_tree_json_without_shapes_still_deserializes() {
+        // A pre-#61 row: nodes carry no `shapes` key. `serde(default)` must fill
+        // an empty vec so existing studies keep loading (no DB migration).
+        let legacy = r#"{
+            "root": 0,
+            "nodes": [
+                {"id":0,"parent":null,"san":null,"comment":null,"nags":[],"children":[1]},
+                {"id":1,"parent":0,"san":"e4","comment":"good","nags":[1],"children":[]}
+            ]
+        }"#;
+        let tree: MoveTree = serde_json::from_str(legacy).unwrap();
+        assert_eq!(tree.mainline(), vec!["e4"]);
+        assert!(tree.nodes.iter().all(|n| n.shapes.is_empty()));
+        assert_eq!(tree.nodes[1].comment.as_deref(), Some("good"));
     }
 }

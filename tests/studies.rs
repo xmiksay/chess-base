@@ -234,6 +234,99 @@ async fn mutation_lifecycle_within_a_study() {
 }
 
 #[tokio::test]
+async fn pinning_shapes_persists_across_reload() {
+    let app = server_app().await;
+    let _admin = register(&app, "alice").await; // first user → admin
+    let bob = register(&app, "bob").await;
+    let db_id = make_database(&app, &bob).await;
+
+    let (_, study) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies",
+            &bob,
+            json!({"database_id": db_id, "name": "Plans"}),
+        ),
+    )
+    .await;
+    let study_id = study["id"].as_i64().unwrap();
+    let (_, added) = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("/api/studies/{study_id}/moves"),
+            &bob,
+            json!({"from_node_id": 0, "san": "e4"}),
+        ),
+    )
+    .await;
+    let e4 = added["new_node_id"].as_u64().unwrap();
+
+    // Pin a plan: an arrow g1→f3 and a single-square highlight on e4.
+    let shapes = json!([
+        {"orig": "g1", "dest": "f3", "brush": "green"},
+        {"orig": "e4", "brush": "blue"}
+    ]);
+    let (status, view) = send(
+        &app,
+        json_req(
+            "PUT",
+            &format!("/api/studies/{study_id}/nodes/{e4}/shapes"),
+            &bob,
+            json!({"shapes": shapes}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(view["tree"]["nodes"][e4 as usize]["shapes"], shapes);
+
+    // Reload the study from scratch: the pinned shapes reappear, and the
+    // highlight (no dest) does not carry a `dest` key.
+    let (status, reloaded) = send(&app, get_req(&format!("/api/studies/{study_id}"), &bob)).await;
+    assert_eq!(status, StatusCode::OK);
+    let pinned = &reloaded["tree"]["nodes"][e4 as usize]["shapes"];
+    assert_eq!(pinned[0]["orig"], "g1");
+    assert_eq!(pinned[0]["dest"], "f3");
+    assert_eq!(pinned[1]["orig"], "e4");
+    assert!(pinned[1].get("dest").is_none());
+
+    // An empty list clears the pin.
+    let (status, view) = send(
+        &app,
+        json_req(
+            "PUT",
+            &format!("/api/studies/{study_id}/nodes/{e4}/shapes"),
+            &bob,
+            json!({"shapes": []}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        view["tree"]["nodes"][e4 as usize]["shapes"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+
+    // Another user cannot pin shapes on Bob's study.
+    let mallory = register(&app, "mallory").await;
+    let (status, _) = send(
+        &app,
+        json_req(
+            "PUT",
+            &format!("/api/studies/{study_id}/nodes/{e4}/shapes"),
+            &mallory,
+            json!({"shapes": []}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn ownership_is_enforced_across_users_and_globals() {
     let app = server_app().await;
     let admin = register(&app, "alice").await; // first user → admin

@@ -2,14 +2,17 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useEngineStore } from '../stores/engine'
 import { useGameStore } from '../stores/game'
+import { useStudyEditorStore } from '../stores/studyEditor'
 import { formatScore } from '../lib/engineStream'
+import { plansToShapes } from '../lib/plansToShapes'
 import { uciLineToSan } from '../lib/pv'
 import { sideToMove } from '../lib/fen'
-import type { Color, EngineLine } from '../types'
+import type { Color, EngineLine, Shape } from '../types'
 import EvalBar from './EvalBar.vue'
 
 const engine = useEngineStore()
 const game = useGameStore()
+const editor = useStudyEditorStore()
 
 // Live analysis toggle (analyse mode) and engine think-time (play mode).
 const analyseOn = ref(false)
@@ -21,8 +24,36 @@ const stm = computed(() => sideToMove(game.fen))
 const topScore = computed(() => engine.lines[0]?.score ?? null)
 const evalText = computed(() => formatScore(topScore.value, stm.value))
 
+// A plan can only be pinned when a study is open (its current node is the target).
+const canPin = computed(() => editor.studyId != null)
+const pinError = ref<string | null>(null)
+
 function lineSan(line: EngineLine) {
   return uciLineToSan(game.fen, line.pv, 12).join(' ')
+}
+
+/** Whether this line has a computed plan to pin (a matching `planline` arrived). */
+function planFor(line: EngineLine) {
+  return engine.plans.find((p) => p.multipv === line.multipv) ?? null
+}
+
+/** Pin an engine line's plan to the open study's current node (#61). */
+async function pinLine(line: EngineLine) {
+  const plan = planFor(line)
+  if (!canPin.value || !plan) return
+  pinError.value = null
+  // Reuse the overlay's trajectory→arrow mapping, then keep just the stored
+  // shape fields (orig/dest/brush) the backend persists.
+  const shapes: Shape[] = plansToShapes([plan]).map((s) => ({
+    orig: s.orig,
+    dest: s.dest ?? null,
+    brush: s.brush ?? 'plan1',
+  }))
+  try {
+    await editor.setShapes(shapes)
+  } catch (e) {
+    pinError.value = String((e as Error)?.message ?? e)
+  }
 }
 
 function startAnalyse() {
@@ -133,6 +164,13 @@ onUnmounted(() => engine.disconnect())
     >
       {{ engine.error }}
     </p>
+    <p
+      v-if="pinError"
+      class="text-sm text-red-600"
+      data-test="pin-error"
+    >
+      {{ pinError }}
+    </p>
 
     <!-- Eval + main board readout -->
     <div class="flex gap-3">
@@ -211,7 +249,7 @@ onUnmounted(() => engine.disconnect())
         <li
           v-for="line in engine.lines"
           :key="line.multipv"
-          class="flex cursor-default gap-2 rounded px-2 py-1 ring-inset transition"
+          class="flex cursor-default items-center gap-2 rounded px-2 py-1 ring-inset transition"
           :class="engine.activeLine === line.multipv ? 'bg-neutral-200 ring-1 ring-neutral-400' : 'bg-neutral-100'"
           @mouseenter="engine.setActiveLine(line.multipv)"
           @mouseleave="engine.setActiveLine(null)"
@@ -219,7 +257,16 @@ onUnmounted(() => engine.disconnect())
           <span class="w-12 shrink-0 font-semibold tabular-nums">
             {{ formatScore(line.score, stm) }}
           </span>
-          <span class="truncate text-neutral-700">{{ lineSan(line) }}</span>
+          <span class="flex-1 truncate text-neutral-700">{{ lineSan(line) }}</span>
+          <button
+            v-if="canPin && planFor(line)?.trajectories.length"
+            class="shrink-0 rounded border border-neutral-300 px-1.5 py-0.5 text-xs hover:bg-neutral-200"
+            title="Pin this plan to the current study node"
+            data-test="pin-line"
+            @click="pinLine(line)"
+          >
+            📌 Pin
+          </button>
         </li>
         <li
           v-if="!engine.lines.length"

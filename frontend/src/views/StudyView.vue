@@ -10,6 +10,7 @@ import { api } from '../api'
 import { useStudiesStore } from '../stores/studies'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { useSettingsStore } from '../stores/settings'
+import type { DrawShape } from 'chessground/draw'
 import type { BoardMove, Database } from '../types'
 
 const studies = useStudiesStore()
@@ -22,6 +23,12 @@ const newDb = ref<number | null>(null)
 const loadError = ref<string | null>(null)
 
 const hasStudy = computed(() => !!studies.current)
+
+// Pinned plan arrows on the selected node (#61); the stored `Shape` model
+// matches chessground's `DrawShape` (orig/dest/brush).
+const pinnedShapes = computed(
+  () => (editor.currentNode?.shapes ?? []) as unknown as DrawShape[],
+)
 
 async function onBoardMove({ from, to }: BoardMove) {
   try {
@@ -155,6 +162,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           :movable="true"
           :last-move="editor.lastMove"
           :board-theme="settings.boardTheme"
+          :shapes="pinnedShapes"
+          :persist-shapes="true"
           @move="onBoardMove"
         />
 
@@ -190,6 +199,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             @click="editor.goToEnd()"
           >
             ⏭
+          </button>
+          <button
+            v-if="editor.currentNode?.shapes?.length"
+            class="ml-auto rounded border border-neutral-300 px-2 py-1 text-sm"
+            data-test="clear-pin"
+            @click="editor.setShapes([])"
+          >
+            Clear pinned plan
           </button>
         </div>
       </section>

@@ -10,7 +10,7 @@ import { Chess } from 'chess.js'
 import { api } from '../api'
 import { useStudiesStore } from './studies'
 import { childWithSan, firstChild, getNode, lastMainlineId, sanPath } from '../lib/moveTree'
-import type { Annotation, BoardMove, Square } from '../types'
+import type { Annotation, BoardMove, Shape, Square } from '../types'
 
 export const useStudyEditorStore = defineStore('studyEditor', () => {
   const studies = useStudiesStore()
@@ -118,6 +118,11 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
     studies.current = await api.studies.annotate(studyId.value!, id, { comment, nag })
   }
 
+  /** Pin board shapes (a plan) to a node, or clear them with `[]` (#61). */
+  async function setShapes(shapes: Shape[], id: number = nodeId.value) {
+    studies.current = await api.studies.setShapes(studyId.value!, id, shapes)
+  }
+
   /** Promote a variation toward the mainline. */
   async function promote(id: number) {
     studies.current = await api.studies.promote(studyId.value!, id)
@@ -158,6 +163,7 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
     addSan,
     playMove,
     annotate,
+    setShapes,
     promote,
     reorder,
     deleteNode,

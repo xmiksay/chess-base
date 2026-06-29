@@ -98,6 +98,43 @@ async fn annotate_persists_comment_and_nag() {
 }
 
 #[tokio::test]
+async fn set_shapes_pins_and_clears_a_node_plan() {
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+    let study = svc.create(&alice, db_id, "Plans", false).await.unwrap();
+    let e4 = svc.add_move(&alice, study.id, 0, "e4").await.unwrap();
+
+    let shapes = vec![Shape {
+        orig: "g1".into(),
+        dest: Some("f3".into()),
+        brush: "green".into(),
+    }];
+    svc.set_shapes(&alice, study.id, e4, shapes.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        tree_of(&svc, &alice, study.id).await.nodes[e4].shapes,
+        shapes
+    );
+
+    // An empty list clears the pin.
+    svc.set_shapes(&alice, study.id, e4, Vec::new())
+        .await
+        .unwrap();
+    assert!(tree_of(&svc, &alice, study.id).await.nodes[e4]
+        .shapes
+        .is_empty());
+
+    // A bad node id is a 400-style InvalidNode, not a 500.
+    assert!(matches!(
+        svc.set_shapes(&alice, study.id, 99, Vec::new())
+            .await
+            .unwrap_err(),
+        StudyError::InvalidNode(99)
+    ));
+}
+
+#[tokio::test]
 async fn promote_reorder_and_delete_restructure_the_tree() {
     let (svc, db_id) = setup().await;
     let alice = user("alice");
@@ -155,6 +192,12 @@ async fn cannot_mutate_another_users_study() {
     ));
     assert!(matches!(
         svc.annotate(&bob, study.id, 0, Some("x".into()), None)
+            .await
+            .unwrap_err(),
+        StudyError::Forbidden
+    ));
+    assert!(matches!(
+        svc.set_shapes(&bob, study.id, 0, Vec::new())
             .await
             .unwrap_err(),
         StudyError::Forbidden

@@ -109,6 +109,17 @@ export interface HeaderQuery {
 
 // --- studies (move trees) ---------------------------------------------------
 
+/**
+ * A board annotation pinned to a node, mirroring the chessground shape model so
+ * it renders straight to the board (`src/pgn_tree.rs::Shape`). `dest` absent is a
+ * single-square highlight; present is an arrow `orig`→`dest`.
+ */
+export interface Shape {
+  orig: string
+  dest?: string | null
+  brush: string
+}
+
 /** One node of a study move tree (`src/pgn_tree.rs`). `children[0]` is mainline. */
 export interface MoveNode {
   id: number
@@ -116,6 +127,8 @@ export interface MoveNode {
   san: string | null
   comment: string | null
   nags: number[]
+  /** Pinned board shapes (issue #61); absent/empty for pre-#61 trees. */
+  shapes?: Shape[]
   children: number[]
 }
 
@@ -212,6 +225,8 @@ export type EngineMessage =
       time_ms?: number | null
       pv?: string[]
     }
+  // PlanLine enriches a PV with per-piece trajectories for the Plans overlay
+  // (#60); the pin button (#61) converts them to `Shape[]`.
   | {
       type: 'planline'
       multipv?: number | null
