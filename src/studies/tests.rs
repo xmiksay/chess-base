@@ -304,6 +304,57 @@ async fn pgn_import_export_round_trips() {
 }
 
 #[tokio::test]
+async fn lichess_export_carries_headers_shapes_and_round_trips() {
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+
+    let study = svc
+        .import_pgn(&alice, db_id, "Sicilian", "1. e4 c5 2. Nf3 *", false)
+        .await
+        .unwrap();
+    // Pin an annotation + a board shape so the export must carry them.
+    svc.annotate(
+        &alice,
+        study.id,
+        2,
+        Some("the Open Sicilian".into()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    svc.set_shapes(
+        &alice,
+        study.id,
+        3,
+        vec![Shape {
+            orig: "g1".into(),
+            dest: Some("f3".into()),
+            brush: "green".into(),
+        }],
+    )
+    .await
+    .unwrap();
+
+    let exported = svc.export_lichess(&alice, study.id).await.unwrap();
+    // Lichess header tags front the chapter, named after the study.
+    assert!(exported.starts_with("[Event \"Sicilian\"]"));
+    assert!(exported.contains("[Variant \"Standard\"]"));
+    assert!(exported.contains("c5 $1 {the Open Sicilian}"));
+    assert!(exported.contains("[%cal Gg1f3]"));
+
+    // Re-importing the Lichess PGN reconstructs the annotated tree (shapes incl.).
+    let back = svc
+        .import_pgn(&alice, db_id, "Reimported", &exported, false)
+        .await
+        .unwrap();
+    let tree = tree_of(&svc, &alice, back.id).await;
+    assert_eq!(tree.mainline(), vec!["e4", "c5", "Nf3"]);
+    assert_eq!(tree.nodes[2].comment.as_deref(), Some("the Open Sicilian"));
+    assert_eq!(tree.nodes[2].nags, vec![1]);
+    assert_eq!(tree.nodes[3].shapes[0].dest.as_deref(), Some("f3"));
+}
+
+#[tokio::test]
 async fn import_rejects_malformed_pgn_and_illegal_moves() {
     let (svc, db_id) = setup().await;
     let alice = user("alice");

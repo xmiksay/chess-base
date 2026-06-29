@@ -5,7 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod lichess;
 pub mod pgn;
+pub mod shapes;
 
 /// A board annotation pinned to a node: an arrow or square highlight mirroring
 /// the chessground shape model (`{ orig, dest?, brush }`) so it round-trips

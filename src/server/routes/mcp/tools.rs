@@ -33,6 +33,7 @@ pub fn default_registry() -> ToolRegistry {
     registry.register(study_create_tool());
     registry.register(study_add_move_tool());
     registry.register(study_annotate_tool());
+    registry.register(study_export_tool());
     registry.register(generate_study_tool());
     super::db_tools::register(&mut registry);
     super::analysis::register(&mut registry);
@@ -258,6 +259,51 @@ async fn study_annotate(app: AppState, user: CurrentUser, args: Value) -> ToolOu
     }
 }
 
+/// Export a study (visible to the caller) as PGN — standard movetext or a
+/// Lichess-study chapter — with NAGs, comments and pinned shapes preserved.
+fn study_export_tool() -> Tool {
+    Tool::new(
+        "study_export",
+        "Export a study you can see as PGN with NAG glyphs, comments and pinned \
+         board shapes (`[%csl]`/`[%cal]`). `format: \"lichess\"` wraps the movetext \
+         in PGN header tags for a Lichess-study chapter; the default `pgn` emits \
+         headerless movetext. Returns the PGN text — a git-versionable artifact.",
+        json!({
+            "type": "object",
+            "properties": {
+                "study_id": { "type": "integer", "description": "Study to export." },
+                "format": {
+                    "type": "string", "enum": ["pgn", "lichess"],
+                    "description": "Output format; defaults to `pgn`."
+                }
+            },
+            "required": ["study_id"]
+        }),
+        |app, user, args| async move { study_export(app, user, args).await },
+    )
+}
+
+async fn study_export(app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
+    let Some(study_id) = args.get("study_id").and_then(Value::as_i64) else {
+        return ToolOutcome::error("Invalid arguments: missing integer field `study_id`.");
+    };
+    let format = args.get("format").and_then(Value::as_str).unwrap_or("pgn");
+    let service = StudyService::new(app.db.clone());
+    let exported = match format {
+        "pgn" => service.export_pgn(&user, study_id as i32).await,
+        "lichess" => service.export_lichess(&user, study_id as i32).await,
+        other => {
+            return ToolOutcome::error(format!(
+                "Invalid arguments: unknown `format` '{other}' (use `pgn` or `lichess`)."
+            ))
+        }
+    };
+    match exported {
+        Ok(pgn) => ToolOutcome::ok(pgn),
+        Err(e) => study_error(e),
+    }
+}
+
 /// Generate a fully annotated study from a start position — the AI-assisted
 /// study-generation orchestrator (#115). Ties the Epic 9 stages together end to
 /// end (tree builder → batch LLM annotation + verification → persist).
@@ -400,6 +446,7 @@ mod tests {
             "study_create",
             "study_add_move",
             "study_annotate",
+            "study_export",
             "generate_study",
         ] {
             assert!(
