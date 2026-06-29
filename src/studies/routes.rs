@@ -9,7 +9,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ use serde_json::json;
 
 use crate::db::entities::studies;
 use crate::pgn_tree::pgn::PgnError;
-use crate::pgn_tree::MoveTree;
+use crate::pgn_tree::{MoveTree, Shape};
 use crate::server::error::error_response;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
@@ -39,6 +39,7 @@ pub fn router(state: AppState) -> Router {
             axum::routing::delete(delete_node),
         )
         .route("/api/studies/{id}/nodes/{node_id}/annotate", post(annotate))
+        .route("/api/studies/{id}/nodes/{node_id}/shapes", put(set_shapes))
         .route("/api/studies/{id}/nodes/{node_id}/promote", post(promote))
         .route("/api/studies/{id}/nodes/{node_id}/reorder", post(reorder))
         .with_state(state)
@@ -133,6 +134,12 @@ struct AnnotateBody {
 struct ReorderBody {
     /// Target position among siblings (0 = mainline).
     index: usize,
+}
+
+#[derive(Deserialize)]
+struct ShapesBody {
+    /// Board shapes to pin to the node; an empty list clears the pin.
+    shapes: Vec<Shape>,
 }
 
 async fn list(State(state): State<AppState>, user: CurrentUser) -> Result<Response, StudyError> {
@@ -230,6 +237,19 @@ async fn annotate(
     let svc = service(&state);
     svc.annotate(&user, id, node_id, body.comment, body.nag)
         .await?;
+    refreshed(&svc, &user, id).await
+}
+
+/// Pin (or clear, with an empty list) a node's board shapes
+/// (`PUT /api/studies/{id}/nodes/{node_id}/shapes`).
+async fn set_shapes(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((id, node_id)): Path<(i32, usize)>,
+    Json(body): Json<ShapesBody>,
+) -> Result<Response, StudyError> {
+    let svc = service(&state);
+    svc.set_shapes(&user, id, node_id, body.shapes).await?;
     refreshed(&svc, &user, id).await
 }
 

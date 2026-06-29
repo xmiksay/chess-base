@@ -17,6 +17,7 @@ import type {
   ImportResult,
   ImportSource,
   MoveStat,
+  Shape,
   Study,
   StudySummary,
   User,
@@ -149,6 +150,9 @@ export const api = {
       send<AddMoveResult>('POST', `/api/studies/${id}/moves`, { from_node_id: fromNodeId, san }),
     annotate: (id: number, nodeId: number, { comment, nag }: Annotation = {}) =>
       send<Study>('POST', `/api/studies/${id}/nodes/${nodeId}/annotate`, { comment, nag }),
+    // Pin board shapes (a plan) to a node; an empty list clears them (#61).
+    setShapes: (id: number, nodeId: number, shapes: Shape[]) =>
+      send<Study>('PUT', `/api/studies/${id}/nodes/${nodeId}/shapes`, { shapes }),
     promote: (id: number, nodeId: number) =>
       send<Study>('POST', `/api/studies/${id}/nodes/${nodeId}/promote`),
     reorder: (id: number, nodeId: number, index: number) =>

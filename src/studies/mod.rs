@@ -17,7 +17,7 @@ pub mod routes;
 
 use crate::db::entities::studies;
 use crate::pgn_tree::pgn::{self, PgnError};
-use crate::pgn_tree::{MoveTree, TreeError};
+use crate::pgn_tree::{MoveTree, Shape, TreeError};
 use crate::position::{legal_sans, replay, CastlingMode, PositionError, STARTPOS_FEN};
 use crate::server::identity::{assert_admin, assert_can_write, scope, CurrentUser};
 
@@ -241,6 +241,26 @@ impl StudyService {
         if let Some(nag) = nag {
             tree.add_nag(node_id, nag);
         }
+        self.persist(study, &tree).await?;
+        Ok(())
+    }
+
+    /// Pin a plan to a node: replace its board shapes (arrows / highlights) on a
+    /// study the caller may write. An empty `shapes` clears the pin. Same
+    /// ownership guard as [`annotate`](Self::annotate).
+    pub async fn set_shapes(
+        &self,
+        user: &CurrentUser,
+        study_id: i32,
+        node_id: usize,
+        shapes: Vec<Shape>,
+    ) -> Result<(), StudyError> {
+        let study = self.load_writable(user, study_id).await?;
+        let mut tree: MoveTree = serde_json::from_str(&study.tree_json)?;
+        if tree.line_to(node_id).is_none() {
+            return Err(StudyError::InvalidNode(node_id));
+        }
+        tree.set_shapes(node_id, shapes);
         self.persist(study, &tree).await?;
         Ok(())
     }

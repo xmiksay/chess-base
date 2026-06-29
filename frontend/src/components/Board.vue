@@ -18,6 +18,9 @@ interface Props {
   lastMove?: [Square, Square] | null // [from, to]
   boardTheme?: string // see style.css `.board-*`
   shapes?: DrawShape[] // plan-overlay auto-shapes (chessground brushes)
+  // Keep `shapes` across position changes (pinned study plans, #61); the live
+  // engine overlay leaves this false so stale arrows clear on every new move.
+  persistShapes?: boolean
 }
 const props = withDefaults(defineProps<Props>(), {
   fen: STARTPOS_FEN,
@@ -27,6 +30,7 @@ const props = withDefaults(defineProps<Props>(), {
   lastMove: null,
   boardTheme: 'brown',
   shapes: () => [],
+  persistShapes: false,
 })
 const emit = defineEmits<{ move: [payload: BoardMove] }>()
 
@@ -79,10 +83,11 @@ watch(
   { deep: true },
 )
 
-// Clear the overlay immediately on a new position so stale plans never linger.
+// Clear the overlay immediately on a new position so stale plans never linger —
+// unless shapes are pinned (study mode), where each node's plan is authoritative.
 watch(
   () => props.fen,
-  () => cg && cg.setAutoShapes([]),
+  () => cg && cg.setAutoShapes(props.persistShapes ? (props.shapes ?? []) : []),
 )
 </script>
 

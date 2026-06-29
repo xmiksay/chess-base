@@ -8,6 +8,7 @@ vi.mock('../api', () => ({
       get: vi.fn(),
       addMove: vi.fn(),
       annotate: vi.fn(),
+      setShapes: vi.fn(),
       promote: vi.fn(),
       reorder: vi.fn(),
       deleteNode: vi.fn(),
@@ -115,6 +116,18 @@ describe('studyEditor store', () => {
     await editor.annotate({ comment: 'King pawn' }, 1)
     expect(api.studies.annotate).toHaveBeenCalledWith(10, 1, { comment: 'King pawn' })
     expect(studies.current!.tree.nodes[1].comment).toBe('King pawn')
+  })
+
+  it('setShapes pins a plan to the selected node and stores the refreshed study', async () => {
+    const pinned = sampleStudy()
+    const shapes = [{ orig: 'g1', dest: 'f3', brush: 'green' }]
+    pinned.tree.nodes[1].shapes = shapes
+    vi.mocked(api.studies.setShapes).mockResolvedValue(pinned)
+
+    editor.select(1)
+    await editor.setShapes(shapes)
+    expect(api.studies.setShapes).toHaveBeenCalledWith(10, 1, shapes)
+    expect(studies.current!.tree.nodes[1].shapes).toEqual(shapes)
   })
 
   it('deleteNode refreshes the tree and resets the selection to the root', async () => {
