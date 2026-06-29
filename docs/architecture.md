@@ -280,10 +280,16 @@ eval/PV/bestmove). The same pooled service backs **two facades**:
 `AppState.engine_service` holds an `Arc<EngineService>` built at startup from the
 registry's resolved default (`None` ⇒ both facades disabled; the MCP tool answers an
 `isError` outcome, batch callers get nothing to call). The pool spawns engines
-lazily, reuses idle ones, and caps live processes with a semaphore. The
-streaming WebSocket keeps its own per-socket engine: it needs incremental `info`
-updates and a mid-search `stop`, which the one-shot pool deliberately does not
-model. The event-folding is pure and unit-tested; the live pool and MCP tool are
+lazily, reuses idle ones, and caps live processes with a semaphore. Because that
+pool is single-permit, user-supplied limits are bounded so one request can't pin
+it (issue #93): `Limits::clamped` caps `depth`/`movetime_ms` (`MAX_DEPTH` = 60,
+`MAX_MOVETIME_MS` = 30s) at the MCP arg boundary *and* inside `bounded`, and the
+whole search runs under an overall deadline (movetime + grace, or a 60s ceiling)
+so a stuck engine can't hang forever — on timeout the engine is discarded, not
+reused. The streaming WebSocket keeps its own per-socket engine: it needs
+incremental `info` updates and a mid-search `stop`, which the one-shot pool
+deliberately does not model (it clamps client limits the same way). The
+event-folding is pure and unit-tested; the live pool and MCP tool are
 integration-tested behind `CHESS_BASE_TEST_ENGINE`.
 
 ### Plan trajectories — engine PV → per-piece paths (ADR 0017)

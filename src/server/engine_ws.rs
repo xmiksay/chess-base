@@ -258,7 +258,9 @@ async fn start_analysis(
         engine.wait_ready().await?;
     }
     engine.set_position(fen).await?;
-    engine.go(limits).await
+    // Clamp client-supplied limits so a huge depth/movetime can't tie up this
+    // socket's engine indefinitely (issue #93).
+    engine.go(&limits.clone().clamped()).await
 }
 
 /// Fill in server-side option defaults the client may omit. Currently only

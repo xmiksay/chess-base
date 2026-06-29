@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use vampirc_uci::{parse_one, UciMessage};
 
 pub use analysis::{AnalysisEvent, AnalysisInfo, Score};
-pub use command::Limits;
+pub use command::{Limits, MAX_DEPTH, MAX_MOVETIME_MS};
 pub use download::{
     catalog, download_default_engines, Asset, Fetch, HttpFetcher, Manager, Plan, Platform,
 };

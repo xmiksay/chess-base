@@ -17,9 +17,12 @@
 
 use std::collections::BTreeMap;
 
+use std::time::Duration;
+
 use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, Semaphore};
+use tokio::time::timeout;
 
 use super::analysis::{AnalysisEvent, AnalysisInfo, Score};
 use super::command::Limits;
@@ -29,6 +32,15 @@ use super::EngineConfig;
 /// Search depth applied when a caller passes fully-unbounded limits, so a
 /// one-shot `analyse` always terminates instead of searching forever.
 const DEFAULT_DEPTH: u32 = 20;
+
+/// Hard ceiling on a single one-shot search when no `movetime` bounds it (a
+/// depth/nodes search). The backstop against a stuck or pathologically slow
+/// engine pinning the shared single-permit pool forever (issue #93).
+const SEARCH_CEILING: Duration = Duration::from_secs(60);
+
+/// Grace added on top of an explicit `movetime` budget before the overall
+/// deadline fires, covering engine wind-down after it should have stopped.
+const MOVETIME_GRACE: Duration = Duration::from_secs(5);
 
 /// The distilled result of a one-shot search: the engine's best move plus the
 /// evaluation and principal variation of the primary line. Flat and
@@ -80,13 +92,25 @@ fn fold_primary(prev: Option<AnalysisInfo>, info: AnalysisInfo) -> Option<Analys
     }
 }
 
-/// Substitute a default depth for fully-unbounded limits so a one-shot search
-/// terminates. Bounded limits pass through unchanged.
+/// Clamp user-supplied limits to their safe maxima, then substitute a default
+/// depth for fully-unbounded limits so a one-shot search always terminates.
+/// Clamping here protects the shared pool from *every* caller, not just the MCP
+/// tools (issue #93).
 fn bounded(limits: &Limits) -> Limits {
+    let limits = limits.clone().clamped();
     if limits.depth.is_none() && limits.movetime_ms.is_none() && limits.nodes.is_none() {
         Limits::depth(DEFAULT_DEPTH)
     } else {
-        limits.clone()
+        limits
+    }
+}
+
+/// The overall wall-clock deadline for one search: a movetime budget plus a
+/// grace margin, or the fixed [`SEARCH_CEILING`] for depth/nodes searches.
+fn search_deadline(limits: &Limits) -> Duration {
+    match limits.movetime_ms {
+        Some(ms) => Duration::from_millis(ms) + MOVETIME_GRACE,
+        None => SEARCH_CEILING,
     }
 }
 
@@ -174,31 +198,45 @@ impl EngineService {
 
 /// Configure, search, and fold the event stream down to one [`Analysis`]. On
 /// success the engine is left idle (post-`bestmove`) and safe to reuse.
+///
+/// The whole search runs under an overall [`search_deadline`]: a stuck or
+/// pathologically slow engine can no longer hang forever and pin the pool. On
+/// timeout the caller discards the (mid-search) engine rather than reusing it.
 async fn run_to_bestmove(
     engine: &mut Engine,
     fen: &str,
     limits: &Limits,
     options: &BTreeMap<String, String>,
 ) -> Result<Analysis> {
-    for (name, value) in options {
-        engine.set_option(name, value).await?;
-    }
-    if !options.is_empty() {
-        engine.wait_ready().await?;
-    }
-    engine.set_position(fen).await?;
-    engine.go(limits).await?;
-
-    let mut primary: Option<AnalysisInfo> = None;
-    loop {
-        match engine.next_event().await? {
-            Some(AnalysisEvent::Info(info)) => primary = fold_primary(primary, info),
-            Some(AnalysisEvent::BestMove { best_move, ponder }) => {
-                return Ok(Analysis::from_search(primary, best_move, ponder));
-            }
-            None => bail!("engine exited before returning a best move"),
+    let deadline = search_deadline(limits);
+    let search = async {
+        for (name, value) in options {
+            engine.set_option(name, value).await?;
         }
-    }
+        if !options.is_empty() {
+            engine.wait_ready().await?;
+        }
+        engine.set_position(fen).await?;
+        engine.go(limits).await?;
+
+        let mut primary: Option<AnalysisInfo> = None;
+        loop {
+            match engine.next_event().await? {
+                Some(AnalysisEvent::Info(info)) => primary = fold_primary(primary, info),
+                Some(AnalysisEvent::BestMove { best_move, ponder }) => {
+                    return Ok(Analysis::from_search(primary, best_move, ponder));
+                }
+                None => bail!("engine exited before returning a best move"),
+            }
+        }
+    };
+
+    timeout(deadline, search).await.map_err(|_| {
+        anyhow!(
+            "engine search exceeded the {}s deadline",
+            deadline.as_secs()
+        )
+    })?
 }
 
 #[cfg(test)]
@@ -264,6 +302,35 @@ mod tests {
             ..Limits::default()
         };
         assert_eq!(bounded(&movetime), movetime);
+    }
+
+    #[test]
+    fn bounded_clamps_oversized_user_limits() {
+        let huge = Limits {
+            depth: Some(9_999),
+            movetime_ms: Some(600_000),
+            nodes: None,
+        };
+        let bounded = bounded(&huge);
+        assert_eq!(bounded.depth, Some(super::super::command::MAX_DEPTH));
+        assert_eq!(
+            bounded.movetime_ms,
+            Some(super::super::command::MAX_MOVETIME_MS)
+        );
+    }
+
+    #[test]
+    fn deadline_tracks_movetime_then_falls_back_to_the_ceiling() {
+        let with_movetime = Limits {
+            movetime_ms: Some(5_000),
+            ..Limits::default()
+        };
+        assert_eq!(
+            search_deadline(&with_movetime),
+            Duration::from_millis(5_000) + MOVETIME_GRACE
+        );
+        // A depth-only search has no movetime budget ⇒ the fixed ceiling.
+        assert_eq!(search_deadline(&Limits::depth(30)), SEARCH_CEILING);
     }
 
     #[test]
