@@ -22,6 +22,7 @@ pub mod search;
 pub mod server;
 pub mod settings;
 pub mod studies;
+pub mod study_gen;
 
 pub use ingest::{ingest_pgn, Ingested};
 pub use openings::{classify_mainline, eco_of_position, opening_of_zobrist, Opening};
