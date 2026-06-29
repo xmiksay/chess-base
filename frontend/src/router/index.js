@@ -7,6 +7,7 @@ export const routes = [
   { path: '/', name: 'analysis', component: () => import('../views/AnalysisView.vue') },
   { path: '/collections', name: 'collections', component: () => import('../views/CollectionsView.vue') },
   { path: '/games', name: 'games', component: () => import('../views/GamesView.vue') },
+  { path: '/studies', name: 'studies', component: () => import('../views/StudyView.vue') },
   { path: '/search', name: 'search', component: () => import('../views/SearchView.vue') },
   { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
   { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },

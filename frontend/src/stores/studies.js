@@ -1,7 +1,8 @@
 // Pinia store for the study editor's lifecycle: list the visible studies, open
 // one (loading its move tree), create / import-from-PGN / rename / delete, and
-// export back to PGN. Thin wrapper over `api.studies` (issue #9) — the per-move
-// tree edits live in the engine/board flow and the node-mutation endpoints.
+// export back to PGN. Thin wrapper over `api.studies` (issue #9). This store owns
+// the open study in `current`; the per-move tree edits + board interaction live
+// in the `studyEditor` store (issue #8), which reads/writes `current`.
 
 import { defineStore } from 'pinia'
 import { ref } from 'vue'

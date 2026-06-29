@@ -108,6 +108,8 @@ export const api = {
 
   // Study lifecycle CRUD + PGN import/export (issue #9). `list` returns
   // summaries; `get` / `create` / `importPgn` / `rename` return the full move tree.
+  // The node mutations (issue #8) all return the refreshed study so the editor
+  // re-renders from one response; `addMove` wraps it as `{ new_node_id, study }`.
   studies: {
     list: () => getJson('/api/studies'),
     get: (id) => getJson(`/api/studies/${id}`),
@@ -118,6 +120,15 @@ export const api = {
     exportPgn: (id) => getJson(`/api/studies/${id}/export`).then((r) => r.pgn),
     rename: (id, name) => send('PATCH', `/api/studies/${id}`, { name }),
     remove: (id) => send('DELETE', `/api/studies/${id}`),
+    // Append a SAN move under `fromNodeId` (a variation when it already has kids).
+    addMove: (id, fromNodeId, san) =>
+      send('POST', `/api/studies/${id}/moves`, { from_node_id: fromNodeId, san }),
+    annotate: (id, nodeId, { comment, nag } = {}) =>
+      send('POST', `/api/studies/${id}/nodes/${nodeId}/annotate`, { comment, nag }),
+    promote: (id, nodeId) => send('POST', `/api/studies/${id}/nodes/${nodeId}/promote`),
+    reorder: (id, nodeId, index) =>
+      send('POST', `/api/studies/${id}/nodes/${nodeId}/reorder`, { index }),
+    deleteNode: (id, nodeId) => send('DELETE', `/api/studies/${id}/nodes/${nodeId}`),
   },
 
   // Ownable databases (issue #6): collections to search/import into. `list`

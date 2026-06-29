@@ -5,7 +5,15 @@ import { createAppRouter, routes, authRedirect } from './index.js'
 describe('router', () => {
   it('defines a named route for every top-level surface', () => {
     const names = routes.map((r) => r.name)
-    expect(names).toEqual(['analysis', 'collections', 'games', 'search', 'settings', 'login'])
+    expect(names).toEqual([
+      'analysis',
+      'collections',
+      'games',
+      'studies',
+      'search',
+      'settings',
+      'login',
+    ])
   })
 
   it('maps / to the analysis view', () => {

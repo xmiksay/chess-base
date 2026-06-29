@@ -1,0 +1,227 @@
+<script setup>
+// Variation-tree editor (issue #8): pick/create a study, play moves on the board
+// to build a mainline + variations, navigate the tree, and annotate moves. The
+// board (chessground) and tree stay in sync through the study-editor store.
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import Board from '../components/Board.vue'
+import MoveTree from '../components/MoveTree.vue'
+import AnnotationEditor from '../components/AnnotationEditor.vue'
+import { api } from '../api.js'
+import { useStudiesStore } from '../stores/studies.js'
+import { useStudyEditorStore } from '../stores/studyEditor.js'
+import { useSettingsStore } from '../stores/settings.js'
+
+const studies = useStudiesStore()
+const editor = useStudyEditorStore()
+const settings = useSettingsStore()
+
+const databases = ref([])
+const newName = ref('')
+const newDb = ref(null)
+const loadError = ref(null)
+
+const hasStudy = computed(() => !!studies.current)
+
+async function onBoardMove({ from, to }) {
+  try {
+    await editor.playMove({ from, to })
+  } catch (e) {
+    loadError.value = String(e.message ?? e)
+  }
+}
+
+async function onCreate() {
+  if (!newName.value.trim() || newDb.value == null) return
+  await studies.create(newDb.value, newName.value.trim())
+  editor.select(studies.current?.tree?.root ?? 0)
+  newName.value = ''
+  await studies.refresh()
+}
+
+function onKey(e) {
+  if (!hasStudy.value) return
+  const target = e.target
+  if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) return
+  if (e.key === 'ArrowLeft') {
+    editor.back()
+    e.preventDefault()
+  } else if (e.key === 'ArrowRight') {
+    editor.forward()
+    e.preventDefault()
+  } else if (e.key === 'ArrowUp' || e.key === 'Home') {
+    editor.goToStart()
+    e.preventDefault()
+  } else if (e.key === 'ArrowDown' || e.key === 'End') {
+    editor.goToEnd()
+    e.preventDefault()
+  }
+}
+
+onMounted(async () => {
+  window.addEventListener('keydown', onKey)
+  try {
+    await studies.refresh()
+    databases.value = await api.databases.list()
+    newDb.value =
+      databases.value.find((d) => d.id === settings.defaultDatabaseId)?.id ??
+      databases.value[0]?.id ??
+      null
+  } catch (e) {
+    loadError.value = String(e.message ?? e)
+  }
+})
+
+onUnmounted(() => window.removeEventListener('keydown', onKey))
+</script>
+
+<template>
+  <div class="mx-auto max-w-6xl p-6">
+    <header class="mb-4 flex items-center gap-3">
+      <h2 class="text-lg font-semibold">
+        Studies
+      </h2>
+    </header>
+
+    <p
+      v-if="loadError || studies.error"
+      class="mb-3 text-sm text-red-600"
+      data-test="error"
+    >
+      {{ loadError || studies.error }}
+    </p>
+
+    <div class="flex flex-col gap-6 lg:flex-row">
+      <!-- Study list + create -->
+      <section class="lg:w-1/4">
+        <ul class="mb-4 flex flex-col gap-1">
+          <li
+            v-for="s in studies.list"
+            :key="s.id"
+          >
+            <button
+              type="button"
+              data-test="study-row"
+              class="w-full rounded px-2 py-1 text-left text-sm hover:bg-neutral-100"
+              :class="{ 'bg-neutral-100 font-medium': studies.current?.id === s.id }"
+              @click="editor.open(s.id)"
+            >
+              {{ s.name }}{{ s.global ? ' (global)' : '' }}
+            </button>
+          </li>
+        </ul>
+
+        <form
+          data-test="create-form"
+          class="flex flex-col gap-2"
+          @submit.prevent="onCreate"
+        >
+          <input
+            v-model="newName"
+            placeholder="New study name"
+            class="rounded border border-neutral-300 px-2 py-1 text-sm"
+          >
+          <select
+            v-model="newDb"
+            aria-label="Database"
+            class="rounded border border-neutral-300 px-2 py-1 text-sm"
+          >
+            <option
+              v-for="d in databases"
+              :key="d.id"
+              :value="d.id"
+            >
+              {{ d.name }}{{ d.global ? ' (global)' : '' }}
+            </option>
+          </select>
+          <button
+            type="submit"
+            class="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700 disabled:opacity-50"
+            :disabled="!newName.trim() || newDb == null"
+          >
+            Create study
+          </button>
+        </form>
+      </section>
+
+      <!-- Board -->
+      <section
+        v-if="hasStudy"
+        class="lg:w-2/5"
+      >
+        <Board
+          :fen="editor.fen"
+          :dests="editor.legalDests"
+          :movable="true"
+          :last-move="editor.lastMove"
+          :board-theme="settings.boardTheme"
+          @move="onBoardMove"
+        />
+
+        <div class="mt-3 flex items-center gap-2">
+          <button
+            class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
+            :disabled="editor.atStart"
+            aria-label="Start"
+            @click="editor.goToStart()"
+          >
+            ⏮
+          </button>
+          <button
+            class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
+            :disabled="editor.atStart"
+            aria-label="Back"
+            @click="editor.back()"
+          >
+            ◀
+          </button>
+          <button
+            class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
+            :disabled="editor.atEnd"
+            aria-label="Forward"
+            @click="editor.forward()"
+          >
+            ▶
+          </button>
+          <button
+            class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
+            :disabled="editor.atEnd"
+            aria-label="End"
+            @click="editor.goToEnd()"
+          >
+            ⏭
+          </button>
+        </div>
+      </section>
+
+      <!-- Tree + annotations -->
+      <section
+        v-if="hasStudy"
+        class="lg:w-1/3"
+      >
+        <p class="mb-2 text-sm font-medium">
+          {{ studies.current.name }}
+        </p>
+        <MoveTree
+          :tree="editor.tree"
+          :current-id="editor.nodeId"
+          @select="editor.select($event)"
+        />
+        <hr class="my-3 border-neutral-200">
+        <AnnotationEditor
+          :node="editor.currentNode"
+          @comment="editor.annotate({ comment: $event })"
+          @nag="editor.annotate({ nag: $event })"
+          @promote="editor.promote(editor.nodeId)"
+          @delete="editor.deleteNode(editor.nodeId)"
+        />
+      </section>
+
+      <p
+        v-else
+        class="text-sm text-neutral-500"
+      >
+        Select or create a study to start editing.
+      </p>
+    </div>
+  </div>
+</template>
