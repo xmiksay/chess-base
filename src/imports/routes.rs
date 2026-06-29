@@ -12,7 +12,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::imports::{ImportError, ImportService, ImportSource};
+use crate::imports::{ImportError, ImportService, ImportSource, ImportSummary};
 use crate::server::error::error_response;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
@@ -52,11 +52,7 @@ async fn import_pgn(
     let summary = service(&state)
         .import_pgn(&user, body.database_id, &body.pgn)
         .await?;
-    Ok((
-        StatusCode::OK,
-        Json(json!({ "imported": summary.imported })),
-    )
-        .into_response())
+    Ok((StatusCode::OK, Json(summary_body(&summary))).into_response())
 }
 
 /// Trigger a Lichess / Chess.com sync into a database (`POST /api/import/sync`).
@@ -80,15 +76,20 @@ async fn sync(
             body.token.as_deref(),
         )
         .await?;
-    Ok((
-        StatusCode::OK,
-        Json(json!({ "imported": summary.imported })),
-    )
-        .into_response())
+    Ok((StatusCode::OK, Json(summary_body(&summary))).into_response())
 }
 
 fn service(state: &AppState) -> ImportService {
     ImportService::new(state.db.clone())
+}
+
+/// Wire shape shared by both import endpoints: `{ imported, skipped, errors[] }`.
+fn summary_body(summary: &ImportSummary) -> serde_json::Value {
+    json!({
+        "imported": summary.imported,
+        "skipped": summary.skipped,
+        "errors": summary.errors,
+    })
 }
 
 /// Map service failures onto HTTP status + a JSON error envelope. 5xx details are

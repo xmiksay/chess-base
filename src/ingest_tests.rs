@@ -268,8 +268,9 @@ const TWO_GAMES: &str = "[Event \"Game 1\"]\n[White \"Spassky\"]\n[Black \"Fisch
 async fn ingest_all_stores_every_game_in_a_multi_game_pgn() {
     let (conn, database_id) = db_with_own_collection().await;
 
-    let ingested = ingest_pgn_all(&conn, database_id, TWO_GAMES).await.unwrap();
-    assert_eq!(ingested.len(), 2);
+    let report = ingest_pgn_all(&conn, database_id, TWO_GAMES).await.unwrap();
+    assert_eq!(report.imported.len(), 2);
+    assert!(report.errors.is_empty());
     assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 2);
 }
 
@@ -278,17 +279,39 @@ async fn ingest_all_accepts_a_headerless_single_game() {
     let (conn, database_id) = db_with_own_collection().await;
 
     // No `[Event]` tag ⇒ split finds nothing; the whole blob is one game.
-    let ingested = ingest_pgn_all(&conn, database_id, "1. d4 d5 *")
+    let report = ingest_pgn_all(&conn, database_id, "1. d4 d5 *")
         .await
         .unwrap();
-    assert_eq!(ingested.len(), 1);
-    assert_eq!(ingested[0].indexed_plies, 2);
+    assert_eq!(report.imported.len(), 1);
+    assert_eq!(report.imported[0].indexed_plies, 2);
+    assert!(report.errors.is_empty());
 }
 
 #[tokio::test]
-async fn ingest_all_rejects_a_blank_blob() {
+async fn ingest_all_skips_a_blank_blob_without_aborting() {
     let (conn, database_id) = db_with_own_collection().await;
-    assert!(ingest_pgn_all(&conn, database_id, "   \n  ").await.is_err());
+    // A blank blob is one (empty) game: skipped, not a hard error.
+    let report = ingest_pgn_all(&conn, database_id, "   \n  ").await.unwrap();
+    assert!(report.imported.is_empty());
+    assert_eq!(report.errors.len(), 1);
+    assert!(games::Entity::find().all(&conn).await.unwrap().is_empty());
+}
+
+// good · illegal (Black answers 1. e4 with another e4) · good.
+const GOOD_BAD_GOOD: &str = "[Event \"G1\"]\n[White \"A\"]\n[Black \"B\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0\n\n[Event \"G2\"]\n[White \"C\"]\n[Black \"D\"]\n[Result \"*\"]\n\n1. e4 e4 *\n\n[Event \"G3\"]\n[White \"E\"]\n[Black \"F\"]\n[Result \"1/2-1/2\"]\n\n1. d4 d5 *\n";
+
+#[tokio::test]
+async fn ingest_all_skips_a_bad_game_and_keeps_the_rest() {
+    let (conn, database_id) = db_with_own_collection().await;
+
+    let report = ingest_pgn_all(&conn, database_id, GOOD_BAD_GOOD)
+        .await
+        .unwrap();
+    // The two legal games are committed; the illegal one is recorded, not fatal.
+    assert_eq!(report.imported.len(), 2);
+    assert_eq!(report.errors.len(), 1);
+    assert_eq!(report.errors[0].index, 2);
+    assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 2);
 }
 
 #[test]

@@ -30,9 +30,9 @@ pub enum ImportError {
     /// A required field was blank or invalid (empty PGN/username, unknown source).
     #[error("{0}")]
     InvalidInput(String),
-    /// The collector sync or PGN ingest failed (network, malformed PGN, illegal
-    /// move). The message comes from the collector/ingest layer — never a raw
-    /// `DbErr` — so it is safe to surface to clients.
+    /// A provider sync failed (network, bad username/token). Carries a curated,
+    /// client-safe message — never a raw `DbErr`, reqwest, or anyhow chain; those
+    /// are logged server-side instead.
     #[error("{0}")]
     Failed(String),
     /// Underlying database error (never surfaced verbatim to clients).
@@ -66,10 +66,15 @@ impl ImportSource {
     }
 }
 
-/// Outcome reported to clients: how many games were ingested this run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Outcome reported to clients. A multi-game PGN upload is skip-and-continue, so
+/// a partial success still returns this summary (HTTP 200) rather than aborting:
+/// `imported` games stored, `skipped` games dropped, with one client-safe
+/// `errors` entry per skipped game.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportSummary {
     pub imported: usize,
+    pub skipped: usize,
+    pub errors: Vec<String>,
 }
 
 /// Import orchestration over the `databases` table + collectors. Holds a
@@ -95,11 +100,17 @@ impl ImportService {
         if pgn.trim().is_empty() {
             return Err(ImportError::InvalidInput("PGN is empty".into()));
         }
-        let ingested = ingest_pgn_all(&self.db, database_id, pgn)
-            .await
-            .map_err(|e| ImportError::Failed(e.to_string()))?;
+        // Skip-and-continue: a bad game is recorded, not fatal. Only a genuine
+        // storage failure (`DbErr`) aborts, mapping to a generic 500.
+        let report = ingest_pgn_all(&self.db, database_id, pgn).await?;
         Ok(ImportSummary {
-            imported: ingested.len(),
+            imported: report.imported.len(),
+            skipped: report.errors.len(),
+            errors: report
+                .errors
+                .iter()
+                .map(|e| format!("game {}: {}", e.index, e.message))
+                .collect(),
         })
     }
 
@@ -139,12 +150,19 @@ impl ImportService {
                     .await
             }
         }
-        .map_err(|e| ImportError::Failed(e.to_string()))?;
+        .map_err(|e| {
+            // The provider/anyhow chain can carry reqwest URLs or wrapped SQL —
+            // log it server-side, hand the client a generic, actionable message.
+            tracing::warn!(error = ?e, source = ?source, username, "provider sync failed");
+            ImportError::Failed("sync failed — check the username and token, then try again".into())
+        })?;
 
         cursor::save(&self.db, database_id, source.as_str(), &outcome.cursor).await?;
 
         Ok(ImportSummary {
             imported: outcome.imported,
+            skipped: 0,
+            errors: Vec::new(),
         })
     }
 
@@ -213,7 +231,28 @@ mod tests {
         let (svc, id) = service_with_db(Some("alice")).await;
         let summary = svc.import_pgn(&user("alice"), id, TWO_GAMES).await.unwrap();
         assert_eq!(summary.imported, 2);
+        assert_eq!(summary.skipped, 0);
+        assert!(summary.errors.is_empty());
         assert_eq!(games::Entity::find().all(&svc.db).await.unwrap().len(), 2);
+    }
+
+    // One legal game then an illegal one (Black answers 1. e4 with another e4).
+    const ONE_GOOD_ONE_BAD: &str = "[Event \"Good\"]\n[White \"A\"]\n[Black \"B\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0\n\n[Event \"Bad\"]\n[White \"C\"]\n[Black \"D\"]\n[Result \"*\"]\n\n1. e4 e4 *\n";
+
+    #[tokio::test]
+    async fn import_pgn_skips_a_bad_game_and_reports_it() {
+        let (svc, id) = service_with_db(Some("alice")).await;
+        let summary = svc
+            .import_pgn(&user("alice"), id, ONE_GOOD_ONE_BAD)
+            .await
+            .unwrap();
+        // Partial success is not an error: the good game lands, the bad one is
+        // reported with a safe, indexed message (no leaked SQL / provider chain).
+        assert_eq!(summary.imported, 1);
+        assert_eq!(summary.skipped, 1);
+        assert_eq!(summary.errors.len(), 1);
+        assert!(summary.errors[0].starts_with("game 2:"));
+        assert_eq!(games::Entity::find().all(&svc.db).await.unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -264,6 +303,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(summary.imported, 2);
+        assert_eq!(summary.skipped, 0);
     }
 
     #[tokio::test]

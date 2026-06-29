@@ -12,11 +12,11 @@ use std::borrow::Cow;
 use std::io::Cursor;
 use std::ops::ControlFlow;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use pgn_reader::{RawTag, Reader, SanPlus, Skip, Visitor};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait,
+    QueryFilter, Set, TransactionTrait,
 };
 
 use crate::db::entities::{databases, events, games, players, position_index};
@@ -29,6 +29,38 @@ use crate::position::{self, zobrist_of_fen, CastlingMode, STARTPOS_FEN};
 pub struct Ingested {
     pub game_id: i32,
     pub indexed_plies: usize,
+}
+
+/// Why a single game failed to ingest. The split lets a multi-game import skip a
+/// bad game (`BadGame`) while still aborting on a genuine storage failure (`Db`).
+#[derive(Debug, thiserror::Error)]
+pub enum IngestError {
+    /// The PGN content is bad — malformed syntax, an illegal move, or an
+    /// unparseable set-up position. Client-safe and actionable; carries a curated
+    /// message, never a raw `DbErr` or provider chain.
+    #[error("{0}")]
+    BadGame(String),
+    /// A storage failure while writing the game. Internal — never surfaced raw.
+    #[error(transparent)]
+    Db(#[from] DbErr),
+}
+
+/// One game in a multi-game import that could not be stored. `index` is its
+/// 1-based position in the blob; `message` is client-safe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameError {
+    pub index: usize,
+    pub message: String,
+}
+
+/// Outcome of a multi-game ingest under skip-and-continue: the games stored and
+/// the ones skipped with a safe reason. A genuine storage failure aborts the
+/// whole run instead (returned as `Err`), so a transient DB outage is never
+/// silently reported as a pile of skipped games.
+#[derive(Debug, Default)]
+pub struct IngestReport {
+    pub imported: Vec<Ingested>,
+    pub errors: Vec<GameError>,
 }
 
 /// PGN seven-tag-roster + indexing-relevant headers, all optional. `variant` and
@@ -57,6 +89,41 @@ struct ParsedGame {
     mainline: Vec<String>,
 }
 
+/// A validated game ready to store: its headers, the resolved variant, the
+/// replayed mainline, and the start position's Zobrist key.
+struct PreparedGame {
+    headers: Headers,
+    variant: String,
+    plies: Vec<position::Ply>,
+    start_zobrist: u64,
+}
+
+/// Validate a parsed game — replay the mainline and hash the start position.
+/// These are the steps that can fail on *bad game data* (an illegal move or an
+/// unparseable set-up FEN); failures return a client-safe message. No storage
+/// happens here, so a caller can skip a bad game without ever opening a
+/// transaction.
+fn prepare_game(parsed: ParsedGame) -> std::result::Result<PreparedGame, String> {
+    let variant = parsed
+        .headers
+        .variant
+        .clone()
+        .unwrap_or_else(|| "standard".to_string());
+    let mode = castling_mode(&variant);
+    // The position to replay from: the `[FEN]` tag if set, else the startpos.
+    let start_fen = parsed.headers.start_fen.as_deref().unwrap_or(STARTPOS_FEN);
+    let plies = position::replay(start_fen, &parsed.mainline, mode)
+        .map_err(|e| format!("illegal move in mainline: {e}"))?;
+    let start_zobrist =
+        zobrist_of_fen(start_fen, mode).map_err(|e| format!("invalid start position: {e}"))?;
+    Ok(PreparedGame {
+        headers: parsed.headers,
+        variant,
+        plies,
+        start_zobrist,
+    })
+}
+
 /// Parse, store and index the first game in `pgn` into `database_id`.
 ///
 /// Players and the event are deduplicated by name; the mainline is replayed to
@@ -66,33 +133,31 @@ struct ParsedGame {
 /// Returns `Ok(None)` when the game is a duplicate — a game with the same
 /// provider `source_ref` (permalink) already exists in `database_id` — so a
 /// re-sync revisiting the cursor boundary appends nothing instead of doubling
-/// every game (issue #95). Games without a permalink are always ingested.
+/// every game (issue #95). Games without a permalink are always ingested. Bad
+/// game data fails with [`IngestError::BadGame`]; a storage failure with
+/// [`IngestError::Db`].
 pub async fn ingest_pgn(
     db: &DatabaseConnection,
     database_id: i32,
     pgn: &str,
-) -> Result<Option<Ingested>> {
-    let parsed = parse_pgn(pgn)?;
-    let headers = &parsed.headers;
+) -> std::result::Result<Option<Ingested>, IngestError> {
+    let parsed = parse_pgn(pgn).map_err(|e| IngestError::BadGame(e.to_string()))?;
 
-    let source_ref = source_ref(headers);
+    // Dedup before the (more expensive) replay so re-syncing mostly-seen games
+    // stays cheap (issue #95).
+    let source_ref = source_ref(&parsed.headers);
     if let Some(key) = &source_ref {
         if game_exists(db, database_id, key).await? {
             return Ok(None);
         }
     }
 
-    let variant = headers
-        .variant
-        .clone()
-        .unwrap_or_else(|| "standard".to_string());
-    let mode = castling_mode(&variant);
-    // The position to replay from: the `[FEN]` tag if set, else the startpos.
-    let start_fen = headers.start_fen.as_deref().unwrap_or(STARTPOS_FEN);
-
-    let plies =
-        position::replay(start_fen, &parsed.mainline, mode).context("replaying PGN mainline")?;
-    let start_zobrist = zobrist_of_fen(start_fen, mode).context("hashing start position")?;
+    let PreparedGame {
+        headers,
+        variant,
+        plies,
+        start_zobrist,
+    } = prepare_game(parsed).map_err(IngestError::BadGame)?;
 
     let txn = db.begin().await?;
 
@@ -121,13 +186,14 @@ pub async fn ingest_pgn(
         ..Default::default()
     }
     .insert(&txn)
-    .await
-    .context("inserting game")?;
+    .await?;
 
     let depth = databases::Entity::find_by_id(database_id)
         .one(&txn)
         .await?
-        .with_context(|| format!("database {database_id} not found"))?
+        // The service confirms the database exists before ingest; a miss here is
+        // an internal inconsistency, not a bad game.
+        .ok_or_else(|| DbErr::RecordNotFound(format!("database {database_id}")))?
         .index_depth
         .map(|d| d.max(0) as usize);
     let limit = depth.map_or(plies.len(), |cap| cap.min(plies.len()));
@@ -155,10 +221,7 @@ pub async fn ingest_pgn(
         .collect();
 
     if !rows.is_empty() {
-        position_index::Entity::insert_many(rows)
-            .exec(&txn)
-            .await
-            .context("inserting position index")?;
+        position_index::Entity::insert_many(rows).exec(&txn).await?;
     }
 
     txn.commit().await?;
@@ -184,48 +247,66 @@ fn source_ref(headers: &Headers) -> Option<String> {
 }
 
 /// Whether `database_id` already holds a game with this provider `source_ref`.
-async fn game_exists(db: &DatabaseConnection, database_id: i32, source_ref: &str) -> Result<bool> {
+async fn game_exists(
+    db: &DatabaseConnection,
+    database_id: i32,
+    source_ref: &str,
+) -> std::result::Result<bool, DbErr> {
     let found = games::Entity::find()
         .filter(games::Column::DatabaseId.eq(database_id))
         .filter(games::Column::SourceRef.eq(source_ref))
         .one(db)
-        .await
-        .context("checking for an existing game")?;
+        .await?;
     Ok(found.is_some())
 }
 
-/// Parse, store and index **every** game in a multi-game PGN into `database_id`,
-/// returning one [`Ingested`] per game in document order.
+/// Parse, store and index **every** game in a multi-game PGN into `database_id`
+/// under skip-and-continue, returning an [`IngestReport`].
 ///
 /// Games are split on the `[Event ` line that opens each one (the export
-/// convention shared by Lichess / Chess.com and `pgn-reader`). Each game is its
-/// own [`ingest_pgn`] transaction, so a malformed or illegal game aborts that
-/// game only — the ones already ingested before it stay committed.
-///
-/// Returns one [`Ingested`] per game **newly stored** this run; games skipped as
-/// duplicates (see [`ingest_pgn`]) are omitted, so `.len()` is the import count.
+/// convention shared by Lichess / Chess.com and `pgn-reader`). A malformed or
+/// illegal game is recorded in [`IngestReport::errors`] and the rest still
+/// import; only a genuine storage failure aborts the whole run (returned as
+/// `Err`), so a 500-game upload with one bad game no longer rolls the client into
+/// a re-upload. Games skipped as duplicates (see [`ingest_pgn`]) are silently
+/// omitted from both lists.
 pub async fn ingest_pgn_all(
     db: &DatabaseConnection,
     database_id: i32,
     pgn: &str,
-) -> Result<Vec<Ingested>> {
+) -> std::result::Result<IngestReport, DbErr> {
     let games = split_games(pgn);
+    let mut report = IngestReport::default();
     // A blob with no `[Event]` header is still a single (headerless) game; defer
     // the empty-input rejection to `ingest_pgn`.
     if games.is_empty() {
-        return Ok(ingest_pgn(db, database_id, pgn)
-            .await?
-            .into_iter()
-            .collect());
+        ingest_into_report(db, database_id, pgn, 1, &mut report).await?;
+        return Ok(report);
     }
-    let mut out = Vec::with_capacity(games.len());
     for (i, game) in games.iter().enumerate() {
-        let ingested = ingest_pgn(db, database_id, game)
-            .await
-            .with_context(|| format!("ingesting game {}", i + 1))?;
-        out.extend(ingested);
+        ingest_into_report(db, database_id, game, i + 1, &mut report).await?;
     }
-    Ok(out)
+    Ok(report)
+}
+
+/// Ingest one game into `report`: a newly stored game is recorded as imported, a
+/// duplicate is silently dropped, a bad game is skipped with a safe message, and
+/// only a real storage failure aborts (`Err`).
+async fn ingest_into_report(
+    db: &DatabaseConnection,
+    database_id: i32,
+    pgn: &str,
+    index: usize,
+    report: &mut IngestReport,
+) -> std::result::Result<(), DbErr> {
+    match ingest_pgn(db, database_id, pgn).await {
+        Ok(Some(ingested)) => report.imported.push(ingested),
+        // A deduped game is neither imported nor an error.
+        Ok(None) => {}
+        Err(IngestError::BadGame(message)) => report.errors.push(GameError { index, message }),
+        Err(IngestError::Db(e)) => return Err(e),
+    }
+    Ok(())
 }
 
 /// Split a complete multi-game PGN blob into individual, trimmed game strings.
@@ -261,7 +342,10 @@ pub(crate) fn event_offsets(buf: &[u8]) -> Vec<usize> {
 
 /// Find a player by exact name or create one, returning its id. `None`/blank
 /// names (e.g. a missing `[White]` tag) yield `None`.
-async fn intern_player<C: ConnectionTrait>(db: &C, name: Option<&str>) -> Result<Option<i32>> {
+async fn intern_player<C: ConnectionTrait>(
+    db: &C,
+    name: Option<&str>,
+) -> std::result::Result<Option<i32>, DbErr> {
     let Some(name) = name else { return Ok(None) };
     if let Some(existing) = players::Entity::find()
         .filter(players::Column::Name.eq(name))
@@ -275,13 +359,15 @@ async fn intern_player<C: ConnectionTrait>(db: &C, name: Option<&str>) -> Result
         ..Default::default()
     }
     .insert(db)
-    .await
-    .context("inserting player")?;
+    .await?;
     Ok(Some(inserted.id))
 }
 
 /// Find an event by exact name or create one, returning its id.
-async fn intern_event<C: ConnectionTrait>(db: &C, name: Option<&str>) -> Result<Option<i32>> {
+async fn intern_event<C: ConnectionTrait>(
+    db: &C,
+    name: Option<&str>,
+) -> std::result::Result<Option<i32>, DbErr> {
     let Some(name) = name else { return Ok(None) };
     if let Some(existing) = events::Entity::find()
         .filter(events::Column::Name.eq(name))
@@ -295,8 +381,7 @@ async fn intern_event<C: ConnectionTrait>(db: &C, name: Option<&str>) -> Result<
         ..Default::default()
     }
     .insert(db)
-    .await
-    .context("inserting event")?;
+    .await?;
     Ok(Some(inserted.id))
 }
 
