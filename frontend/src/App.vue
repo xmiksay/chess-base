@@ -1,9 +1,12 @@
 <script setup>
 import { onMounted } from 'vue'
-import { RouterLink, RouterView } from 'vue-router'
+import { RouterLink, RouterView, useRouter } from 'vue-router'
 import { useSettingsStore } from './stores/settings.js'
+import { useAuthStore } from './stores/auth.js'
 
 const settings = useSettingsStore()
+const auth = useAuthStore()
+const router = useRouter()
 
 const navLinks = [
   { to: '/', label: 'Analysis' },
@@ -12,7 +15,13 @@ const navLinks = [
   { to: '/search', label: 'Search' },
 ]
 
+async function signOut() {
+  await auth.logout()
+  router.push('/login')
+}
+
 onMounted(() => {
+  auth.init()
   settings.load()
 })
 </script>
@@ -41,13 +50,29 @@ onMounted(() => {
           >
             Settings
           </RouterLink>
-          <RouterLink
-            to="/login"
-            class="text-neutral-600 hover:underline"
-            active-class="font-semibold text-neutral-900"
-          >
-            Sign in
-          </RouterLink>
+          <!-- Auth controls are server-mode only; local mode is implicit admin. -->
+          <template v-if="auth.isServerMode">
+            <span
+              v-if="auth.user"
+              class="text-neutral-500"
+            >{{ auth.user.id }}</span>
+            <button
+              v-if="auth.user"
+              type="button"
+              class="text-neutral-600 hover:underline"
+              @click="signOut"
+            >
+              Sign out
+            </button>
+            <RouterLink
+              v-else
+              to="/login"
+              class="text-neutral-600 hover:underline"
+              active-class="font-semibold text-neutral-900"
+            >
+              Sign in
+            </RouterLink>
+          </template>
         </nav>
       </div>
       <p class="text-sm text-neutral-500">

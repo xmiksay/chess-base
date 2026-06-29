@@ -11,8 +11,11 @@ vi.mock('./api.js', () => ({
   api: {
     settings: { get: vi.fn().mockResolvedValue({}) },
     health: vi.fn().mockResolvedValue({ status: 'ok', mode: 'local' }),
+    whoami: vi.fn().mockResolvedValue({ id: 'local-admin', is_admin: true }),
     databases: { list: vi.fn().mockResolvedValue([]) },
   },
+  setAuthToken: vi.fn(),
+  getAuthToken: vi.fn().mockReturnValue(null),
 }))
 
 function makeRouter() {
@@ -34,9 +37,11 @@ describe('App shell', () => {
     const wrapper = mount(App, { global: { plugins: [createPinia(), router] } })
     expect(wrapper.text()).toContain('chess-base')
     const labels = wrapper.findAll('a').map((a) => a.text())
+    // Local mode hides the auth controls (implicit admin), so no "Sign in" link.
     expect(labels).toEqual(
-      expect.arrayContaining(['Analysis', 'Collections', 'Games', 'Search', 'Settings', 'Sign in']),
+      expect.arrayContaining(['Analysis', 'Collections', 'Games', 'Search', 'Settings']),
     )
+    expect(labels).not.toContain('Sign in')
   })
 
   it('switches views when navigating', async () => {
