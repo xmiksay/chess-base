@@ -44,6 +44,7 @@ pub fn router(state: AppState) -> Router {
             get(get_one).patch(rename).delete(delete),
         )
         .route("/api/studies/{id}/export", get(export))
+        .route("/api/studies/{id}/export/lichess", get(export_lichess))
         .route("/api/studies/{id}/moves", post(add_move))
         .route(
             "/api/studies/{id}/nodes/{node_id}",
@@ -311,6 +312,17 @@ async fn export(
     Path(id): Path<i32>,
 ) -> Result<Response, StudyError> {
     let pgn = service(&state).export_pgn(&user, id).await?;
+    Ok((StatusCode::OK, Json(json!({ "pgn": pgn }))).into_response())
+}
+
+/// Export a study as a Lichess-study chapter — PGN with header tags
+/// (`GET /api/studies/{id}/export/lichess`).
+async fn export_lichess(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+) -> Result<Response, StudyError> {
+    let pgn = service(&state).export_lichess(&user, id).await?;
     Ok((StatusCode::OK, Json(json!({ "pgn": pgn }))).into_response())
 }
 

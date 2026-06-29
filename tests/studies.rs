@@ -529,6 +529,49 @@ async fn lifecycle_crud_and_pgn_round_trip() {
 }
 
 #[tokio::test]
+async fn lichess_export_returns_headered_pgn() {
+    let app = server_app().await;
+    let bob = register(&app, "bob").await;
+    let db_id = make_database(&app, &bob).await;
+
+    let (status, study) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/import",
+            &bob,
+            json!({"database_id": db_id, "name": "Italian", "pgn": "1. e4 e5 2. Nf3 {develops} *"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let study_id = study["id"].as_i64().unwrap();
+
+    let (status, exported) = send(
+        &app,
+        get_req(&format!("/api/studies/{study_id}/export/lichess"), &bob),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let pgn_out = exported["pgn"].as_str().unwrap();
+    assert!(pgn_out.starts_with("[Event \"Italian\"]"));
+    assert!(pgn_out.contains("Nf3 {develops}"));
+
+    // The exported chapter re-imports as a valid study.
+    let (status, _) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/import",
+            &bob,
+            json!({"database_id": db_id, "name": "Reimported", "pgn": pgn_out}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
 async fn lifecycle_scoping_across_users_and_globals() {
     let app = server_app().await;
     let admin = register(&app, "alice").await; // first user → admin

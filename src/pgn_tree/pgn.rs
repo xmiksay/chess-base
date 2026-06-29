@@ -12,7 +12,7 @@ use std::ops::ControlFlow;
 
 use pgn_reader::{Nag, RawComment, Reader, SanPlus, Skip, Visitor};
 
-use super::MoveTree;
+use super::{shapes, MoveTree};
 use crate::position::{apply_san, CastlingMode, PositionError, STARTPOS_FEN};
 
 /// Move trees are standard chess; castling rights parse the normal way.
@@ -130,16 +130,19 @@ impl Visitor for Importer {
     }
 
     fn comment(&mut self, b: &mut Build, comment: RawComment<'_>) -> ControlFlow<Self::Output> {
-        let text = String::from_utf8_lossy(comment.as_bytes());
-        let text = text.trim();
+        let raw = String::from_utf8_lossy(comment.as_bytes());
+        // Pull any `[%csl]`/`[%cal]` shape commands out into the node's shapes,
+        // leaving the free text as the comment.
+        let (parsed, text) = shapes::parse(&raw);
+        let node = &mut b.tree.nodes[b.cur];
+        node.shapes.extend(parsed);
         if !text.is_empty() {
-            let slot = &mut b.tree.nodes[b.cur].comment;
-            match slot {
+            match &mut node.comment {
                 Some(existing) => {
                     existing.push(' ');
-                    existing.push_str(text);
+                    existing.push_str(&text);
                 }
-                None => *slot = Some(text.to_string()),
+                None => node.comment = Some(text),
             }
         }
         ControlFlow::Continue(())
@@ -193,8 +196,14 @@ fn write_move(out: &mut String, ply: usize, san: &str, node: &super::Node, force
     for nag in &node.nags {
         out.push_str(&format!(" ${nag}"));
     }
-    if let Some(comment) = &node.comment {
-        out.push_str(&format!(" {{{comment}}}"));
+    // Shapes serialize as Lichess `[%csl]`/`[%cal]` commands at the head of the
+    // comment, so a node with only shapes still emits a `{ … }` block.
+    let commands = shapes::encode(&node.shapes);
+    match (commands.is_empty(), &node.comment) {
+        (true, None) => {}
+        (false, None) => out.push_str(&format!(" {{{commands}}}")),
+        (true, Some(comment)) => out.push_str(&format!(" {{{comment}}}")),
+        (false, Some(comment)) => out.push_str(&format!(" {{{commands} {comment}}}")),
     }
 }
 
@@ -317,6 +326,33 @@ mod tests {
         // Black cannot answer 1. e4 with a second "e4".
         let err = from_pgn("1. e4 e4 *").unwrap_err();
         assert!(matches!(err, PgnError::Position(_)));
+    }
+
+    #[test]
+    fn exports_and_reimports_pinned_shapes() {
+        use super::super::Shape;
+        let mut t = MoveTree::new();
+        let e4 = t.add_move(t.root, "e4");
+        t.set_shapes(
+            e4,
+            vec![
+                Shape {
+                    orig: "e4".into(),
+                    dest: None,
+                    brush: "green".into(),
+                },
+                Shape {
+                    orig: "g1".into(),
+                    dest: Some("f3".into()),
+                    brush: "red".into(),
+                },
+            ],
+        );
+        t.set_comment(e4, "grabs the centre");
+
+        let pgn = to_pgn(&t).unwrap();
+        assert_eq!(pgn, "1. e4 {[%csl Ge4][%cal Rg1f3] grabs the centre} *");
+        assert_eq!(from_pgn(&pgn).unwrap(), t);
     }
 
     #[test]

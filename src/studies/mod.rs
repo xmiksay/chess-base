@@ -17,7 +17,7 @@ pub mod routes;
 
 use crate::db::entities::studies;
 use crate::pgn_tree::pgn::{self, PgnError};
-use crate::pgn_tree::{MoveTree, Shape, TreeError};
+use crate::pgn_tree::{lichess, MoveTree, Shape, TreeError};
 use crate::position::{legal_sans, replay, CastlingMode, PositionError, STARTPOS_FEN};
 use crate::server::identity::{assert_admin, assert_can_write, scope, CurrentUser};
 
@@ -127,10 +127,25 @@ impl StudyService {
     }
 
     /// Export a study the caller may read as standard PGN movetext (no headers).
+    /// NAGs, comments and pinned board shapes (`[%csl]`/`[%cal]`) are preserved.
     pub async fn export_pgn(&self, user: &CurrentUser, id: i32) -> Result<String, StudyError> {
+        let tree = self.load_tree(user, id).await?;
+        Ok(pgn::to_pgn(&tree)?)
+    }
+
+    /// Export a study the caller may read as a Lichess-study chapter: PGN header
+    /// tags (`Event` = study name) plus the same annotated movetext, ready to
+    /// import into lichess.org/study or version in git (issue #32).
+    pub async fn export_lichess(&self, user: &CurrentUser, id: i32) -> Result<String, StudyError> {
         let study = self.get(user, id).await?;
         let tree: MoveTree = serde_json::from_str(&study.tree_json)?;
-        Ok(pgn::to_pgn(&tree)?)
+        Ok(lichess::to_lichess_study(&study.name, &tree)?)
+    }
+
+    /// Load and deserialize the move tree of a study visible to the caller.
+    async fn load_tree(&self, user: &CurrentUser, id: i32) -> Result<MoveTree, StudyError> {
+        let study = self.get(user, id).await?;
+        Ok(serde_json::from_str(&study.tree_json)?)
     }
 
     /// Insert a new study row with the given tree, resolving ownership: `global`
