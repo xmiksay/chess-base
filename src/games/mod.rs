@@ -123,7 +123,7 @@ impl GameService {
             None
         };
 
-        let names = self.player_names(&rows).await?;
+        let names = player_names(&self.db, &rows).await?;
         let games = rows
             .into_iter()
             .map(|g| GameSummary {
@@ -150,7 +150,7 @@ impl GameService {
             .ok_or(GameError::NotFound)?;
         self.assert_database_visible(user, game.database_id).await?;
 
-        let names = self.player_names(std::slice::from_ref(&game)).await?;
+        let names = player_names(&self.db, std::slice::from_ref(&game)).await?;
         Ok(GameDetail {
             white: game.white_player_id.and_then(|id| names.get(&id).cloned()),
             black: game.black_player_id.and_then(|id| names.get(&id).cloned()),
@@ -183,31 +183,34 @@ impl GameService {
             .map(|_| ())
             .ok_or(GameError::NotFound)
     }
+}
 
-    /// `player_id -> name` for every player referenced by `games`.
-    async fn player_names(
-        &self,
-        games: &[games::Model],
-    ) -> Result<HashMap<i32, String>, GameError> {
-        let ids: HashSet<i32> = games
-            .iter()
-            .flat_map(|g| [g.white_player_id, g.black_player_id])
-            .flatten()
-            .collect();
-        if ids.is_empty() {
-            return Ok(HashMap::new());
-        }
-        Ok(players::Entity::find()
-            .filter(players::Column::Id.is_in(ids))
-            .select_only()
-            .column(players::Column::Id)
-            .column(players::Column::Name)
-            .into_tuple::<(i32, String)>()
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .collect())
+/// `player_id -> name` for every player referenced by `games`, loaded in one
+/// query. Shared by the game-listing, header-search and position-search services
+/// so the roster lookup lives in one place; returns the raw [`DbErr`], which each
+/// caller maps onto its own error type.
+pub(crate) async fn player_names(
+    db: &DatabaseConnection,
+    games: &[games::Model],
+) -> Result<HashMap<i32, String>, DbErr> {
+    let ids: HashSet<i32> = games
+        .iter()
+        .flat_map(|g| [g.white_player_id, g.black_player_id])
+        .flatten()
+        .collect();
+    if ids.is_empty() {
+        return Ok(HashMap::new());
     }
+    Ok(players::Entity::find()
+        .filter(players::Column::Id.is_in(ids))
+        .select_only()
+        .column(players::Column::Id)
+        .column(players::Column::Name)
+        .into_tuple::<(i32, String)>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect())
 }
 
 pub mod routes;

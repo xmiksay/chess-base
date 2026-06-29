@@ -13,7 +13,7 @@ use anyhow::{anyhow, Context, Result};
 use sea_orm::DatabaseConnection;
 use std::time::Duration;
 
-use super::{GameSource, SyncCursor, SyncOutcome};
+use super::{backoff_delay, retry_after_secs, GameSource, SyncCursor, SyncOutcome};
 use crate::ingest::ingest_pgn_all;
 
 const API_BASE: &str = "https://api.chess.com/pub";
@@ -120,7 +120,7 @@ impl ChessCom {
                         "chess.com rate limit: gave up after {MAX_RETRIES} retries"
                     ));
                 }
-                let delay = backoff_delay(retry_after_secs(&resp));
+                let delay = backoff_delay(retry_after_secs(&resp), MIN_BACKOFF);
                 tracing::warn!(?delay, attempt, "chess.com 429; backing off");
                 tokio::time::sleep(delay).await;
                 continue;
@@ -181,26 +181,6 @@ fn months_to_sync(archives: &[String], last_month: Option<&str>) -> Vec<(String,
         .collect();
     months.sort_by(|a, b| a.0.cmp(&b.0));
     months
-}
-
-/// Back-off delay for an HTTP 429: at least [`MIN_BACKOFF`], or the server's
-/// `Retry-After` (seconds) when it asks for longer.
-fn backoff_delay(retry_after: Option<u64>) -> Duration {
-    match retry_after {
-        Some(secs) => MIN_BACKOFF.max(Duration::from_secs(secs)),
-        None => MIN_BACKOFF,
-    }
-}
-
-/// Parse the `Retry-After` header (delay in seconds) if present and numeric.
-fn retry_after_secs(resp: &reqwest::Response) -> Option<u64> {
-    resp.headers()
-        .get(reqwest::header::RETRY_AFTER)?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
 }
 
 #[cfg(test)]
@@ -273,8 +253,11 @@ mod tests {
 
     #[test]
     fn backoff_honours_retry_after_above_the_floor() {
-        assert_eq!(backoff_delay(None), MIN_BACKOFF);
-        assert_eq!(backoff_delay(Some(1)), MIN_BACKOFF); // below floor ⇒ floored
-        assert_eq!(backoff_delay(Some(30)), Duration::from_secs(30));
+        assert_eq!(backoff_delay(None, MIN_BACKOFF), MIN_BACKOFF);
+        assert_eq!(backoff_delay(Some(1), MIN_BACKOFF), MIN_BACKOFF); // below floor ⇒ floored
+        assert_eq!(
+            backoff_delay(Some(30), MIN_BACKOFF),
+            Duration::from_secs(30)
+        );
     }
 }

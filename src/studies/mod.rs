@@ -19,7 +19,7 @@ use crate::db::entities::studies;
 use crate::pgn_tree::pgn::{self, PgnError};
 use crate::pgn_tree::{MoveTree, TreeError};
 use crate::position::{legal_sans, replay, CastlingMode, PositionError, STARTPOS_FEN};
-use crate::server::identity::{assert_admin, scope, CurrentUser};
+use crate::server::identity::{assert_admin, assert_can_write, scope, CurrentUser};
 
 /// Studies are standard chess; castling rights parse the normal way.
 const MODE: CastlingMode = CastlingMode::Standard;
@@ -308,7 +308,7 @@ impl StudyService {
             .one(&self.db)
             .await?
             .ok_or(StudyError::NotFound)?;
-        assert_can_write(&study, user)?;
+        assert_can_write(study.owner_id.as_deref(), user).map_err(|_| StudyError::Forbidden)?;
         Ok(study)
     }
 
@@ -318,16 +318,6 @@ impl StudyService {
         active.tree_json = Set(serde_json::to_string(tree)?);
         active.update(&self.db).await?;
         Ok(())
-    }
-}
-
-/// Write guard (ADR 0007 / 0011): a study is writable only by its owner; a global
-/// study (`owner_id IS NULL`) requires admin.
-fn assert_can_write(study: &studies::Model, user: &CurrentUser) -> Result<(), StudyError> {
-    match &study.owner_id {
-        None => assert_admin(user).map_err(|_| StudyError::Forbidden),
-        Some(owner) if *owner == user.id => Ok(()),
-        Some(_) => Err(StudyError::Forbidden),
     }
 }
 

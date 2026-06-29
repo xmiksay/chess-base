@@ -16,7 +16,7 @@ use sea_orm::{
 };
 use serde::Serialize;
 
-use crate::db::entities::{databases, games, players, position_index};
+use crate::db::entities::{databases, games, position_index};
 use crate::position::{zobrist_of_fen, CastlingMode};
 use crate::server::identity::{scope, CurrentUser};
 
@@ -65,6 +65,27 @@ pub struct GameHit {
     pub white_elo: Option<i32>,
     pub black_elo: Option<i32>,
     pub ply_count: Option<i32>,
+}
+
+impl GameHit {
+    /// Project a game row to a [`GameHit`], resolving player ids to names. Shared
+    /// by header and position search so the mapping lives in one place.
+    pub(crate) fn from_model(g: games::Model, names: &HashMap<i32, String>) -> Self {
+        GameHit {
+            white: g.white_player_id.and_then(|id| names.get(&id).cloned()),
+            black: g.black_player_id.and_then(|id| names.get(&id).cloned()),
+            id: g.id,
+            database_id: g.database_id,
+            site: g.site,
+            round: g.round,
+            date: g.date,
+            result: g.result,
+            eco: g.eco,
+            white_elo: g.white_elo,
+            black_elo: g.black_elo,
+            ply_count: g.ply_count,
+        }
+    }
 }
 
 /// Position search over the Zobrist `position_index`. Holds a connection handle
@@ -171,23 +192,10 @@ impl PositionSearchService {
         }
         let rows = query.all(&self.db).await?;
 
-        let names = self.player_names(&rows).await?;
+        let names = crate::games::player_names(&self.db, &rows).await?;
         Ok(rows
             .into_iter()
-            .map(|g| GameHit {
-                white: g.white_player_id.and_then(|id| names.get(&id).cloned()),
-                black: g.black_player_id.and_then(|id| names.get(&id).cloned()),
-                id: g.id,
-                database_id: g.database_id,
-                site: g.site,
-                round: g.round,
-                date: g.date,
-                result: g.result,
-                eco: g.eco,
-                white_elo: g.white_elo,
-                black_elo: g.black_elo,
-                ply_count: g.ply_count,
-            })
+            .map(|g| GameHit::from_model(g, &names))
             .collect())
     }
 
@@ -219,31 +227,6 @@ impl PositionSearchService {
             .column(games::Column::Id)
             .column(games::Column::Result)
             .into_tuple::<(i32, Option<String>)>()
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .collect())
-    }
-
-    /// `player_id -> name` for every player referenced by `games`.
-    async fn player_names(
-        &self,
-        games: &[games::Model],
-    ) -> Result<HashMap<i32, String>, SearchError> {
-        let ids: HashSet<i32> = games
-            .iter()
-            .flat_map(|g| [g.white_player_id, g.black_player_id])
-            .flatten()
-            .collect();
-        if ids.is_empty() {
-            return Ok(HashMap::new());
-        }
-        Ok(players::Entity::find()
-            .filter(players::Column::Id.is_in(ids))
-            .select_only()
-            .column(players::Column::Id)
-            .column(players::Column::Name)
-            .into_tuple::<(i32, String)>()
             .all(&self.db)
             .await?
             .into_iter()

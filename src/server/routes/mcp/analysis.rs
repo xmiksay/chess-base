@@ -11,7 +11,7 @@
 //! Every source reuses an existing facade verbatim: the pooled [`EngineService`]
 //! (the same one the batch path calls), [`PositionReportService`] (the pre-chewed
 //! DB layer, #28), and the pure [`features_of_fen`] extractor. Dispatch / JSON-RPC
-//! framing lives in [`super::mcp`].
+//! framing lives in [`super`].
 //!
 //! [`EngineService`]: crate::engine::EngineService
 
@@ -19,9 +19,8 @@ use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 
-use super::mcp::{Tool, ToolOutcome, ToolRegistry};
-use super::mcp_db_tools::{json_outcome, report_error};
-use crate::engine::Limits;
+use super::db_tools::{json_outcome, report_error};
+use super::{Tool, ToolOutcome, ToolRegistry};
 use crate::features::features_of_fen;
 use crate::search::report::PositionReportService;
 use crate::server::identity::CurrentUser;
@@ -65,9 +64,9 @@ fn analyse_position_tool() -> Tool {
 }
 
 async fn analyse_position(app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
-    let fen = match args.get("fen").and_then(Value::as_str) {
-        Some(fen) if !fen.trim().is_empty() => fen.to_string(),
-        _ => return ToolOutcome::error("Invalid arguments: missing string field `fen`."),
+    let fen = match super::db_tools::fen_arg(&args) {
+        Some(fen) => fen,
+        None => return ToolOutcome::error("Invalid arguments: missing string field `fen`."),
     };
 
     // Features double as FEN validation: an illegal FEN fails here, cheaply,
@@ -114,11 +113,7 @@ async fn engine_analysis(
         return None;
     };
 
-    let limits = Limits {
-        depth: args.get("depth").and_then(Value::as_u64).map(|d| d as u32),
-        movetime_ms: args.get("movetime_ms").and_then(Value::as_u64),
-        nodes: None,
-    };
+    let limits = super::db_tools::limits_arg(args);
 
     match service.analyse(fen, &limits, &BTreeMap::new()).await {
         Ok(analysis) => match serde_json::to_value(&analysis) {

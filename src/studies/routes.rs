@@ -18,6 +18,7 @@ use serde_json::json;
 use crate::db::entities::studies;
 use crate::pgn_tree::pgn::PgnError;
 use crate::pgn_tree::MoveTree;
+use crate::server::error::error_response;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 use crate::studies::{StudyError, StudyService};
@@ -297,10 +298,6 @@ impl IntoResponse for StudyError {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         };
-        let message = match status {
-            StatusCode::INTERNAL_SERVER_ERROR => "internal error".to_string(),
-            _ => self.to_string(),
-        };
-        (status, Json(json!({ "error": message }))).into_response()
+        error_response(status, self.to_string())
     }
 }

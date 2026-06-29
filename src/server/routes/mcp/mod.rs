@@ -6,7 +6,11 @@
 //! handler's [`ToolOutcome`] into the MCP content/`isError` envelope. Every call
 //! is authenticated up front; the resolved [`CurrentUser`] is threaded into each
 //! handler so a tool scopes its reads/writes to the caller (ADR 0007/0011). The
-//! tool builders themselves live in [`super::mcp_tools`].
+//! tool builders themselves live in [`tools`].
+
+mod analysis;
+mod db_tools;
+mod tools;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -34,7 +38,7 @@ const PROTOCOL_VERSION: &str = "2025-03-26";
 pub fn router(app: AppState) -> Router {
     let state = McpState {
         app,
-        registry: Arc::new(super::mcp_tools::default_registry()),
+        registry: Arc::new(tools::default_registry()),
     };
     Router::new().route("/mcp", post(handle)).with_state(state)
 }

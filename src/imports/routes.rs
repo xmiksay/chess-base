@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::imports::{ImportError, ImportService, ImportSource};
+use crate::server::error::error_response;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 
@@ -102,10 +103,6 @@ impl IntoResponse for ImportError {
             ImportError::InvalidInput(_) | ImportError::Failed(_) => StatusCode::BAD_REQUEST,
             ImportError::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
-        let message = match status {
-            StatusCode::INTERNAL_SERVER_ERROR => "internal error".to_string(),
-            _ => self.to_string(),
-        };
-        (status, Json(json!({ "error": message }))).into_response()
+        error_response(status, self.to_string())
     }
 }

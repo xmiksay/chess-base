@@ -60,6 +60,20 @@ pub fn assert_admin(user: &CurrentUser) -> Result<(), AuthError> {
     }
 }
 
+/// Write guard (ADR 0007 / 0011): a resource is writable only by its owner; a
+/// global resource (`owner_id` NULL) requires admin. Returns the shared
+/// [`AuthError`]; each service maps it onto its own error type.
+pub(crate) fn assert_can_write(
+    owner_id: Option<&str>,
+    user: &CurrentUser,
+) -> Result<(), AuthError> {
+    match owner_id {
+        None => assert_admin(user),
+        Some(owner) if owner == user.id => Ok(()),
+        Some(_) => Err(AuthError::Forbidden),
+    }
+}
+
 /// Why identity resolution or an admin check failed. Maps to an HTTP status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthError {

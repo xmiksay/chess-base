@@ -1,7 +1,10 @@
 //! Tests for [`super`] (header/metadata search). Split out to keep the
 //! module under the project's 500-line file cap.
 
+use std::collections::HashSet;
+
 use super::*;
+use crate::db::entities::databases;
 use crate::db::{connect, DbConfig};
 use crate::ingest::ingest_pgn;
 use sea_orm::{ActiveModelTrait, Set};

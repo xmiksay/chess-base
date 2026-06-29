@@ -13,7 +13,7 @@ use sea_orm::{
 };
 
 use crate::db::entities::databases;
-use crate::server::identity::{assert_admin, scope, CurrentUser};
+use crate::server::identity::{assert_admin, assert_can_write, scope, CurrentUser};
 
 /// Why a database operation failed. Transport-agnostic — the HTTP / MCP layer
 /// maps each variant onto its own status / error envelope.
@@ -138,18 +138,8 @@ impl DatabaseService {
             .one(&self.db)
             .await?
             .ok_or(DatabaseError::NotFound)?;
-        assert_can_write(&model, user)?;
+        assert_can_write(model.owner_id.as_deref(), user).map_err(|_| DatabaseError::Forbidden)?;
         Ok(model)
-    }
-}
-
-/// Write guard (ADR 0007 / 0011): a database is writable only by its owner; a
-/// global database (`owner_id IS NULL`) requires admin.
-fn assert_can_write(model: &databases::Model, user: &CurrentUser) -> Result<(), DatabaseError> {
-    match &model.owner_id {
-        None => assert_admin(user).map_err(|_| DatabaseError::Forbidden),
-        Some(owner) if *owner == user.id => Ok(()),
-        Some(_) => Err(DatabaseError::Forbidden),
     }
 }
 
