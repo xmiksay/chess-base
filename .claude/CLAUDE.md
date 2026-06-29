@@ -23,6 +23,7 @@ src/
   pgn_tree.rs      pure: study move-tree (variations/comments/NAGs)       ← unit-tested
   openings.rs      pure: ECO classification (embedded lichess dataset)     ← unit-tested
   plans.rs         pure: engine-PV → per-piece trajectories (ADR 0017)      ← unit-tested
+  features.rs      pure: position feature tags (material/phase/check, #33)    ← unit-tested
   db/              SeaORM: config (SQLite/Postgres), entities, migrations
   ingest.rs        ingest_pgn: parse PGN → store game → replay → position_index   ← shared by collectors
   collectors/      GameSource trait + Lichess / Chess.com adapters

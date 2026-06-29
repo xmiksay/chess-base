@@ -18,6 +18,7 @@ commented PGN studies, and integrates UCI engines.
 | `pgn_tree` | Study move-tree: variations, comments, NAGs; `pgn` submodule streams standard PGN ⇄ `MoveTree` (`from_pgn`/`to_pgn`, SAN validated via `position`) | none (pure) |
 | `openings` | ECO classification: embedded lichess `chess-openings` dataset → O(1) `zobrist -> (eco, name)` lookup; classifies a game by the longest match along its mainline (`eco_of_position`, `classify_mainline`) | none (pure) |
 | `plans` | Engine-PV → per-piece trajectories (`plan_from_pv`, ADR 0017): traces only the start FEN's side-to-move, chaining moves by square continuity into `Trajectory{piece,squares}` paths (`g1→f3→g5`); opponent replies applied but not traced; `max_moves`-capped, panic-free | none (pure) |
+| `features` | Factual position **feature tags** (`features_of_fen`, #33): material census + balance, game phase, side to move, check/mate/stalemate, insufficient material, mobility, castling rights, plus a short human-readable `tags` list; grounded facts the interactive analysis tool hands the model (deeper pawn-structure classification #30 layers on) | none (pure) |
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
 | `databases` | Transport-agnostic `DatabaseService`: collection CRUD (create/list/get/rename/delete) over the `databases` table; `kind ∈ {lichess,chesscom,master,own}`, `index_depth` derived from `kind`. Ownership read scope + write guards (ADR 0007/0011) — global (`owner_id IS NULL`) create/mutate requires admin. HTTP routes (`databases/routes.rs`, `/api/databases`) are thin callers | DB |
 | `studies` | Transport-agnostic `StudyService`: study lifecycle CRUD (`create`/`list`/`get`/`rename`/`delete`) + PGN import/export (`import_pgn`/`export_pgn` via `pgn_tree::pgn`, issue #9) + node-level `MoveTree` mutations (`add_move`/variation SAN-validated via `position::legal_sans`, `annotate`, `promote_variation`/`reorder_variation`/`delete_node`, issue #18); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — both the HTTP routes (`studies/routes.rs`, `/api/studies`) and the scoped MCP study tools (`server/routes/mcp_tools.rs`, issue #17 / ADR-0016) are thin callers | DB |
@@ -116,7 +117,15 @@ studies through `StudyService`. The **pre-chewed DB tools** live in
 `server/routes/mcp_db_tools.rs` (#28): `db_position_report` (ECO + per-move
 win/draw/loss with frequency/score + transpositions) and `db_reference_games`
 (scoped reference games), both thin callers of `search::PositionReportService`
-returning synthesized JSON the LLM consumes but never recomputes (ADR-0009).
+returning synthesized JSON the LLM consumes but never recomputes (ADR-0009). The
+**interactive analysis tool** lives in `server/routes/mcp_analysis.rs` (#33):
+`analyse_position` is the one-shot "explain this position" entry point — it
+bundles the engine eval/PV, the `db_position_report`, and the pure
+`features::features_of_fen` feature tags (material, game phase, check/mate,
+castling rights) into a single grounded snapshot so a connected client cites tool
+output rather than inventing lines. A missing engine leaves `engine: null` with an
+explanatory note; the DB report and features are always present. The unbundled
+tools stay available for an agent that wants to drill in further.
 
 Every `/mcp` call is **authenticated** (ADR 0016): `server/auth.rs::authenticate_mcp`
 resolves an OAuth access token then a service token to the one `CurrentUser`, which

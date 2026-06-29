@@ -302,6 +302,10 @@ over JSON-RPC; the available tools depend on what is registered (call \
 
 ## Tool surface (Epic 9)
 
+- **Interactive analysis** — `analyse_position` is the one-shot \"explain this \
+  position\" entry point: it bundles engine eval, the database report and factual \
+  feature tags for a single FEN so an explanation cites tool output, not guesses. \
+  The tools below are the same sources unbundled, for drilling in further.
 - **Engine** — request Stockfish/Lc0 evaluation of a position (best move, score, \
   principal variation) to use as ground truth when annotating.
 - **Database** — search the caller's databases and the global ones by game \
