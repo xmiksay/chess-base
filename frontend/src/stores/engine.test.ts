@@ -78,6 +78,18 @@ describe('engine store', () => {
     expect(engine.status).toBe('analysing')
   })
 
+  it('records the searched fen so the UI can format the eval against it', () => {
+    const engine = freshStore()
+    engine.connect()
+    FakeWebSocket.last.open()
+    expect(engine.analysedFen).toBeNull()
+    engine.analyse('searched-fen', {})
+    expect(engine.analysedFen).toBe('searched-fen')
+    // A later search retargets it; a stale board fen must never drive the sign.
+    engine.analyse('next-fen', {})
+    expect(engine.analysedFen).toBe('next-fen')
+  })
+
   it('buffers an analyse issued before the socket opens', () => {
     const engine = freshStore()
     engine.connect()

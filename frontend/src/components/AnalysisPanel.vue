@@ -20,7 +20,11 @@ const thinkMs = ref(800)
 // Guards applying a bestmove only when we asked the engine to move.
 let engineToMove = false
 
-const stm = computed(() => sideToMove(game.fen))
+// Format eval/PV against the position the engine actually searched, not the
+// live board — in play mode the board moves on after the engine replies, and
+// flipping the score by the new side-to-move would invert the eval.
+const evalFen = computed(() => engine.analysedFen ?? game.fen)
+const stm = computed(() => sideToMove(evalFen.value))
 const topScore = computed(() => engine.lines[0]?.score ?? null)
 const evalText = computed(() => formatScore(topScore.value, stm.value))
 
@@ -29,7 +33,7 @@ const canPin = computed(() => editor.studyId != null)
 const pinError = ref<string | null>(null)
 
 function lineSan(line: EngineLine) {
-  return uciLineToSan(game.fen, line.pv, 12).join(' ')
+  return uciLineToSan(evalFen.value, line.pv, 12).join(' ')
 }
 
 /** Whether this line has a computed plan to pin (a matching `planline` arrived). */

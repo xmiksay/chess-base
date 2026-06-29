@@ -26,6 +26,11 @@ export const useEngineStore = defineStore('engine', () => {
   const depth = ref<number | null>(null)
   const nps = ref<number | null>(null)
   const lines = ref<EngineLine[]>([])
+  // FEN of the position the current/last search pertains to. Scores are relative
+  // to *its* side-to-move and PV moves start from *it* — so the UI must format
+  // against this, not the live board, which can have moved on (e.g. play mode
+  // after the engine replies). Otherwise the eval sign and PV SAN go wrong.
+  const analysedFen = ref<string | null>(null)
   // Per-piece trajectories per MultiPV line, for the Plans overlay (#60).
   const plans = ref<PlanLine[]>([])
   // MultiPV of the line the UI is hovering; drives which plan is highlighted.
@@ -146,6 +151,7 @@ export const useEngineStore = defineStore('engine', () => {
     lines.value = []
     planMap = new Map()
     plans.value = []
+    analysedFen.value = current.fen
     if (_send({ type: 'analyse', fen: current.fen, limits: current.limits, options })) {
       status.value = 'analysing'
       return true
@@ -202,6 +208,7 @@ export const useEngineStore = defineStore('engine', () => {
     depth,
     nps,
     lines,
+    analysedFen,
     plans,
     activeLine,
     shapes,
