@@ -13,6 +13,7 @@ use crate::server::{embed::Assets, engine_ws, identity::CurrentUser, state::AppS
 
 mod engines;
 mod mcp;
+mod mcp_analysis;
 mod mcp_db_tools;
 mod mcp_tools;
 mod oauth;

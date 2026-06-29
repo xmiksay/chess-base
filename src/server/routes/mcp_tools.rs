@@ -15,7 +15,9 @@ use crate::studies::{StudyError, StudyService};
 
 /// The default registry. An `echo` stub proves dispatch; the engine facade
 /// registers `engine_analyse`; the study tools (#17) mutate the caller's studies;
-/// the pre-chewed DB tools (#28) answer position/reference queries.
+/// the pre-chewed DB tools (#28) answer position/reference queries; the
+/// interactive `analyse_position` tool (#33) bundles engine + DB + features into
+/// one grounded snapshot.
 pub fn default_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(echo_tool());
@@ -24,6 +26,7 @@ pub fn default_registry() -> ToolRegistry {
     registry.register(study_add_move_tool());
     registry.register(study_annotate_tool());
     super::mcp_db_tools::register(&mut registry);
+    super::mcp_analysis::register(&mut registry);
     registry
 }
 

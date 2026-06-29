@@ -100,7 +100,7 @@ fn fen_arg(args: &Value) -> Option<String> {
 }
 
 /// Serialize a result to pretty JSON, or a non-leaking error outcome.
-fn json_outcome<T: Serialize>(value: &T) -> ToolOutcome {
+pub(super) fn json_outcome<T: Serialize>(value: &T) -> ToolOutcome {
     match serde_json::to_string_pretty(value) {
         Ok(text) => ToolOutcome::ok(text),
         Err(_) => ToolOutcome::error("failed to serialise report"),
@@ -108,7 +108,7 @@ fn json_outcome<T: Serialize>(value: &T) -> ToolOutcome {
 }
 
 /// Map a [`SearchError`] to a tool outcome without leaking DB internals.
-fn report_error(error: SearchError) -> ToolOutcome {
+pub(super) fn report_error(error: SearchError) -> ToolOutcome {
     match error {
         SearchError::InvalidFen(msg) => ToolOutcome::error(format!("invalid FEN: {msg}")),
         SearchError::Serialize(_) | SearchError::Db(_) => {
