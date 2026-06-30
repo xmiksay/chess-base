@@ -8,6 +8,7 @@ mod m0002_core_schema;
 mod m0003_auth;
 mod m0004_oauth;
 mod m0005_sync_dedup;
+mod m0006_assistant;
 
 pub struct Migrator;
 
@@ -20,6 +21,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0003_auth::Migration),
             Box::new(m0004_oauth::Migration),
             Box::new(m0005_sync_dedup::Migration),
+            Box::new(m0006_assistant::Migration),
         ]
     }
 }

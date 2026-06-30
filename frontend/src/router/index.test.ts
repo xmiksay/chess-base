@@ -10,6 +10,7 @@ describe('router', () => {
       'collections',
       'games',
       'studies',
+      'assistant',
       'import',
       'search',
       'settings',

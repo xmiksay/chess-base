@@ -11,8 +11,9 @@ use serde_json::json;
 
 use crate::server::{embed::Assets, engine_ws, identity::CurrentUser, state::AppState};
 
+mod assistant;
 mod engines;
-mod mcp;
+pub mod mcp;
 mod oauth;
 
 /// Build the application router.
@@ -37,6 +38,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::settings::routes::router(state.clone()))
         .merge(crate::threats::routes::router(state.clone()))
         .merge(crate::studies::routes::router(state.clone()))
+        .merge(assistant::router(state.clone()))
         .merge(oauth::router(state.clone()))
         .merge(mcp::router(state))
 }

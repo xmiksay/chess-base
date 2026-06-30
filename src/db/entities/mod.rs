@@ -4,9 +4,12 @@
 //! (ADR-0003) and `studies` (a serialized `pgn_tree::MoveTree`). Relations are left
 //! empty (`enum Relation {}`) — joins are issued explicitly by the query layer.
 
+pub mod assistant_messages;
+pub mod assistant_sessions;
 pub mod databases;
 pub mod events;
 pub mod games;
+pub mod llm_providers;
 pub mod oauth_clients;
 pub mod oauth_codes;
 pub mod oauth_tokens;

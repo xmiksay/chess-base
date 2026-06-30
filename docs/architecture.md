@@ -33,6 +33,8 @@ commented PGN studies, and integrates UCI engines.
 | `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis), the pooled `service::EngineService` facade — one-shot `analyse` plus `analyse_multi` (top-N MultiPV lines for the game-review pass, #119) for batch + MCP (ADR 0014) — and the `download` auto-download manager (platform catalog → fetch + checksum + register, #11) (Stockfish, Lc0/Maia) | process / HTTP |
 | `review` | Fast **engine-only full-game review** (Mode A, #119): replay a stored game and search every position, classifying each ply and writing a rule-based "why" note — no LLM, no API key. `classify` (pure): win-probability buckets (best / great / good / inaccuracy / mistake / blunder) from the eval before vs after a move, plus per-side ACPL + accuracy roll-up (`summarize`). `explain` (pure): the reusable `MoveFact` struct (eval delta, engine's preferred move/line, material won/lost resolved over the PV, missed/allowed mate) rendered as a terse note (`explain`) — the **seam** Mode B's LLM annotation (#31) is meant to consume as ground truth so its strategic prose stays engine-grounded. `service::review_game` is the thin engine shell (gathers one `analyse_multi` per position, then the pure `assemble` does all classification/explanation); `routes` exposes `POST /api/games/{id}/analyse?depth=` returning per-ply `{eval_cp, mate, best_move, played_rank, classification, explanation}` + a per-side summary. Shares the one-shot engine pool (not the interactive WS, so it never starves live analysis) | none (pure core) + engine adapter |
 | `ai/llm` | Provider-agnostic LLM client: `LlmProvider` trait + Anthropic Messages API client (ADR 0013); HTTP behind an injectable `Transport` seam | HTTP |
+| `ai/providers` | `ProviderService` over the `llm_providers` table (#20, ADR-0025): admin-managed providers (`list`/`upsert`/`delete`, keys **write-only** — the `ProviderInfo` DTO omits them). `resolve` builds the active `Arc<dyn LlmProvider>` from the default DB row, else the `ANTHROPIC_API_KEY` env fallback — consumed at startup to fill `AppState.llm_provider` | DB |
+| `ai/assistant` | Embedded Claude study assistant (#20, Direction B / ADR-0025): an in-app chat whose agent loop reuses the **same** in-process `ToolRegistry` the `/mcp` transport serves (no second tool impl). `service::AssistantService` drives the loop: ask the provider → run read-only tool calls automatically → **pause** on any *mutating* tool (`study_create`/`study_import_pgn`/`study_add_move`/`study_annotate`/`generate_study`) until the user approves/denies → resume; bounded by `MAX_ITERATIONS` rounds per user message (both the cap and pending approvals are surfaced to the SPA). `store::AssistantStore` persists `assistant_sessions` + the `assistant_messages` transcript (one `ai::llm::Message` JSON per row); sessions are private (owner-scoped). Pure gating/view helpers (`requires_approval`, `pending_approvals`, `iterations_since_user`, `build_view`) are unit-tested; the loop is unit-tested with a stub provider + real in-memory store. HTTP routes (`server/routes/assistant.rs`, `/api/assistant/*`) are thin callers | DB + `ai/llm` provider + tool registry |
 | `study_gen` | Study-generation pipeline stages (Epic 9 / ADR-0009): deterministic preprocessing (`tree`, `features`) feeding the LLM annotation pass (`annotate`). `tree` (#29): from a start FEN, breadth-first builds a bounded, pruned `VariationTree` of DB-played continuations, each node tagged with an engine eval + the pre-chewed DB stats; pruning (`select_continuations`) drops moves below a frequency floor or outside an eval margin, capped by `max_children`/`max_depth`/`max_nodes` (`TreeConfig`). Tree types, pruning and the BFS walk are I/O-free over two seams (`Evaluator`, `ContinuationSource`); the concrete engine/DB adapters (`EngineEvaluator`, `ReportContinuations`) live in the module root. `features` (#30, `features.rs` + `features/derived.rs`): pure pawn-structure & key-square classifier — `concepts_of_fen` pattern-matches the pawn skeleton into structure tags (IQP, hanging pawns, Carlsbad, hedgehog, Maroczy, Stonewall, French chain), key squares (blockade / bind / outpost / break / chain-base, each with beneficiary), open/half-open files, isolated/doubled/passed/backward pawns, a king-safety signal and material imbalance (bishop pair, opposite-coloured bishops); the builder attaches the resulting `Concepts` to every node. `annotate` (#31): **batch** LLM annotation pass over the finished tagged tree → comments + NAG glyphs + training questions. `build_prompt` feeds the model only the moves, concept tags and opening name — **no tools, and no engine eval / PV / DB stats in the context** (ADR-0009). The model's draft attaches machine-checkable `Claim`s (`only_move`, `best_move`, `blunder`, `loses_material`/`wins_material`), and `verify_and_commit` confirms each against ground truth (legal-move legality + the tree's stored engine eval) before committing into a `MoveTree`; a claim ground truth contradicts is dropped, taking the prose that rested on it with it (`Rejection` records what fell). Pure verification (stored eval + chess rules), so the whole loop is unit-tested with a stub provider and no engine. `generate` (#115): the **orchestrator** that ties the three stages into one user-invokable operation — `generate_study` runs the tree builder → batch annotation/verification pass → persists the verified `MoveTree` as a `studies` row owned by the caller (`StudyService::create_with_tree`), returning the new study id + a summary (node count, rejected-claim count). Generic over the `Evaluator`/`ContinuationSource`/`LlmProvider` seams (unit-tested with injected fakes + a real in-memory study service); `generate_study_live` is the production wrapper. Exposed two ways, both thin callers: the MCP `generate_study` tool and `POST /api/studies/generate` | none (pure core) + engine/DB adapters + `ai/llm` provider |
 | `server` | Axum router, app state, request identity, MCP `/mcp` endpoint + its auth (OAuth 2.1 / service token, ADR 0016), engine analysis WebSocket, embedded SPA, browser launch, lifecycle | HTTP |
 
@@ -420,9 +422,31 @@ encoding and response parsing are unit-tested against a stub with no network (th
 one live test is gated behind `ANTHROPIC_API_KEY`). The model id is configurable —
 default Sonnet-class for cost, Opus by override. **The API key is server-side
 only**: it travels in the `x-api-key` header and never reaches the SPA. The server
-builds the provider once at startup from `ANTHROPIC_API_KEY` and holds it on
-`AppState.llm_provider` (best-effort, like the engine: an unset key leaves it
-`None` and disables `generate_study`).
+builds the provider once at startup — the admin-configured default `llm_providers`
+row (#20) wins, else the `ANTHROPIC_API_KEY` env fallback (`ai/providers::resolve`)
+— and holds it on `AppState.llm_provider` (best-effort, like the engine: nothing
+configured leaves it `None` and disables `generate_study` **and** the assistant).
+
+## Embedded study assistant (Epic 7 / ADR-0025)
+
+`ai/assistant` is the in-app chat counterpart to the `/mcp` transport: instead of
+an external client, an embedded agent loop drives the **same** in-process
+`ToolRegistry` (exposed via `ToolRegistry::tools`/`invoke`), so there is one tool
+surface, not two. `AssistantService::post_message` appends the user turn and runs
+`drive`: ask `LlmProvider::complete` (system prompt + the registry's `ToolSpec`s),
+record the assistant turn, then — if it requested tools — run the read-only ones
+automatically and **pause** if any is *mutating* (`requires_approval`). The pause
+is just a trailing assistant turn whose tool calls have no results yet, so it is
+resumable across requests: the SPA shows `pending_approvals`, the user approves or
+denies per call, and `respond` runs the approved calls (denied → an error tool
+result the model sees) and continues the loop. The loop is bounded by
+`MAX_ITERATIONS` tool rounds since the last user message (`iterations_since_user`),
+surfaced alongside the cap. Sessions are private, owner-scoped rows in
+`assistant_sessions`; the transcript is `assistant_messages`, one
+`ai::llm::Message` serialized per row. The HTTP surface is `/api/assistant/*`
+(sessions CRUD, `messages`, `respond`, and the admin `providers` registry); a
+`503` when no provider is configured. Direction-A (external MCP client)
+deployments need none of this — the key never reaches the SPA either way.
 
 ## Data model
 
@@ -483,7 +507,9 @@ indices from issue #95 (`games(database_id, source_ref)` and
 tables; `m0002_core_schema` adds the rest of the core domain
 (`players`/`events`/`games`/`position_index`/`studies`); `m0003_auth` adds `users`/`sessions`; `m0004_oauth` adds the MCP-auth tables
 (`service_tokens`, `oauth_clients`, `oauth_codes`, `oauth_tokens`); `m0005_sync_dedup`
-adds `games.source_ref` and the `sync_cursors` table. All run on both SQLite and Postgres.
+adds `games.source_ref` and the `sync_cursors` table; `m0006_assistant` adds the
+embedded-assistant tables (`assistant_sessions`, `assistant_messages`,
+`llm_providers`, #20). All run on both SQLite and Postgres.
 
 ### Position search
 
@@ -576,8 +602,9 @@ rustfmt + clippy (`-D warnings`) + cargo build + tests.
 See the epics in `.claude/CLAUDE.md`. Each epic is a GitHub milestone; concrete
 features are individual issues. Epic 7 adds an MCP JSON-RPC endpoint (mirroring
 the `site` project's `routes/mcp.rs`) exposing engine/database/interactive-analysis
-tools so an external AI client — or, later, an embedded Claude assistant — can read
-and analyse studies. Study *authoring* — lifecycle CRUD + PGN import/export
+tools so an external AI client (Direction A) can read and analyse studies — and
+an **embedded** Claude assistant (Direction B, #20 / ADR-0025) that reuses that
+same in-process tool surface for an in-app chat (see "Embedded study assistant"). Study *authoring* — lifecycle CRUD + PGN import/export
 (issue #9) and node-level create/annotate/restructure (issue #18) — is a separate
 programmatic REST API (`/api/studies`), **not** an MCP tool surface, per ADR-0009:
 the LLM annotates batches that are committed through that same `StudyService`,
