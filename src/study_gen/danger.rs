@@ -23,8 +23,10 @@ use super::tree::score_to_cp;
 
 /// Tunable thresholds for the classifier, all in centipawns from our
 /// perspective. Defaults are the ADR-0026 starting points — deliberately easy to
-/// retune once measured on real games.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// retune once measured on real games. `serde(default)` so a generate request can
+/// carry partial overrides over the defaults (issue #141).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DangerConfig {
     /// After the opponent's **best** refutation we must stay at or above this to
     /// call a trap a *weapon*. Slightly worse is fine; a blunder is not.

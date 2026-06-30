@@ -194,6 +194,53 @@ async fn generate_study_requires_arguments() {
 }
 
 #[tokio::test]
+async fn tools_list_includes_generate_danger_map() {
+    let (status, v) = rpc(json!({
+        "jsonrpc": "2.0", "id": 63, "method": "tools/list"
+    }))
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let tools = v["result"]["tools"].as_array().unwrap();
+    assert!(tools.iter().any(|t| t["name"] == "generate_danger_map"));
+}
+
+#[tokio::test]
+async fn generate_danger_map_without_engine_is_a_tool_error() {
+    // No engine and no model wired ⇒ the orchestrator tool reports a graceful
+    // `isError`, not a panic or transport error. The dispatch itself succeeds.
+    let (status, v) = rpc(json!({
+        "jsonrpc": "2.0", "id": 64, "method": "tools/call",
+        "params": {
+            "name": "generate_danger_map",
+            "arguments": { "database_id": 1, "name": "Sicilian traps", "spine_pgn": "1. e4 c5 *" }
+        }
+    }))
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["result"]["isError"], json!(true));
+    assert!(v["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("No engine configured"));
+}
+
+#[tokio::test]
+async fn generate_danger_map_requires_arguments() {
+    // Missing the required `database_id` / `name` / `spine_pgn` is rejected before
+    // any stage.
+    let (status, v) = rpc(json!({
+        "jsonrpc": "2.0", "id": 65, "method": "tools/call",
+        "params": { "name": "generate_danger_map", "arguments": { "database_id": 1, "name": "x" } }
+    }))
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["result"]["isError"], json!(true));
+}
+
+#[tokio::test]
 async fn engine_analyse_missing_fen_is_a_tool_error() {
     // Even with an engine present this would reject; with none it still must.
     let (status, v) = rpc(json!({

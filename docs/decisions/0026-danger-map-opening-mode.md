@@ -77,4 +77,9 @@ can *compute* but would never *optimise for* — which is precisely why a study
 built on it is worth more than the best-line tree. Attack detection landed in
 #142; a heuristic for "tempting" replies remains the open follow-up (issue #131).
 v1 ships the pure classifier (`danger.rs`) with the spine driver, annotation
-wiring, and transport layered on in later increments.
+wiring, and transport layered on in later increments. Transport landed in #141:
+the MCP `generate_danger_map` tool and `POST /api/studies/generate-danger-map`
+(`studies/danger_route.rs`) are thin callers over `generate_danger_study_live` —
+the request carries the spine as PGN, a per-variation `movetime_ms`/`multipv`
+budget, and partial `SpineConfig`/`DangerConfig`/`AttackConfig` overrides (all
+`serde(default)`).

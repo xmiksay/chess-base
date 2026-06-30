@@ -732,3 +732,56 @@ async fn generate_without_engine_is_service_unavailable() {
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("No engine configured"), "body was: {text}");
 }
+
+/// `POST /api/studies/generate-danger-map` is mounted and callable; with no engine
+/// wired the orchestrator surfaces a clean `503` (never a panic or a leaked
+/// internal). The full happy path is covered at the service layer with injected
+/// fakes (`study_gen::danger_generate` tests), since it needs a real engine + LLM.
+#[tokio::test]
+async fn generate_danger_map_without_engine_is_service_unavailable() {
+    let app = server_app().await;
+    let admin = register(&app, "alice").await; // first user → admin
+    let db_id = make_database(&app, &admin).await;
+
+    let resp = app
+        .clone()
+        .oneshot(json_req(
+            "POST",
+            "/api/studies/generate-danger-map",
+            &admin,
+            json!({"database_id": db_id, "name": "Sicilian traps", "spine_pgn": "1. e4 c5 *"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("No engine configured"), "body was: {text}");
+}
+
+/// A malformed spine PGN is a client error (`400`) — rejected at the transport
+/// before any engine / LLM work. Mounted without an engine, so this also proves
+/// PGN validation runs ahead of the engine-presence check.
+#[tokio::test]
+async fn generate_danger_map_with_bad_pgn_is_bad_request() {
+    let app = server_app().await;
+    let admin = register(&app, "alice").await;
+    let db_id = make_database(&app, &admin).await;
+
+    let resp = app
+        .clone()
+        .oneshot(json_req(
+            "POST",
+            "/api/studies/generate-danger-map",
+            &admin,
+            json!({"database_id": db_id, "name": "Broken", "spine_pgn": "1. e4 e4 *"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("invalid spine PGN"), "body was: {text}");
+}

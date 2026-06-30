@@ -54,8 +54,10 @@ pub enum Side {
 }
 
 /// How far and how wide to walk, plus the classifier thresholds. Engine search
-/// limits live on the [`MultiAnalyzer`], not here.
-#[derive(Debug, Clone, PartialEq)]
+/// limits live on the [`MultiAnalyzer`], not here. `serde(default)` so a generate
+/// request can carry partial overrides over the defaults (issue #141).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SpineConfig {
     /// Which side the repertoire plays.
     pub our_side: Side,

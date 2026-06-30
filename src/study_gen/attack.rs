@@ -20,7 +20,10 @@ use crate::plans::{plan_from_pv, DEFAULT_MAX_MOVES};
 use crate::position::{king_square, position_from_fen, CastlingMode, PositionError};
 
 /// Tunables for the pawn-storm detector, deliberately easy to retune.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `serde(default)` so a generate request can carry partial overrides over the
+/// defaults (issue #141).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AttackConfig {
     /// Minimum forward pushes by one pawn along the line to count as a storm.
     /// Two (e.g. `h4` then `h5`) is the classic flank advance.

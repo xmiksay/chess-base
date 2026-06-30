@@ -55,14 +55,18 @@ src/
                    plans.rs → Caution;
                    danger_generate.rs (#140) orchestrator: spine walk → fold to a
                    VariationTree (role tags as concept hints) → annotate/verify →
-                   persist a study; surfaces rejected claims + role tags   ← unit-tested
+                   persist a study; surfaces rejected claims + role tags;
+                   exposed as MCP `generate_danger_map` + POST
+                   /api/studies/generate-danger-map (#141, thin callers in
+                   studies/danger_route.rs)   ← unit-tested
   auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
   server/          Axum app: routes, state, embedded SPA, browser launch,
                    MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016).
                    routes/mcp/ tools: engine_analyse + analyse_position/analyse_game
                    (#125), study_* (create/get/import_pgn/add_move/annotate/export,
                    #125), list_databases/db_list_games/db_read_game (#125),
-                   generate_study — all thin callers of the shared services.
+                   generate_study, generate_danger_map (#141) — all thin callers
+                   of the shared services.
                    routes/assistant.rs: AI assistant chat + provider registry (#20)
   bin/chess-base.rs  CLI entry (clap)
 frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground

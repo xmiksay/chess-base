@@ -42,6 +42,7 @@ const GATED_TOOLS: &[&str] = &[
     "study_add_move",
     "study_annotate",
     "generate_study",
+    "generate_danger_map",
 ];
 
 /// Does running this tool need explicit user approval? (mutating tools do).
@@ -274,6 +275,7 @@ mod tests {
     fn gating_marks_only_mutating_tools() {
         assert!(requires_approval("study_create"));
         assert!(requires_approval("generate_study"));
+        assert!(requires_approval("generate_danger_map"));
         assert!(!requires_approval("engine_analyse"));
         assert!(!requires_approval("list_databases"));
         assert!(!requires_approval("study_get"));
