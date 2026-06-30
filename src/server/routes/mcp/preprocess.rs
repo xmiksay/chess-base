@@ -20,6 +20,7 @@
 use serde_json::{json, Value};
 
 use super::db_tools::{fen_arg, json_outcome, opt_bounded_u64};
+use super::study_tools::study_error;
 use super::{Tool, ToolOutcome, ToolRegistry};
 use crate::engine::{Limits, MAX_DEPTH, MAX_MOVETIME_MS};
 use crate::pgn_tree::pgn::from_pgn_with_start;
@@ -27,10 +28,14 @@ use crate::position::{CastlingMode, STARTPOS_FEN};
 use crate::search::report::PositionReportService;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
+use crate::studies::StudyService;
 use crate::study_gen::features::concepts_of_fen_with;
 use crate::study_gen::spine::{SpineConfig, SpineError};
 use crate::study_gen::tree::{TreeConfig, TreeError};
-use crate::study_gen::{build_variation_tree, walk_danger_spine_live};
+use crate::study_gen::{
+    build_variation_tree, seed_study_from_danger, seed_study_from_tree, walk_danger_spine_live,
+    SeedOutcome, SeedParams,
+};
 
 /// Studies are standard chess (mirrors [`crate::studies`]); every FEN here parses
 /// castling rights the normal way.
@@ -73,8 +78,11 @@ fn opening_tree_tool() -> Tool {
          teachable size. Every node carries the SAN, FEN, Zobrist key, engine \
          evaluation, database win/draw/loss + frequency stats, ECO name and \
          strategic concepts. Returns structured data only — no prose: annotate it \
-         yourself and persist with the `study_*` tools. Scoped to your databases \
-         and the global ones. Requires an engine configured.",
+         yourself and persist with the `study_*` tools. Pass `save_as` to persist \
+         the tree straight into a study server-side and get back just an id (no \
+         tree JSON, no client-side PGN assembly) — then layer prose with \
+         `study_annotate`. Scoped to your databases and the global ones. Requires \
+         an engine configured.",
         json!({
             "type": "object",
             "properties": {
@@ -88,7 +96,8 @@ fn opening_tree_tool() -> Tool {
                 "tree": {
                     "type": "object",
                     "description": "Optional tree pruning thresholds (max_depth, max_children, max_nodes, min_frequency, eval_margin_cp); partial overrides over the defaults."
-                }
+                },
+                "save_as": save_as_schema()
             }
         }),
         |app, user, args| async move { opening_tree(app, user, args).await },
@@ -117,12 +126,30 @@ async fn opening_tree(app: AppState, user: CurrentUser, args: Value) -> ToolOutc
         Ok(depth) => depth.map(|d| d as u32).unwrap_or(DEFAULT_TREE_DEPTH),
         Err(msg) => return ToolOutcome::error(msg),
     };
+    let save_as = match parse_save_as(&args) {
+        Ok(save_as) => save_as,
+        Err(msg) => return ToolOutcome::error(msg),
+    };
     let limits = Limits::depth(depth).clamped();
     let reports = PositionReportService::new(app.db.clone());
 
-    match build_variation_tree(&engine, &reports, &user, &start_fen, &config, limits, MODE).await {
-        Ok(tree) => json_outcome(&tree),
-        Err(e) => tree_error(e),
+    let tree =
+        match build_variation_tree(&engine, &reports, &user, &start_fen, &config, limits, MODE)
+            .await
+        {
+            Ok(tree) => tree,
+            Err(e) => return tree_error(e),
+        };
+
+    match save_as {
+        None => json_outcome(&tree),
+        Some(params) => {
+            let studies = StudyService::new(app.db.clone());
+            match seed_study_from_tree(&studies, &user, &tree, &params).await {
+                Ok(outcome) => seed_outcome(&outcome),
+                Err(e) => study_error(e),
+            }
+        }
     }
 }
 
@@ -139,8 +166,10 @@ fn danger_map_tool() -> Tool {
          Caution / Off-book role and the raw figures behind it (trap verdict, \
          only-move gap, human miss-rate, pawn-storm signal). Returns structured \
          data only — no prose: annotate it yourself and persist with the `study_*` \
-         tools. Scoped to your databases and the global ones. Requires an engine \
-         configured.",
+         tools. Pass `save_as` to persist the danger tree straight into a study \
+         server-side and get back just an id (no tree JSON) — then layer prose with \
+         `study_annotate`. Scoped to your databases and the global ones. Requires \
+         an engine configured.",
         json!({
             "type": "object",
             "properties": {
@@ -157,7 +186,8 @@ fn danger_map_tool() -> Tool {
                 "spine": {
                     "type": "object",
                     "description": "Optional walk shape + classifier thresholds (our_side, max_depth, min_frequency, max_replies, min_miss_rate, danger{…}, attack{…}); partial overrides over the defaults."
-                }
+                },
+                "save_as": save_as_schema()
             },
             "required": ["spine_pgn"]
         }),
@@ -198,9 +228,13 @@ async fn danger_map(app: AppState, user: CurrentUser, args: Value) -> ToolOutcom
         Ok(value) => value.map(|n| n as u16).unwrap_or(DEFAULT_DANGER_MULTIPV),
         Err(msg) => return ToolOutcome::error(msg),
     };
+    let save_as = match parse_save_as(&args) {
+        Ok(save_as) => save_as,
+        Err(msg) => return ToolOutcome::error(msg),
+    };
     let reports = PositionReportService::new(app.db.clone());
 
-    match walk_danger_spine_live(
+    let danger = match walk_danger_spine_live(
         &engine,
         &reports,
         &user,
@@ -213,7 +247,12 @@ async fn danger_map(app: AppState, user: CurrentUser, args: Value) -> ToolOutcom
     )
     .await
     {
-        Ok(danger) => {
+        Ok(danger) => danger,
+        Err(e) => return spine_error(e),
+    };
+
+    match save_as {
+        None => {
             // A flat digest of the tagged nodes (the tags are also embedded per
             // node in `tree`) — most dangerous lines first by walk order.
             let roles: Vec<Value> = danger
@@ -232,7 +271,13 @@ async fn danger_map(app: AppState, user: CurrentUser, args: Value) -> ToolOutcom
                 .collect();
             json_outcome(&json!({ "tree": danger, "roles": roles }))
         }
-        Err(e) => spine_error(e),
+        Some(params) => {
+            let studies = StudyService::new(app.db.clone());
+            match seed_study_from_danger(&studies, &user, &danger, &params).await {
+                Ok(outcome) => seed_outcome(&outcome),
+                Err(e) => study_error(e),
+            }
+        }
     }
 }
 
@@ -268,6 +313,58 @@ fn position_concepts(args: Value) -> ToolOutcome {
         Ok(concepts) => json_outcome(&json!({ "fen": fen, "concepts": concepts })),
         Err(e) => ToolOutcome::error(format!("invalid FEN: {e}")),
     }
+}
+
+// --- save_as (seed a study) ----------------------------------------------
+
+/// JSON-schema fragment for the optional `save_as` argument shared by the data
+/// tools: present ⇒ persist the built tree into a study and return its id; absent
+/// ⇒ return the tree as data. Same ownership knobs as `study_create`.
+fn save_as_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Persist the built tree straight into a study (no tree JSON in the response, no client-side PGN assembly). Omit to return the tree as data.",
+        "properties": {
+            "database_id": { "type": "integer", "description": "Database the new study belongs to." },
+            "name": { "type": "string", "description": "Name for the new study." },
+            "global": { "type": "boolean", "description": "Make it a global (admin-managed) study; requires admin." }
+        },
+        "required": ["database_id", "name"]
+    })
+}
+
+/// Parse the optional `save_as` argument into [`SeedParams`]. Absent / null ⇒
+/// `None` (return the tree as today). Present but malformed ⇒ a client error,
+/// surfaced before the engine runs so a bad request is cheap to reject.
+fn parse_save_as(args: &Value) -> Result<Option<SeedParams>, String> {
+    let save_as = match args.get("save_as") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(value) => value,
+    };
+    let Some(database_id) = save_as.get("database_id").and_then(Value::as_i64) else {
+        return Err("Invalid arguments: `save_as` needs an integer `database_id`.".into());
+    };
+    let Some(name) = save_as.get("name").and_then(Value::as_str) else {
+        return Err("Invalid arguments: `save_as` needs a string `name`.".into());
+    };
+    let global = save_as
+        .get("global")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    Ok(Some(SeedParams {
+        database_id: database_id as i32,
+        name: name.to_string(),
+        global,
+    }))
+}
+
+/// The seed response: just the new study id and its node count — never the tree
+/// itself (that round-trip is the whole problem this avoids, issue #155).
+fn seed_outcome(outcome: &SeedOutcome) -> ToolOutcome {
+    json_outcome(&json!({
+        "study_id": outcome.study.id,
+        "node_count": outcome.node_count,
+    }))
 }
 
 // --- error mapping -------------------------------------------------------

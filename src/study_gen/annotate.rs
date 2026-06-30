@@ -410,8 +410,9 @@ fn is_best_sibling(tree: &VariationTree, node_id: usize) -> Option<bool> {
 }
 
 /// A fresh [`MoveTree`] with the same shape (ids, moves, children) as the
-/// variation tree — both are root-0 arenas, so the mapping is 1:1.
-fn move_tree_from(tree: &VariationTree) -> MoveTree {
+/// variation tree — both are root-0 arenas, so the mapping is 1:1. Shared by the
+/// annotation commit and the LLM-free seed path (issue #155).
+pub fn move_tree_from(tree: &VariationTree) -> MoveTree {
     let nodes = tree
         .nodes
         .iter()

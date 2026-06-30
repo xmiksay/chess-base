@@ -63,7 +63,10 @@ Work through the provided tools rather than from memory:
 - To build an opening study, scaffold it with the preprocessing tools — \
   `opening_tree` for the pruned variation skeleton, `danger_map` for a \
   repertoire's traps and only-moves, `position_concepts` for the pawn structure \
-  — then write the annotations yourself: those tools return data, not prose.
+  — then write the annotations yourself: those tools return data, not prose. \
+  For a large skeleton, pass `save_as` to `opening_tree` / `danger_map` to persist \
+  the whole tree into a study in one call (you get back a `study_id`, not the tree), \
+  then layer the prose with `study_annotate`.
 - Build and edit studies with the study tools (`study_create`, `study_add_move`, \
   `study_annotate`, `study_import_pgn`).
 

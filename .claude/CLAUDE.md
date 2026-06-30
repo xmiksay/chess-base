@@ -58,7 +58,10 @@ src/
                    VariationTree (role tags as concept hints) → annotate/verify →
                    persist a study; surfaces rejected claims + role tags;
                    exposed via POST /api/studies/generate-danger-map (#141, NOT
-                   MCP, ADR-0027; studies/danger_route.rs)   ← unit-tested
+                   MCP, ADR-0027; studies/danger_route.rs);
+                   seed.rs (#155) LLM-free seed seam: convert a built tree to a
+                   MoveTree (move_tree_from, carries start_fen) → create_with_tree;
+                   backs the data tools' `save_as` (no LLM, no PGN round-trip)  ← unit-tested
   auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
   server/          Axum app: routes, state, embedded SPA, browser launch,
                    MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016).
@@ -66,8 +69,10 @@ src/
                    (#125), study_* (create/get/import_pgn/add_move/annotate/export,
                    #125), list_databases/db_list_games/db_read_game (#125),
                    preprocess.rs data tools opening_tree/danger_map/position_concepts
-                   (ADR-0027, no internal LLM) — all thin callers of the shared
-                   services.
+                   (ADR-0027, no internal LLM); opening_tree/danger_map take an
+                   optional `save_as` to seed a study server-side (#155, study_gen::seed,
+                   returns {study_id,node_count}, no tree JSON) — all thin callers of
+                   the shared services.
                    routes/assistant.rs: AI assistant chat + provider registry (#20)
   bin/chess-base.rs  CLI entry (clap)
 frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground

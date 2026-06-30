@@ -246,7 +246,14 @@ ADR-0027 puts the LLM that annotates them on the **client** side of the MCP
 boundary (an external agent, or the embedded assistant driving this same
 registry), so the old LLM-internal `generate_study` / `generate_danger_map` tools
 are no longer on the MCP surface — their orchestrators stay reachable through
-`POST /api/studies/generate{,-danger-map}`. The **study tools** live in
+`POST /api/studies/generate{,-danger-map}`. `opening_tree` / `danger_map` also take
+an optional `save_as { database_id, name, global? }` (#155): present ⇒ the server
+builds the tree, converts it to a `MoveTree` (`study_gen::seed`, via
+`annotate::move_tree_from`, carrying the set-up `start_fen`), persists it through
+`StudyService::create_with_tree`, and returns just `{ study_id, node_count }` — no
+tree JSON, no client-side PGN assembly, and still **no LLM** in the path (the model
+layers prose afterwards via `study_annotate`); absent ⇒ the tree returns as data as
+before. The **study tools** live in
 `server/routes/mcp/study_tools.rs` (#17, completed in #125): `study_create`,
 `study_import_pgn` (build a whole study from PGN in one call, reusing the
 `pgn_tree::pgn` parser), `study_get` (read back a study's `{summary, tree}` with
