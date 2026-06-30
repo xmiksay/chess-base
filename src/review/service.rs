@@ -90,6 +90,11 @@ pub struct MoveReview {
     /// The engine's preferred move in SAN, when it differs from the one played.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub best_move: Option<String>,
+    /// The engine's principal variation from the position before the move, in SAN
+    /// (≤6 plies). Lets the frontend graft the whole line as a variation at a
+    /// critical position. Empty when there was no line to show.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub best_line: Vec<String>,
     /// Rank of the played move among the engine's lines (1 = best), or `None`
     /// when it fell outside the searched MultiPV lines.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -237,6 +242,7 @@ pub(crate) fn assemble(
             eval_cp,
             mate,
             best_move: best_san,
+            best_line: fact.best_line_san.clone(),
             played_rank,
             classification,
             explanation: explain(&fact, classification),
@@ -406,8 +412,9 @@ mod tests {
         let plies = position::replay(STARTPOS_FEN, &sans, STD).unwrap();
         let evals = vec![
             // Before: best e4 at +4.0 (a winning eval), a4 isn't a listed line.
+            // The top line carries a multi-ply PV so `best_line` has a real line.
             eval(vec![
-                line("e2e4", 400, &["e2e4"]),
+                line("e2e4", 400, &["e2e4", "e7e5", "g1f3"]),
                 line("d2d4", 350, &["d2d4"]),
             ]),
             // After a4: Black to move is winning by +4.0 ⇒ White is at −4.0.
@@ -418,6 +425,8 @@ mod tests {
         let m = &review.moves[0];
         assert_eq!(m.classification, Classification::Blunder);
         assert_eq!(m.best_move.as_deref(), Some("e4"));
+        // The whole engine PV is surfaced in SAN for the frontend to graft.
+        assert_eq!(m.best_line, vec!["e4", "e5", "Nf3"]);
         assert_eq!(m.played_rank, None); // a4 wasn't among the top lines
                                          // White's eval after the move is negative (losing).
         assert!(m.eval_cp < 0, "eval_cp {}", m.eval_cp);

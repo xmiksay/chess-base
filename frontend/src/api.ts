@@ -22,6 +22,7 @@ import type {
   ImportResult,
   ImportSource,
   MoveStat,
+  MoveTree,
   Shape,
   Study,
   StudySummary,
@@ -207,6 +208,9 @@ export const api = {
       return getJson<GamesPage>(`/api/games?${params}`)
     },
     get: (id: number) => getJson<GameDetail>(`/api/games/${id}`),
+    // The stored game as a variation tree (issue #135): the Rust PGN parser keeps
+    // `(…)` sub-variations that the chess.js flattener drops. 422 (bad PGN), 404.
+    tree: (id: number) => getJson<MoveTree>(`/api/games/${id}/tree`),
     // Fast engine-only full-game review (issue #119). `depth` omitted ⇒ backend
     // chooses. 503 (no engine), 422 (bad game), 404 (not found) → thrown Error.
     analyse: (id: number, depth?: number) =>

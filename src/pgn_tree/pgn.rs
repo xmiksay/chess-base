@@ -35,14 +35,26 @@ pub enum PgnError {
     MissingSan(usize),
 }
 
-/// Parse the first game in `pgn` into a [`MoveTree`].
+/// Parse the first game in `pgn` into a [`MoveTree`], replaying from the
+/// standard start position.
 ///
 /// Mainline, nested variations, `{ comments }` and NAGs are preserved. Returns
 /// [`PgnError::Empty`] for input with no game and an error (never a panic) for
 /// malformed input or illegal moves.
 pub fn from_pgn(pgn: &str) -> Result<MoveTree, PgnError> {
+    from_pgn_with_start(pgn, STARTPOS_FEN)
+}
+
+/// Like [`from_pgn`], but seed the importer from `start_fen` instead of the
+/// standard start position. The visitor ignores header tags, so a game stored
+/// with a SetUp `[FEN]` (recorded separately as the game's `start_fen`) needs
+/// its origin threaded in for the moves to replay legally (issue #135).
+pub fn from_pgn_with_start(pgn: &str, start_fen: &str) -> Result<MoveTree, PgnError> {
     let mut reader = Reader::new(Cursor::new(pgn.as_bytes()));
-    match reader.read_game(&mut Importer) {
+    let mut importer = Importer {
+        start_fen: start_fen.to_string(),
+    };
+    match reader.read_game(&mut importer) {
         Ok(Some(result)) => result,
         Ok(None) => Err(PgnError::Empty),
         Err(e) => Err(PgnError::Parse(e.to_string())),
@@ -84,19 +96,23 @@ struct Build {
 }
 
 impl Build {
-    fn new() -> Self {
+    fn new(start_fen: &str) -> Self {
         let tree = MoveTree::new();
         Build {
             cur: tree.root,
-            fens: vec![STARTPOS_FEN.to_string()],
+            fens: vec![start_fen.to_string()],
             stack: Vec::new(),
             tree,
         }
     }
 }
 
-/// Streaming visitor that replays one game into a [`MoveTree`].
-struct Importer;
+/// Streaming visitor that replays one game into a [`MoveTree`], seeding the
+/// first position from `start_fen` (the standard start position via [`from_pgn`],
+/// or a SetUp origin via [`from_pgn_with_start`]).
+struct Importer {
+    start_fen: String,
+}
 
 impl Visitor for Importer {
     type Tags = ();
@@ -108,7 +124,7 @@ impl Visitor for Importer {
     }
 
     fn begin_movetext(&mut self, _tags: ()) -> ControlFlow<Self::Output, Self::Movetext> {
-        ControlFlow::Continue(Build::new())
+        ControlFlow::Continue(Build::new(&self.start_fen))
     }
 
     fn san(&mut self, b: &mut Build, san_plus: SanPlus) -> ControlFlow<Self::Output> {
@@ -332,6 +348,17 @@ mod tests {
         let e5 = tree.nodes[e4].children[0];
         assert_eq!(tree.nodes[e4].comment.as_deref(), Some("best by test"));
         assert_eq!(tree.nodes[e5].nags, vec![2]);
+    }
+
+    #[test]
+    fn imports_from_a_non_startpos_origin() {
+        // A SetUp endgame: White queen on d1, kings on e1/e8. `Qd8+` is legal
+        // here but not from the standard start, so the seed must be honoured.
+        let fen = "4k3/8/8/8/8/8/8/3QK3 w - - 0 1";
+        let tree = from_pgn_with_start("1. Qd8+ *", fen).unwrap();
+        assert_eq!(tree.mainline(), vec!["Qd8+"]);
+        // The same movetext is illegal from the standard start position.
+        assert!(matches!(from_pgn("1. Qd8+ *"), Err(PgnError::Position(_))));
     }
 
     #[test]

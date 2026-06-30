@@ -19,6 +19,11 @@ const SCHOLARS_MATE: &str =
     "[White \"Spassky\"]\n[Black \"Fischer\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0\n";
 const QUEENS_DRAW: &str =
     "[White \"Carlsen\"]\n[Black \"Caruana\"]\n[Result \"1/2-1/2\"]\n\n1. d4 d5 2. c4 e6 1/2-1/2\n";
+/// A game whose movetext carries a `(…)` sub-variation on Black's first move.
+const WITH_VARIATION: &str =
+    "[White \"V\"]\n[Black \"W\"]\n[Result \"*\"]\n\n1. e4 e5 (1... c5 2. Nf3) 2. Nf3 *\n";
+/// A game set up from a non-standard position via SetUp/`[FEN]` (a queen endgame).
+const SETUP_ENDGAME: &str = "[White \"A\"]\n[Black \"B\"]\n[SetUp \"1\"]\n[FEN \"4k3/8/8/8/8/8/8/3QK3 w - - 0 1\"]\n[Result \"*\"]\n\n1. Qd8+ Kf7 *\n";
 
 async fn app_with_db() -> (Router, DatabaseConnection) {
     let db = connect(&DbConfig::in_memory()).await.unwrap();
@@ -162,6 +167,77 @@ async fn get_single_game_returns_pgn() {
     assert_eq!(body["white"], "Spassky");
     assert_eq!(body["variant"], "standard");
     assert!(body["pgn"].as_str().unwrap().contains("Qxf7#"));
+}
+
+/// The id of the (single) game seeded into `database_id`.
+async fn first_game_id(app: &Router, db_id: i32, token: &str) -> i64 {
+    let (_, list) = get(app, &format!("/api/games?database_id={db_id}"), token).await;
+    list["games"][0]["id"].as_i64().unwrap()
+}
+
+#[tokio::test]
+async fn tree_returns_linear_tree_for_a_mainline_game() {
+    let (app, db) = app_with_db().await;
+    let (alice, alice_id) = register(&app, "alice").await;
+    let db_id = seed(&db, &alice_id, &[QUEENS_DRAW]).await;
+    let game_id = first_game_id(&app, db_id, &alice).await;
+
+    let (status, body) = get(&app, &format!("/api/games/{game_id}/tree"), &alice).await;
+    assert_eq!(status, StatusCode::OK);
+    // d4 d5 c4 e6 ⇒ root + 4 nodes, each with a single child (a straight line).
+    let nodes = body["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 5);
+    for node in nodes {
+        assert!(node["children"].as_array().unwrap().len() <= 1);
+    }
+    assert_eq!(nodes[1]["san"], "d4");
+}
+
+#[tokio::test]
+async fn tree_preserves_a_sub_variation_as_a_second_child() {
+    let (app, db) = app_with_db().await;
+    let (alice, alice_id) = register(&app, "alice").await;
+    let db_id = seed(&db, &alice_id, &[WITH_VARIATION]).await;
+    let game_id = first_game_id(&app, db_id, &alice).await;
+
+    let (status, body) = get(&app, &format!("/api/games/{game_id}/tree"), &alice).await;
+    assert_eq!(status, StatusCode::OK);
+    // The `(1... c5 …)` variation makes e4's node carry two children (e5 + c5),
+    // which the chess.js flattener would have dropped.
+    let nodes = body["nodes"].as_array().unwrap();
+    let branching = nodes
+        .iter()
+        .find(|n| n["children"].as_array().unwrap().len() == 2)
+        .expect("a node branches into mainline + variation");
+    assert_eq!(branching["san"], "e4");
+}
+
+#[tokio::test]
+async fn tree_honours_a_setup_start_position() {
+    let (app, db) = app_with_db().await;
+    let (alice, alice_id) = register(&app, "alice").await;
+    let db_id = seed(&db, &alice_id, &[SETUP_ENDGAME]).await;
+    let game_id = first_game_id(&app, db_id, &alice).await;
+
+    let (status, body) = get(&app, &format!("/api/games/{game_id}/tree"), &alice).await;
+    // `Qd8+` is illegal from the standard start; a 200 with the right first move
+    // proves the game's `start_fen` was threaded into the parser.
+    assert_eq!(status, StatusCode::OK);
+    let nodes = body["nodes"].as_array().unwrap();
+    assert_eq!(nodes[1]["san"], "Qd8+");
+    assert_eq!(nodes[2]["san"], "Kf7");
+}
+
+#[tokio::test]
+async fn tree_hides_a_game_in_another_users_database() {
+    let (app, db) = app_with_db().await;
+    let (alice, alice_id) = register(&app, "alice").await; // first user → admin
+    let (bob, _bob_id) = register(&app, "bob").await;
+    let alice_db = seed(&db, &alice_id, &[QUEENS_DRAW]).await;
+    let game_id = first_game_id(&app, alice_db, &alice).await;
+
+    let (status, _) = get(&app, &format!("/api/games/{game_id}/tree"), &bob).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 /// GET `uri` as a download: returns (status, Content-Disposition, text body).

@@ -300,6 +300,7 @@ export interface MoveReview {
   eval_cp: number // centipawns, mate clamped to ±1000
   mate?: number // signed mate distance, White's perspective; omitted if not mate
   best_move?: string // engine's preferred move (SAN); omitted when played was best
+  best_line?: string[] // engine PV from the position before (SAN, ≤6 plies); omitted when empty
   played_rank?: number // 1 = best; omitted when outside the top engine lines
   classification: MoveClassification
   explanation: string

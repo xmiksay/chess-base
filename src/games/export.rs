@@ -116,6 +116,7 @@ mod tests {
             eval_cp,
             mate,
             best_move: None,
+            best_line: Vec::new(),
             played_rank: None,
             classification,
             explanation: explanation.to_string(),
