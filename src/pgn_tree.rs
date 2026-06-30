@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::position::STARTPOS_FEN;
+
 pub mod eval;
 pub mod lichess;
 pub mod pgn;
@@ -85,6 +87,12 @@ pub enum TreeError {
 pub struct MoveTree {
     pub nodes: Vec<Node>,
     pub root: usize,
+    /// Set-up start position (`[FEN]`) the moves replay from, when it is not the
+    /// standard start. `None` ⇒ the standard initial position (issue #135);
+    /// `serde(default)`/`skip` keeps pre-existing `tree_json` rows loading and
+    /// omits the key for the common standard-start study — no DB migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_fen: Option<String>,
 }
 
 impl Default for MoveTree {
@@ -109,7 +117,14 @@ impl MoveTree {
         MoveTree {
             nodes: vec![root],
             root: 0,
+            start_fen: None,
         }
+    }
+
+    /// The position the tree replays from: the set-up `start_fen` when present,
+    /// else the standard start position. Single source of truth for every replay.
+    pub fn start_position(&self) -> &str {
+        self.start_fen.as_deref().unwrap_or(STARTPOS_FEN)
     }
 
     /// Append a move as a child of `parent`, returning the new node id.

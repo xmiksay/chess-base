@@ -99,6 +99,37 @@ async fn add_move_detailed_accepts_uci_and_reports_fen_and_san() {
 }
 
 #[tokio::test]
+async fn import_pgn_honours_setup_fen_and_replays_edits_from_it() {
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+    // The Catalan after 1.d4 Nf6 2.c4 e6 3.g3, Black to move.
+    let fen = "rnbqkb1r/pppp1ppp/4pn2/8/2PP4/6P1/PP2PP1P/RNBQKBNR b KQkq - 0 3";
+    let pgn = format!("[SetUp \"1\"]\n[FEN \"{fen}\"]\n\n3... d5 4. Bg2 *");
+    let study = svc
+        .import_pgn(&alice, db_id, "Catalan", &pgn, false)
+        .await
+        .unwrap();
+
+    let tree = tree_of(&svc, &alice, study.id).await;
+    assert_eq!(tree.start_fen.as_deref(), Some(fen));
+    assert_eq!(tree.mainline(), vec!["d5", "Bg2"]);
+
+    // Editing the imported study must replay from the set-up origin: `Be7` after
+    // 4.Bg2 is only reachable because the line starts at the Catalan FEN, not the
+    // standard start — the bug fen_at(start) fixes.
+    let d5 = tree.nodes[tree.root].children[0];
+    let bg2 = tree.nodes[d5].children[0];
+    svc.add_move(&alice, study.id, bg2, "Be7").await.unwrap();
+
+    // The export is self-contained: it re-emits the origin and re-imports cleanly.
+    let exported = svc.export_pgn(&alice, study.id, false).await.unwrap();
+    assert!(exported.contains(&format!("[FEN \"{fen}\"]")));
+    assert!(exported.contains("3... d5"));
+    let reimported = crate::pgn_tree::pgn::from_pgn(&exported).unwrap();
+    assert_eq!(reimported.start_fen.as_deref(), Some(fen));
+}
+
+#[tokio::test]
 async fn annotate_persists_comment_and_nag() {
     let (svc, db_id) = setup().await;
     let alice = user("alice");

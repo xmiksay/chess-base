@@ -426,9 +426,13 @@ fn move_tree_from(tree: &VariationTree) -> MoveTree {
             children: v.children.clone(),
         })
         .collect();
+    // Carry a set-up origin through: a generated study can start from a custom
+    // FEN, so the persisted tree records it (unless it is the standard start).
+    let root_fen = &tree.nodes[tree.root].fen;
     MoveTree {
         nodes,
         root: tree.root,
+        start_fen: (root_fen != crate::position::STARTPOS_FEN).then(|| root_fen.clone()),
     }
 }
 
