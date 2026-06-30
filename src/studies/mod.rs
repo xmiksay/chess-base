@@ -13,6 +13,7 @@ use sea_orm::{
     ActiveModelTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder, Set,
 };
 
+pub mod danger_route;
 pub mod routes;
 
 use crate::db::entities::studies;
