@@ -7,6 +7,7 @@ vi.mock('../api', () => ({
     games: {
       list: vi.fn(),
       get: vi.fn(),
+      tree: vi.fn(),
       exportPgn: vi.fn(),
     },
   },
@@ -14,9 +15,8 @@ vi.mock('../api', () => ({
 
 import { api } from '../api'
 import { useGamesStore } from './games'
-
-const SCHOLARS_MATE =
-  '[White "Spassky"]\n[Black "Fischer"]\n[Result "1-0"]\n\n1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0\n'
+import { appendChild, emptyTree } from '../lib/moveTree'
+import type { GameReview, MoveTree } from '../types'
 
 const row = (id: number) => ({
   id,
@@ -28,6 +28,20 @@ const row = (id: number) => ({
   white_elo: null,
   black_elo: null,
 })
+
+const detail = (id: number) => ({ ...row(id), pgn: '' })
+
+/** Build a linear tree from SAN moves (root id 0, then 1, 2, … in order). */
+function lineTree(sans: string[]): MoveTree {
+  let tree = emptyTree()
+  let parent = tree.root
+  for (const san of sans) {
+    const r = appendChild(tree, parent, san)!
+    tree = r.tree
+    parent = r.id
+  }
+  return tree
+}
 
 describe('games store — list pagination', () => {
   beforeEach(() => {
@@ -110,65 +124,99 @@ describe('games store — list pagination', () => {
   })
 })
 
-describe('games store — move navigation', () => {
+describe('games store — tree board', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
   })
 
-  it('open loads a game and starts at the initial position', async () => {
-    vi.mocked(api.games.get).mockResolvedValue({
-      id: 5,
-      white: 'Spassky',
-      black: null,
-      result: null,
-      date: null,
-      eco: null,
-      white_elo: null,
-      black_elo: null,
-      pgn: SCHOLARS_MATE,
-    })
-    const store = useGamesStore()
+  async function openLine(store: ReturnType<typeof useGamesStore>, sans: string[]) {
+    vi.mocked(api.games.get).mockResolvedValue(detail(5))
+    vi.mocked(api.games.tree).mockResolvedValue(lineTree(sans))
     await store.open(5)
+  }
 
+  it('open seeds the board from /tree at the start position', async () => {
+    const store = useGamesStore()
+    await openLine(store, ['e4', 'e5', 'Bc4'])
+
+    expect(api.games.tree).toHaveBeenCalledWith(5)
     expect(store.openGame!.id).toBe(5)
-    expect(store.positions).toHaveLength(8) // 7 plies + start
-    expect(store.ply).toBe(0)
+    expect(store.tree.nodes).toHaveLength(4) // root + 3 plies
+    expect(store.currentId).toBe(store.tree.root)
     expect(store.atStart).toBe(true)
     expect(store.atEnd).toBe(false)
   })
 
-  it('go steps through plies and clamps at the ends', async () => {
-    vi.mocked(api.games.get).mockResolvedValue({
-      id: 5,
-      white: null,
-      black: null,
-      result: null,
-      date: null,
-      eco: null,
-      white_elo: null,
-      black_elo: null,
-      pgn: SCHOLARS_MATE,
-    })
+  it('maps mainline nodes to plies and back', async () => {
     const store = useGamesStore()
-    await store.open(5)
+    await openLine(store, ['e4', 'e5', 'Bc4'])
 
-    store.go('next')
-    expect(store.ply).toBe(1)
+    expect(store.mainlinePath()).toEqual([0, 1, 2, 3])
+    expect(store.plyOf(0)).toBe(0)
+    expect(store.plyOf(3)).toBe(3)
+    expect(store.nodeAtPly(2)).toBe(2)
+    expect(store.nodeAtPly(99)).toBeNull()
+  })
+
+  it('navigates by node id and the cursor controls', async () => {
+    const store = useGamesStore()
+    await openLine(store, ['e4', 'e5', 'Bc4'])
+
+    store.next()
+    expect(store.currentId).toBe(1)
     expect(store.lastMove).toEqual(['e2', 'e4'])
 
-    store.go('prev')
-    store.go('prev') // already at start → clamped
-    expect(store.ply).toBe(0)
-
-    store.go('last')
-    expect(store.ply).toBe(7)
+    store.goto(3)
+    expect(store.currentId).toBe(3)
     expect(store.atEnd).toBe(true)
-    store.go('next') // clamped at end
-    expect(store.ply).toBe(7)
 
-    store.go(3)
-    expect(store.ply).toBe(3)
+    store.prev()
+    expect(store.currentId).toBe(2)
+    store.first()
+    expect(store.currentId).toBe(0)
+    store.last()
+    expect(store.currentId).toBe(3)
+  })
+
+  it('playing an off-line move branches a variation (plyOf null off mainline)', async () => {
+    const store = useGamesStore()
+    await openLine(store, ['e4', 'e5', 'Bc4'])
+
+    store.first()
+    store.playMove({ from: 'd2', to: 'd4' }) // not the mainline e4
+    expect(store.currentId).not.toBe(1)
+    expect(store.plyOf(store.currentId)).toBeNull() // off the mainline
+    expect(store.tree.nodes).toHaveLength(5) // a new variation node was added
+  })
+
+  it('graftReview adds the engine line as a variation at a critical move', async () => {
+    const store = useGamesStore()
+    await openLine(store, ['e4', 'e5', 'Bc4', 'Nc6'])
+
+    const review: GameReview = {
+      start_fen: 'startpos',
+      moves: [
+        {
+          ply: 4,
+          san: 'Nc6',
+          eval_cp: -150,
+          classification: 'mistake',
+          explanation: 'Bc5 was better.',
+          best_line: ['Bc5'],
+        },
+      ],
+      summary: {
+        white: { acpl: 0, accuracy: 100, inaccuracies: 0, mistakes: 0, blunders: 0 },
+        black: { acpl: 0, accuracy: 100, inaccuracies: 0, mistakes: 1, blunders: 0 },
+      },
+    }
+    store.graftReview(review)
+
+    // The Bc4 node (id 3) gains the engine's sibling line; mainline ply map holds.
+    const prior = store.tree.nodes.find((n) => n.id === 3)!
+    expect(prior.children).toHaveLength(2)
+    expect(store.mainlinePath()).toEqual([0, 1, 2, 3, 4])
   })
 })
 
@@ -179,17 +227,8 @@ describe('games store — PGN export', () => {
   })
 
   async function openGame(store: ReturnType<typeof useGamesStore>) {
-    vi.mocked(api.games.get).mockResolvedValue({
-      id: 5,
-      white: null,
-      black: null,
-      result: null,
-      date: null,
-      eco: null,
-      white_elo: null,
-      black_elo: null,
-      pgn: SCHOLARS_MATE,
-    })
+    vi.mocked(api.games.get).mockResolvedValue(detail(5))
+    vi.mocked(api.games.tree).mockResolvedValue(lineTree(['e4', 'e5']))
     await store.open(5)
   }
 

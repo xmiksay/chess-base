@@ -1,20 +1,20 @@
 <script setup lang="ts">
 // Game browser (issue #68): pick a database, page through its games, open one on
-// the board and step through its moves (buttons, ply selector, arrow keys).
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+// the shared variation-tree board (issue #136) and explore it — step the cursor,
+// click moves/variations in the tree, or play an off-line move to branch. The
+// engine review (analyze/export, eval graph, why-note) lives in GameReviewPanel.
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import Board from '../components/Board.vue'
-import EvalGraph from '../components/EvalGraph.vue'
+import BoardControls from '../components/BoardControls.vue'
+import MoveTree from '../components/MoveTree.vue'
+import EnginePanel from '../components/EnginePanel.vue'
+import GameReviewPanel from '../components/GameReviewPanel.vue'
 import { api } from '../api'
-import { downloadText } from '../lib/download'
 import { useGamesStore, type GameSortField } from '../stores/games'
 import { useReviewStore } from '../stores/review'
 import { useSettingsStore } from '../stores/settings'
-import {
-  classificationClass,
-  classificationGlyph,
-  formatReviewEval,
-} from '../lib/reviewFormat'
-import type { Database, GameRow } from '../types'
+import { useBoardOverlays } from '../lib/useBoardOverlays'
+import type { BoardMove, Database, GameRow } from '../types'
 
 const games = useGamesStore()
 const review = useReviewStore()
@@ -25,6 +25,10 @@ const selectedDb = ref<number | null>(null)
 const loadError = ref<string | null>(null)
 // Engine capability flag from `/api/health`; null until fetched.
 const engineEnabled = ref<boolean | null>(null)
+const boardRef = ref<InstanceType<typeof Board> | null>(null)
+
+// Composed overlay layers (plans/threats/master) driven by the board's live FEN.
+const { boardShapes } = useBoardOverlays(() => games.fen)
 
 /** A "White – Black" label for a game row, tolerating missing names. */
 function players(g: GameRow): string {
@@ -37,29 +41,14 @@ function sortArrow(field: GameSortField): string {
   return games.dir === 'asc' ? ' ▲' : ' ▼'
 }
 
-// SAN moves of the open game (ply 1+), for the move list.
-const moves = computed(() => games.positions.slice(1).map((p) => p.san))
-
-// The reviewed move at the currently selected ply (for the why-note), if any.
-const currentMove = computed(() => review.byPly.get(games.ply) ?? null)
-
-/** White accuracy first, formatted as "xx.x%". */
-function pct(n: number): string {
-  return `${n.toFixed(1)}%`
+// Playing an off-line move branches a variation (useTreeBoard follow-or-branch).
+function onMove({ from, to }: BoardMove) {
+  games.playMove({ from, to })
 }
 
-async function onAnalyse() {
-  if (!games.openGame) return
-  await review.analyse(games.openGame.id)
-}
-
-// Export the open game as a `.pgn` download (issue #120): verbatim, or — with
-// `annotated` — carrying the engine analysis (`[%eval]` + NAGs + why-notes).
-async function onExport(annotated: boolean) {
-  const game = games.openGame
-  if (!game) return
-  const pgn = await games.exportPgn(annotated)
-  if (pgn != null) downloadText(`game-${game.id}.pgn`, pgn)
+/** Clear the user's hand-drawn arrows from the board (computed layers stay). */
+function clearArrows() {
+  boardRef.value?.clearUserShapes()
 }
 
 // Clear the review when a different game is opened so stale data never shows.
@@ -77,17 +66,19 @@ async function onSelectDatabase() {
 
 function onKey(e: KeyboardEvent) {
   if (!games.openGame) return
+  const target = e.target as HTMLElement | null
+  if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) return
   if (e.key === 'ArrowLeft') {
-    games.go('prev')
+    games.prev()
     e.preventDefault()
   } else if (e.key === 'ArrowRight') {
-    games.go('next')
+    games.next()
     e.preventDefault()
   } else if (e.key === 'ArrowUp' || e.key === 'Home') {
-    games.go('first')
+    games.first()
     e.preventDefault()
   } else if (e.key === 'ArrowDown' || e.key === 'End') {
-    games.go('last')
+    games.last()
     e.preventDefault()
   }
 }
@@ -236,180 +227,48 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         v-if="games.openGame"
         class="lg:w-1/2"
       >
-        <div class="mb-3 flex items-center gap-2">
-          <button
-            type="button"
-            data-test="analyse"
-            class="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700 disabled:opacity-50"
-            :disabled="review.loading || engineEnabled === false"
-            :title="engineEnabled === false ? 'No engine configured on the server.' : ''"
-            @click="onAnalyse"
-          >
-            {{ review.loading ? 'Analyzing…' : 'Analyze game' }}
-          </button>
-          <button
-            type="button"
-            data-test="export"
-            class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
-            @click="onExport(false)"
-          >
-            Export PGN
-          </button>
-          <button
-            type="button"
-            data-test="export-annotated"
-            class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-50"
-            :disabled="engineEnabled === false"
-            :title="engineEnabled === false ? 'No engine configured on the server.' : ''"
-            @click="onExport(true)"
-          >
-            Export with analysis
-          </button>
-          <span
-            v-if="engineEnabled === false"
-            class="text-xs text-neutral-500"
-          >
-            No engine configured.
-          </span>
-          <span
-            v-if="review.error"
-            class="text-xs text-red-600"
-            data-test="review-error"
-          >
-            {{ review.error }}
-          </span>
-        </div>
-
         <Board
+          ref="boardRef"
           :fen="games.fen"
+          :orientation="games.orientation"
+          :dests="games.legalDests"
+          :movable="true"
           :last-move="games.lastMove"
           :board-theme="settings.boardTheme"
+          :shapes="boardShapes"
+          @move="onMove"
         />
 
-        <div class="mt-3 flex items-center gap-2">
-          <button
-            class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
-            :disabled="games.atStart"
-            aria-label="First move"
-            @click="games.go('first')"
-          >
-            ⏮
-          </button>
-          <button
-            class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
-            :disabled="games.atStart"
-            aria-label="Previous move"
-            @click="games.go('prev')"
-          >
-            ◀
-          </button>
-          <input
-            type="range"
-            min="0"
-            :max="games.positions.length - 1"
-            :value="games.ply"
-            class="flex-1"
-            aria-label="Ply"
-            @input="games.go(Number(($event.target as HTMLInputElement).value))"
-          >
-          <button
-            class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
-            :disabled="games.atEnd"
-            aria-label="Next move"
-            @click="games.go('next')"
-          >
-            ▶
-          </button>
-          <button
-            class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
-            :disabled="games.atEnd"
-            aria-label="Last move"
-            @click="games.go('last')"
-          >
-            ⏭
-          </button>
-        </div>
+        <BoardControls
+          class="mt-3"
+          :at-start="games.atStart"
+          :at-end="games.atEnd"
+          @first="games.first()"
+          @prev="games.prev()"
+          @next="games.next()"
+          @last="games.last()"
+          @clear-arrows="clearArrows"
+        />
 
-        <p class="mt-2 text-sm font-medium">
+        <p class="mt-3 text-sm font-medium">
           {{ games.openGame.white ?? '?' }} – {{ games.openGame.black ?? '?' }}
           <span class="text-neutral-500">{{ games.openGame.result ?? '*' }}</span>
         </p>
 
-        <ol class="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-sm">
-          <li
-            v-for="(san, i) in moves"
-            :key="i"
-            data-test="move"
-            class="cursor-pointer rounded px-1"
-            :class="[
-              { 'bg-yellow-200': games.ply === i + 1 },
-              review.byPly.get(i + 1) ? classificationClass(review.byPly.get(i + 1)!.classification) : '',
-            ]"
-            @click="games.go(i + 1)"
-          >
-            <span
-              v-if="i % 2 === 0"
-              class="text-neutral-400"
-            >{{ i / 2 + 1 }}.</span>
-            {{ san }}<span
-              v-if="review.byPly.get(i + 1)"
-              class="font-semibold"
-            >{{ classificationGlyph(review.byPly.get(i + 1)!.classification) }}</span>
-          </li>
-        </ol>
+        <MoveTree
+          class="mt-2"
+          :tree="games.tree"
+          :current-id="games.currentId"
+          @select="games.goto($event)"
+        />
 
-        <!-- Engine review: graph, accuracy summary, and the selected-ply note. -->
-        <div
-          v-if="review.review"
+        <GameReviewPanel
           class="mt-4"
-          data-test="review-panel"
-        >
-          <EvalGraph
-            :moves="review.review.moves"
-            :current-ply="games.ply"
-            @select="games.go($event)"
-          />
+          :engine-enabled="engineEnabled"
+        />
 
-          <div class="mt-3 grid grid-cols-2 gap-3 text-xs">
-            <div
-              v-for="side in (['white', 'black'] as const)"
-              :key="side"
-              class="rounded border border-neutral-200 p-2"
-              :data-test="`summary-${side}`"
-            >
-              <p class="mb-1 font-medium capitalize">
-                {{ side }}
-              </p>
-              <p>Accuracy: {{ pct(review.review.summary[side].accuracy) }}</p>
-              <p>ACPL: {{ review.review.summary[side].acpl }}</p>
-              <p class="text-neutral-500">
-                {{ review.review.summary[side].inaccuracies }} inacc ·
-                {{ review.review.summary[side].mistakes }} mist ·
-                {{ review.review.summary[side].blunders }} blun
-              </p>
-            </div>
-          </div>
-
-          <div
-            v-if="currentMove"
-            class="mt-3 rounded border border-neutral-200 p-2 text-sm"
-            data-test="why-note"
-          >
-            <span
-              class="font-medium"
-              :class="classificationClass(currentMove.classification)"
-            >
-              {{ currentMove.san }}{{ classificationGlyph(currentMove.classification) }}
-            </span>
-            <span class="text-neutral-500"> {{ formatReviewEval(currentMove) }}</span>
-            <span
-              v-if="currentMove.best_move"
-              class="text-neutral-500"
-            > · best: {{ currentMove.best_move }}</span>
-            <p class="mt-1 text-neutral-700">
-              {{ currentMove.explanation }}
-            </p>
-          </div>
+        <div class="mt-4">
+          <EnginePanel :fen="games.fen" />
         </div>
       </section>
     </div>

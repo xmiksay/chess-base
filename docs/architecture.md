@@ -88,13 +88,24 @@ engine without mutating the tree, replaying a known move follows it while a new
 move branches a variation, and `undo` prunes the current node's subtree (#121);
 adds the play-vs-engine `mode`/`playColor`),
 `stores/games.ts` (the game browser —
-offset-paginated, sortable list for a selected database plus the opened game's replay state;
-backed by `/api/games`), `stores/review.ts` (the engine-only full-game review,
-Mode A #119 — one `POST /api/games/{id}/analyse` result with a `byPly` index for
-the move list; `GamesView` renders an **"Analyze game"** button (gated on the
-`/api/health` `engine` flag), the `EvalGraph.vue` eval sparkline, a per-side
-accuracy/ACPL/blunder summary, per-move classification glyphs/colours and a
-why-note for the selected ply via the pure `lib/reviewFormat.ts`; **"Export PGN"** /
+offset-paginated, sortable list for a selected database, backed by `/api/games`;
+the opened game rides the shared `useTreeBoard` composable (#134), seeded from
+`GET /api/games/{id}/tree` (#135) so PGN `(…)` variations are kept and off-line
+moves branch instead of truncating, plus `mainlinePath`/`plyOf`/`nodeAtPly`
+helpers that map the tree's mainline node ids to plies and a `graftReview` action
+that splices the engine review's better lines onto the live tree via the pure,
+unit-tested `lib/reviewTree.ts` — each inaccuracy/mistake/blunder's `best_line`
+appended as a sibling variation off the position before the played move,
+idempotently, comment + eval set on the first grafted node; #136),
+`stores/review.ts` (the engine-only full-game review,
+Mode A #119 — one `POST /api/games/{id}/analyse` result with a `byPly` index plus
+a `currentMove` getter that maps the board cursor back to its mainline ply;
+`GamesView`'s board column is the shared `Board` + `BoardControls` + `MoveTree` +
+`EnginePanel`, and `components/GameReviewPanel.vue` holds the review UI: an
+**"Analyze game"** button (gated on the `/api/health` `engine` flag), the
+`EvalGraph.vue` eval sparkline (its current-ply mark driven by `plyOf`, clicks
+navigating via `nodeAtPly`), a per-side accuracy/ACPL/blunder summary and a
+why-note for the current move via the pure `lib/reviewFormat.ts`; **"Export PGN"** /
 **"Export with analysis"** buttons call `games.exportPgn(annotated)` and trigger a
 `.pgn` download via the pure `lib/download.ts`, issue #120), `stores/engine.ts` (the
 `/api/engine/analyse` WebSocket — folds streamed `info`/`bestmove` events into
@@ -121,14 +132,12 @@ the position + each layer's persisted toggle (`stores/settings.ts`
 `showPlans`/`showThreats`/`showMasterMoves`), re-loads the position-derived layers
 and clears a layer the moment it is switched off; the toggle row + a **Clear
 arrows** control (clears the user's hand-drawn shapes, `Board.clearUserShapes`)
-live in `components/BoardControls.vue`. Replaying a stored game's
-PGN into one board position per ply, plus the pure ply-navigation logic, lives in
-the unit-tested `lib/pgnViewer.ts`. `components/AnalysisPanel.vue` embeds the
+live in `components/BoardControls.vue`. `components/AnalysisPanel.vue` embeds the
 shared `components/EnginePanel.vue` (+ `EvalBar.vue`) — eval bar, MultiPV lines,
 depth/nps and the analyse toggle — and adds the engine options + play-vs-engine
 controls + the per-line **Pin** seam via slots; hovering a PV row sets the store's
 active line so its plan highlights and the others dim. `Board.vue` is presentational (it also
-drives the read-only game viewer in `GamesView`), emits user moves, and renders
+drives the variation-tree game viewer in `GamesView`), emits user moves, and renders
 the plan overlay via `setAutoShapes` (auto-shapes, so a user's right-click
 drawings survive), cleared on every position change — unless `persist-shapes` is
 set (the study editor's pinned plans, issue #61).

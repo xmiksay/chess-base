@@ -1,18 +1,39 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
-// Mock the API client so the store is tested against fakes, no network.
+// Mock the API client so the store is tested against fakes, no network. The
+// games store (read by `currentMove`) also routes through `api`, so include the
+// methods it touches even though only `analyse` is exercised here.
 vi.mock('../api', () => ({
   api: {
     games: {
       analyse: vi.fn(),
+      get: vi.fn(),
+      tree: vi.fn(),
+      list: vi.fn(),
+      exportPgn: vi.fn(),
     },
   },
 }))
 
 import { api } from '../api'
 import { useReviewStore } from './review'
-import type { GameReview } from '../types'
+import { useGamesStore } from './games'
+import { appendChild, emptyTree } from '../lib/moveTree'
+import { STARTPOS_FEN } from '../lib/fen'
+import type { GameReview, MoveTree } from '../types'
+
+/** Build a linear tree (root 0 → 1 → 2 …) from SAN moves. */
+function lineTree(sans: string[]): MoveTree {
+  let tree = emptyTree()
+  let parent = tree.root
+  for (const san of sans) {
+    const r = appendChild(tree, parent, san)!
+    tree = r.tree
+    parent = r.id
+  }
+  return tree
+}
 
 function sampleReview(): GameReview {
   return {
@@ -72,6 +93,23 @@ describe('review store', () => {
     expect(store.review).toBeNull()
     expect(store.gameId).toBeNull()
     expect(store.loading).toBe(false)
+  })
+
+  it('currentMove follows the board cursor via the games mainline ply', async () => {
+    vi.mocked(api.games.analyse).mockResolvedValue(sampleReview())
+    const games = useGamesStore()
+    games.load(lineTree(['e4', 'd5']), STARTPOS_FEN) // nodes 0(root) 1.e4 2.d5
+    const store = useReviewStore()
+    await store.analyse(5)
+
+    games.goto(1) // ply 1 → e4
+    expect(store.currentMove?.san).toBe('e4')
+
+    games.goto(2) // ply 2 → d5 (the mistake)
+    expect(store.currentMove?.classification).toBe('mistake')
+
+    games.first() // root has no reviewed move
+    expect(store.currentMove).toBeNull()
   })
 
   it('clear resets the store', async () => {
