@@ -6,7 +6,7 @@ import Board from '../components/Board.vue'
 import EvalGraph from '../components/EvalGraph.vue'
 import { api } from '../api'
 import { downloadText } from '../lib/download'
-import { useGamesStore } from '../stores/games'
+import { useGamesStore, type GameSortField } from '../stores/games'
 import { useReviewStore } from '../stores/review'
 import { useSettingsStore } from '../stores/settings'
 import {
@@ -29,6 +29,12 @@ const engineEnabled = ref<boolean | null>(null)
 /** A "White – Black" label for a game row, tolerating missing names. */
 function players(g: GameRow): string {
   return `${g.white ?? '?'} – ${g.black ?? '?'}`
+}
+
+/** The sort-direction arrow for a column header, blank when it isn't active. */
+function sortArrow(field: GameSortField): string {
+  if (games.sort !== field) return ''
+  return games.dir === 'asc' ? ' ▲' : ' ▼'
 }
 
 // SAN moves of the open game (ply 1+), for the move list.
@@ -144,14 +150,23 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
               <th class="py-1 pr-2">
                 Players
               </th>
-              <th class="py-1 pr-2">
-                Result
+              <th
+                class="cursor-pointer select-none py-1 pr-2 hover:text-neutral-800"
+                @click="games.setSort('result')"
+              >
+                Result{{ sortArrow('result') }}
               </th>
-              <th class="py-1 pr-2">
-                Date
+              <th
+                class="cursor-pointer select-none py-1 pr-2 hover:text-neutral-800"
+                @click="games.setSort('date')"
+              >
+                Date{{ sortArrow('date') }}
               </th>
-              <th class="py-1 pr-2">
-                ECO
+              <th
+                class="cursor-pointer select-none py-1 pr-2 hover:text-neutral-800"
+                @click="games.setSort('eco')"
+              >
+                ECO{{ sortArrow('eco') }}
               </th>
             </tr>
           </thead>
@@ -186,14 +201,34 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           No games in this database.
         </p>
 
-        <button
-          v-if="games.hasMore"
-          class="mt-3 rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-50"
-          :disabled="games.loading"
-          @click="games.loadMore()"
+        <!-- Paginator: prev / page indicator / next, with the row range. -->
+        <div
+          v-if="games.total > 0"
+          class="mt-3 flex items-center gap-3 text-sm"
         >
-          {{ games.loading ? 'Loading…' : 'Load more' }}
-        </button>
+          <button
+            class="rounded border border-neutral-300 px-2 py-1 disabled:opacity-50"
+            :disabled="!games.hasPrev || games.loading"
+            aria-label="Previous page"
+            @click="games.goToPage(games.page - 1)"
+          >
+            ◀ Prev
+          </button>
+          <span class="text-neutral-600">
+            Page {{ games.page + 1 }} of {{ games.pageCount }}
+          </span>
+          <button
+            class="rounded border border-neutral-300 px-2 py-1 disabled:opacity-50"
+            :disabled="!games.hasNext || games.loading"
+            aria-label="Next page"
+            @click="games.goToPage(games.page + 1)"
+          >
+            Next ▶
+          </button>
+          <span class="text-neutral-400">
+            {{ games.rangeStart }}–{{ games.rangeEnd }} of {{ games.total }}
+          </span>
+        </div>
       </section>
 
       <!-- Board viewer -->

@@ -115,12 +115,14 @@ async fn list_returns_games_in_database() {
     let (status, body) = get(&app, &format!("/api/games?database_id={db_id}"), &alice).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["games"].as_array().unwrap().len(), 2);
-    assert_eq!(body["games"][0]["white"], "Spassky");
-    assert_eq!(body["next_cursor"], Value::Null);
+    // Default sort is newest-first; with no Date tag the last-added game leads.
+    assert_eq!(body["games"][0]["white"], "Carlsen");
+    assert_eq!(body["total"], 2);
+    assert_eq!(body["page"], 0);
 }
 
 #[tokio::test]
-async fn list_paginates_with_cursor() {
+async fn list_paginates_with_offset() {
     let (app, db) = app_with_db().await;
     let (alice, alice_id) = register(&app, "alice").await;
     let db_id = seed(&db, &alice_id, &[SCHOLARS_MATE, QUEENS_DRAW, SCHOLARS_MATE]).await;
@@ -132,16 +134,18 @@ async fn list_paginates_with_cursor() {
     )
     .await;
     assert_eq!(first["games"].as_array().unwrap().len(), 2);
-    let cursor = first["next_cursor"].as_i64().expect("cursor present");
+    assert_eq!(first["total"], 3);
+    assert_eq!(first["page"], 0);
 
     let (_, second) = get(
         &app,
-        &format!("/api/games?database_id={db_id}&limit=2&after={cursor}"),
+        &format!("/api/games?database_id={db_id}&limit=2&page=1"),
         &alice,
     )
     .await;
     assert_eq!(second["games"].as_array().unwrap().len(), 1);
-    assert_eq!(second["next_cursor"], Value::Null);
+    assert_eq!(second["total"], 3);
+    assert_eq!(second["page"], 1);
 }
 
 #[tokio::test]

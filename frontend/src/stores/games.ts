@@ -1,5 +1,6 @@
-// Pinia store for the game browser (issue #68): a keyset-paginated game list for
-// a selected database plus the currently opened game's replayable positions.
+// Pinia store for the game browser (issue #68): an offset-paginated, sortable
+// game list for a selected database plus the currently opened game's replayable
+// positions.
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
@@ -7,13 +8,27 @@ import { api } from '../api'
 import { positionsFromPgn, navigate } from '../lib/pgnViewer'
 import type { GameDetail, GameRow, ViewerPosition } from '../types'
 
+/** Sort fields the list supports (mirrors the backend `GameSort`). */
+export type GameSortField = 'date' | 'result' | 'eco'
+
 export const useGamesStore = defineStore('games', () => {
   const databaseId = ref<number | null>(null)
-  const games = ref<GameRow[]>([]) // accumulated GameSummary rows across pages
-  const cursor = ref<number | null>(null) // keyset cursor for the next page; null ⇒ none loaded yet
-  const hasMore = ref(false)
+  const games = ref<GameRow[]>([]) // the current page's rows
+  const total = ref(0) // total games in the database (for the paginator)
+  const page = ref(0) // 0-based index of the current page
+  const limit = ref(50) // page size (echoed back by the server after clamping)
+  const sort = ref<GameSortField>('date') // default: newest first
+  const dir = ref<'asc' | 'desc'>('desc')
   const loading = ref(false)
   const error = ref<string | null>(null)
+
+  // Total pages (≥ 1 so the "Page x of y" label is always sensible).
+  const pageCount = computed(() => Math.max(1, Math.ceil(total.value / limit.value)))
+  const hasPrev = computed(() => page.value > 0)
+  const hasNext = computed(() => page.value + 1 < pageCount.value)
+  // 1-based row range shown, e.g. "showing 51–100 of 240" (0–0 when empty).
+  const rangeStart = computed(() => (total.value === 0 ? 0 : page.value * limit.value + 1))
+  const rangeEnd = computed(() => Math.min(total.value, (page.value + 1) * limit.value))
 
   // Opened game + its replay state.
   const openGame = ref<GameDetail | null>(null)
@@ -29,29 +44,55 @@ export const useGamesStore = defineStore('games', () => {
   /** Select a database and load its first page, replacing any prior list. */
   async function selectDatabase(id: number) {
     databaseId.value = id
-    games.value = []
-    cursor.value = null
-    hasMore.value = false
-    await loadMore()
+    page.value = 0
+    await fetchPage()
   }
 
-  /** Load the next keyset page for the selected database. */
-  async function loadMore() {
+  /** Fetch the current page (page/sort/dir) for the selected database. */
+  async function fetchPage() {
     if (databaseId.value == null || loading.value) return
     loading.value = true
     error.value = null
     try {
-      const page = await api.games.list(databaseId.value, {
-        after: cursor.value ?? undefined,
+      const res = await api.games.list(databaseId.value, {
+        page: page.value,
+        limit: limit.value,
+        sort: sort.value,
+        dir: dir.value,
       })
-      games.value.push(...page.games)
-      cursor.value = page.next_cursor
-      hasMore.value = page.next_cursor != null
+      games.value = res.games
+      total.value = res.total
+      page.value = res.page
+      limit.value = res.limit
     } catch (e) {
       error.value = (e as Error)?.message ?? String(e)
     } finally {
       loading.value = false
     }
+  }
+
+  /** Jump to a page (clamped to `[0, pageCount-1]`); no-op if unchanged. */
+  async function goToPage(target: number) {
+    const clamped = Math.min(Math.max(0, target), pageCount.value - 1)
+    if (clamped === page.value) return
+    page.value = clamped
+    await fetchPage()
+  }
+
+  /**
+   * Sort by `field`: clicking the active field flips direction, a new field
+   * starts at its natural default (date newest-first, others ascending). Resets
+   * to the first page so the user sees the new order's head.
+   */
+  async function setSort(field: GameSortField) {
+    if (sort.value === field) {
+      dir.value = dir.value === 'asc' ? 'desc' : 'asc'
+    } else {
+      sort.value = field
+      dir.value = field === 'date' ? 'desc' : 'asc'
+    }
+    page.value = 0
+    await fetchPage()
   }
 
   /** Fetch a game by id and load it into the board viewer at the start position. */
@@ -95,7 +136,16 @@ export const useGamesStore = defineStore('games', () => {
   return {
     databaseId,
     games,
-    hasMore,
+    total,
+    page,
+    limit,
+    sort,
+    dir,
+    pageCount,
+    hasPrev,
+    hasNext,
+    rangeStart,
+    rangeEnd,
     loading,
     error,
     openGame,
@@ -107,7 +157,9 @@ export const useGamesStore = defineStore('games', () => {
     atStart,
     atEnd,
     selectDatabase,
-    loadMore,
+    fetchPage,
+    goToPage,
+    setSort,
     open,
     go,
     exportPgn,

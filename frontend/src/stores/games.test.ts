@@ -18,73 +18,86 @@ import { useGamesStore } from './games'
 const SCHOLARS_MATE =
   '[White "Spassky"]\n[Black "Fischer"]\n[Result "1-0"]\n\n1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0\n'
 
+const row = (id: number) => ({
+  id,
+  white: null,
+  black: null,
+  result: null,
+  date: null,
+  eco: null,
+  white_elo: null,
+  black_elo: null,
+})
+
 describe('games store — list pagination', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
   })
 
-  it('selectDatabase loads the first page and tracks the cursor', async () => {
+  it('selectDatabase loads the first page with the default sort', async () => {
     vi.mocked(api.games.list).mockResolvedValue({
-      games: [
-        { id: 1, white: 'A', black: null, result: null, date: null, eco: null, white_elo: null, black_elo: null },
-        { id: 2, white: 'B', black: null, result: null, date: null, eco: null, white_elo: null, black_elo: null },
-      ],
-      next_cursor: 2,
+      games: [row(2), row(1)],
+      total: 2,
+      page: 0,
+      limit: 50,
     })
     const store = useGamesStore()
     await store.selectDatabase(7)
 
-    expect(api.games.list).toHaveBeenCalledWith(7, { after: undefined })
+    expect(api.games.list).toHaveBeenCalledWith(7, {
+      page: 0,
+      limit: 50,
+      sort: 'date',
+      dir: 'desc',
+    })
     expect(store.games).toHaveLength(2)
-    expect(store.hasMore).toBe(true)
+    expect(store.total).toBe(2)
+    expect(store.pageCount).toBe(1)
+    expect(store.hasNext).toBe(false)
     expect(store.loading).toBe(false)
   })
 
-  it('loadMore appends the next page and passes the cursor', async () => {
+  it('goToPage requests the next offset page and tracks position', async () => {
     vi.mocked(api.games.list)
-      .mockResolvedValueOnce({
-        games: [
-          { id: 1, white: null, black: null, result: null, date: null, eco: null, white_elo: null, black_elo: null },
-          { id: 2, white: null, black: null, result: null, date: null, eco: null, white_elo: null, black_elo: null },
-        ],
-        next_cursor: 2,
-      })
-      .mockResolvedValueOnce({
-        games: [
-          { id: 3, white: null, black: null, result: null, date: null, eco: null, white_elo: null, black_elo: null },
-        ],
-        next_cursor: null,
-      })
+      .mockResolvedValueOnce({ games: [row(5), row(4)], total: 3, page: 0, limit: 2 })
+      .mockResolvedValueOnce({ games: [row(3)], total: 3, page: 1, limit: 2 })
     const store = useGamesStore()
     await store.selectDatabase(7)
-    await store.loadMore()
+    expect(store.hasNext).toBe(true)
 
-    expect(api.games.list).toHaveBeenLastCalledWith(7, { after: 2 })
-    expect(store.games.map((g) => g.id)).toEqual([1, 2, 3])
-    expect(store.hasMore).toBe(false)
+    await store.goToPage(1)
+    expect(api.games.list).toHaveBeenLastCalledWith(7, {
+      page: 1,
+      limit: 2,
+      sort: 'date',
+      dir: 'desc',
+    })
+    expect(store.games.map((g) => g.id)).toEqual([3])
+    expect(store.page).toBe(1)
+    expect(store.hasNext).toBe(false)
+    expect(store.hasPrev).toBe(true)
   })
 
-  it('selectDatabase resets a previously loaded list', async () => {
-    vi.mocked(api.games.list)
-      .mockResolvedValueOnce({
-        games: [
-          { id: 1, white: null, black: null, result: null, date: null, eco: null, white_elo: null, black_elo: null },
-        ],
-        next_cursor: null,
-      })
-      .mockResolvedValueOnce({
-        games: [
-          { id: 9, white: null, black: null, result: null, date: null, eco: null, white_elo: null, black_elo: null },
-        ],
-        next_cursor: null,
-      })
+  it('setSort flips direction on the active field and resets to page 0', async () => {
+    vi.mocked(api.games.list).mockResolvedValue({ games: [], total: 0, page: 0, limit: 50 })
     const store = useGamesStore()
-    await store.selectDatabase(1)
-    await store.selectDatabase(2)
+    await store.selectDatabase(7)
 
-    expect(store.databaseId).toBe(2)
-    expect(store.games.map((g) => g.id)).toEqual([9])
+    // Active field 'date' starts desc → click flips to asc.
+    await store.setSort('date')
+    expect(store.dir).toBe('asc')
+    expect(api.games.list).toHaveBeenLastCalledWith(7, {
+      page: 0,
+      limit: 50,
+      sort: 'date',
+      dir: 'asc',
+    })
+
+    // A different field starts at its natural default (eco → asc).
+    await store.setSort('eco')
+    expect(store.sort).toBe('eco')
+    expect(store.dir).toBe('asc')
   })
 
   it('records an error when a page fails to load', async () => {

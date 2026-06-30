@@ -78,10 +78,12 @@ export interface GameDetail extends GameRow {
   pgn: string
 }
 
-/** Keyset-paginated game list page (`/api/games`). */
+/** Offset-paginated game list page (`/api/games`), with a total for the paginator. */
 export interface GamesPage {
   games: GameRow[]
-  next_cursor: number | null
+  total: number
+  page: number
+  limit: number
 }
 
 /** Keyset-paginated header-search page (`/api/search/headers`). */

@@ -13,6 +13,9 @@
 *.db-shm
 *.db-wal
 
+# Downloaded game data (master/elite PGN dumps, archives) — not committed
+/data
+
 # Downloaded engines / weights
 /engines
 

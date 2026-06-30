@@ -10,8 +10,10 @@
 
 use std::collections::{HashMap, HashSet};
 
+use sea_orm::sea_query::{Expr, Func, SimpleExpr};
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    ColumnTrait, DatabaseConnection, DbErr, EntityTrait, Order, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, Select,
 };
 use serde::Serialize;
 
@@ -22,6 +24,71 @@ use crate::server::identity::{scope, CurrentUser};
 pub const DEFAULT_LIMIT: u64 = 50;
 /// Upper bound on a single page, so an unbounded `limit` cannot load a database.
 pub const MAX_LIMIT: u64 = 200;
+
+/// The column the game list is ordered by. `id` is always the final tiebreaker
+/// so every sort is a total order. Defaults to [`GameSort::Date`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GameSort {
+    /// PGN `Date` (NULLs coalesced to `""`). With `Desc` this is "latest first".
+    #[default]
+    Date,
+    /// Game `Result` (`1-0` / `0-1` / `1/2-1/2` / `*`).
+    Result,
+    /// Opening `ECO` code.
+    Eco,
+    /// Insertion order (`games.id`).
+    Added,
+}
+
+impl GameSort {
+    /// Parse the `sort` query value. Unknown/blank falls back to the default
+    /// (`Date`) — the field is a closed set the UI picks from, not free input.
+    pub fn parse(value: Option<&str>) -> Self {
+        match value.map(str::trim) {
+            Some("result") => GameSort::Result,
+            Some("eco") => GameSort::Eco,
+            Some("added") | Some("id") => GameSort::Added,
+            _ => GameSort::Date,
+        }
+    }
+}
+
+/// Sort direction for the chosen [`GameSort`] (and the `id` tiebreaker). Defaults
+/// to [`SortDir::Desc`] so the date sort yields newest-first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortDir {
+    Asc,
+    #[default]
+    Desc,
+}
+
+impl SortDir {
+    /// Parse the `dir` query value; anything but `asc` is `Desc` (the default).
+    pub fn parse(value: Option<&str>) -> Self {
+        match value.map(str::trim) {
+            Some("asc") => SortDir::Asc,
+            _ => SortDir::Desc,
+        }
+    }
+
+    fn order(self) -> Order {
+        match self {
+            SortDir::Asc => Order::Asc,
+            SortDir::Desc => Order::Desc,
+        }
+    }
+}
+
+/// A validated game-list request: which database, which page (0-based, `limit`
+/// rows each), and how to sort. The HTTP route and MCP tool both build one.
+#[derive(Debug, Clone)]
+pub struct GameListParams {
+    pub database_id: i32,
+    pub page: u64,
+    pub limit: u64,
+    pub sort: GameSort,
+    pub dir: SortDir,
+}
 
 /// Why a game operation failed. Transport-agnostic — the HTTP / MCP layer maps
 /// each variant onto its own status / error envelope.
@@ -72,12 +139,15 @@ pub struct GameDetail {
     pub pgn: Option<String>,
 }
 
-/// One page of a keyset-paginated game list. `next_cursor` is the id to pass as
-/// `after` for the following page, or `None` when the last page was returned.
+/// One page of an offset-paginated game list, with `total` so the client can
+/// render a real paginator (page count, "showing a–b of N"). `page`/`limit` echo
+/// what was actually applied (limit after clamping).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GamePage {
     pub games: Vec<GameSummary>,
-    pub next_cursor: Option<i32>,
+    pub total: u64,
+    pub page: u64,
+    pub limit: u64,
 }
 
 /// Game listing over the `games` table. Holds a connection handle (cheap to
@@ -92,36 +162,27 @@ impl GameService {
         Self { db }
     }
 
-    /// One keyset page of the games in `database_id`, ordered oldest-first by id.
-    /// `after` is the exclusive cursor (last id of the previous page); `limit` is
-    /// clamped to `[1, MAX_LIMIT]`. The database must be visible to the caller,
-    /// else `NotFound` (which also hides ids that don't exist at all).
+    /// One offset page of the games in `params.database_id`, sorted per
+    /// `params.sort`/`dir` (default: date, newest-first), with the total game
+    /// count for the paginator. `limit` is clamped to `[1, MAX_LIMIT]`; `page` is
+    /// 0-based. The database must be visible to the caller, else `NotFound`
+    /// (which also hides ids that don't exist at all).
     pub async fn list(
         &self,
         user: &CurrentUser,
-        database_id: i32,
-        after: Option<i32>,
-        limit: Option<u64>,
+        params: &GameListParams,
     ) -> Result<GamePage, GameError> {
-        self.assert_database_visible(user, database_id).await?;
+        self.assert_database_visible(user, params.database_id)
+            .await?;
 
-        let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-        let mut query = games::Entity::find()
-            .filter(games::Column::DatabaseId.eq(database_id))
-            .order_by_asc(games::Column::Id)
-            // Fetch one extra row to tell whether a further page exists.
-            .limit(limit + 1);
-        if let Some(after) = after {
-            query = query.filter(games::Column::Id.gt(after));
-        }
-        let mut rows = query.all(&self.db).await?;
-
-        let next_cursor = if rows.len() as u64 > limit {
-            rows.truncate(limit as usize);
-            rows.last().map(|g| g.id)
-        } else {
-            None
-        };
+        let limit = params.limit.clamp(1, MAX_LIMIT);
+        let base = games::Entity::find().filter(games::Column::DatabaseId.eq(params.database_id));
+        let total = base.clone().count(&self.db).await?;
+        let rows = apply_order(base, params.sort, params.dir)
+            .offset(params.page.saturating_mul(limit))
+            .limit(limit)
+            .all(&self.db)
+            .await?;
 
         let names = player_names(&self.db, &rows).await?;
         let games = rows
@@ -139,7 +200,12 @@ impl GameService {
                 ply_count: g.ply_count,
             })
             .collect();
-        Ok(GamePage { games, next_cursor })
+        Ok(GamePage {
+            games,
+            total,
+            page: params.page,
+            limit,
+        })
     }
 
     /// A single game with its PGN, if it is visible to the caller.
@@ -211,6 +277,32 @@ pub(crate) async fn player_names(
         .await?
         .into_iter()
         .collect())
+}
+
+/// Apply the chosen sort to `select`, always appending the `id` tiebreaker (in
+/// the same direction) so the page boundary is deterministic. Text columns are
+/// coalesced to `""` so NULLs get a defined slot and the order matches between
+/// SQLite (local) and Postgres (server), which place NULLs differently.
+fn apply_order(
+    select: Select<games::Entity>,
+    sort: GameSort,
+    dir: SortDir,
+) -> Select<games::Entity> {
+    let order = dir.order();
+    let key = match sort {
+        GameSort::Added => return select.order_by(games::Column::Id, order),
+        GameSort::Date => text_key(games::Column::Date),
+        GameSort::Result => text_key(games::Column::Result),
+        GameSort::Eco => text_key(games::Column::Eco),
+    };
+    select
+        .order_by(key, order.clone())
+        .order_by(games::Column::Id, order)
+}
+
+/// `COALESCE(col, '')` — a NULL-safe orderable key for a nullable text column.
+fn text_key(col: games::Column) -> SimpleExpr {
+    Func::coalesce([Expr::col(col).into(), Expr::val("").into()]).into()
 }
 
 pub mod export;
