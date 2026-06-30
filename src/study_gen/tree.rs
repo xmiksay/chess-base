@@ -189,7 +189,9 @@ pub fn select_continuations(candidates: &[Candidate], config: &TreeConfig) -> Ve
 }
 
 /// ECO classification for a Zobrist key, shaped as the DB report's [`EcoInfo`].
-fn eco_for(zobrist: u64) -> Option<EcoInfo> {
+/// Shared with the danger-study converter ([`super::danger_generate`]), which
+/// rebuilds variation nodes from a tagged danger tree.
+pub(super) fn eco_for(zobrist: u64) -> Option<EcoInfo> {
     opening_of_zobrist(zobrist).map(|o| EcoInfo {
         eco: o.eco.to_string(),
         name: o.name.to_string(),

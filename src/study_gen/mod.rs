@@ -9,6 +9,7 @@
 
 pub mod annotate;
 pub mod danger;
+pub mod danger_generate;
 pub mod features;
 pub mod generate;
 pub mod spine;
@@ -30,6 +31,10 @@ pub use annotate::{
     AnnotationOutcome, Claim, DraftAnnotation, Rejection,
 };
 pub use danger::{is_only_move, only_move_gap, trap_verdict, DangerConfig, TrapVerdict};
+pub use danger_generate::{
+    generate_danger_study, generate_danger_study_live, DangerStudyError, DangerStudyOutcome,
+    DangerStudyParams, TaggedRole,
+};
 pub use features::{concepts_of_fen, concepts_of_fen_with, Concepts, KeySquare};
 pub use generate::{
     generate_study, generate_study_live, GenerateError, GenerateOutcome, GenerateParams,
