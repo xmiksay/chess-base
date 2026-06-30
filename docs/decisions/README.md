@@ -30,3 +30,5 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0022 | Bulk master-DB PGN import: streaming `.zst`, content-hash dedup, batched txns |
 | 0023 | Extended PGN export: `[%eval]` node annotation, one serializer, real `.pgn` downloads |
 | 0024 | Toggleable board-overlay layers: static threat scan, one shapes composer, persisted toggles |
+| 0025 | Embedded study assistant: in-process agent loop over the MCP registry, approval-gated |
+| 0026 | Danger-map opening mode: engine as adjudicator, not author (traps / only-move) |
