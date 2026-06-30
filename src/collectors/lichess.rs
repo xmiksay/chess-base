@@ -1,6 +1,6 @@
 //! Lichess game export adapter.
 //!
-//! Games stream from `GET /api/user/{username}/games` (PGN). A personal API
+//! Games stream from `GET /api/games/user/{username}` (PGN). A personal API
 //! token (optional) raises rate limits; on HTTP 429 callers must back off ≥60s.
 //! Incremental sync uses the `since` query parameter set to the persisted
 //! [`SyncCursor::last_game_ms`]; the boundary game it re-fetches is deduped by
@@ -48,10 +48,9 @@ impl Lichess {
 
     /// Export endpoint for this user's games as PGN. `since` is epoch-ms.
     pub fn games_url(&self, since: Option<i64>) -> String {
-        let mut url = format!(
-            "{API_BASE}/api/user/{}/games?pgnInJson=false",
-            self.username
-        );
+        // Lichess's game-export endpoint is `/api/games/user/{username}` — NOT
+        // `/api/user/{username}/games`, which 404s (issue: lichess sync failed).
+        let mut url = format!("{API_BASE}/api/games/user/{}?pgnInJson=false", self.username);
         if let Some(ms) = since {
             url.push_str(&format!("&since={ms}"));
         }
@@ -256,11 +255,11 @@ mod tests {
         let src = Lichess::new("DrNykterstein");
         assert_eq!(
             src.games_url(Some(1700000000000)),
-            "https://lichess.org/api/user/DrNykterstein/games?pgnInJson=false&since=1700000000000"
+            "https://lichess.org/api/games/user/DrNykterstein?pgnInJson=false&since=1700000000000"
         );
         assert_eq!(
             src.games_url(None),
-            "https://lichess.org/api/user/DrNykterstein/games?pgnInJson=false"
+            "https://lichess.org/api/games/user/DrNykterstein?pgnInJson=false"
         );
         assert_eq!(src.kind(), "lichess");
     }
