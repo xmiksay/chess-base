@@ -1,52 +1,44 @@
 // Pinia store holding the board/game state, backed by a chess.js instance for
 // legality. Drives both the analysis board (free movement) and play-vs-engine.
 //
-// The full game is kept as a flat line of plies; a `ply` cursor selects which
-// position the board (and engine analysis, via `fen`) shows. Navigation moves
-// the cursor without mutating the line; playing a move at a non-tip ply
-// truncates the line past the cursor (this flat view has no variations).
+// Moves are kept as a `MoveTree` (the same shape studies use, see src/pgn_tree.rs)
+// with a `currentId` cursor. Navigation moves the cursor without mutating the
+// tree; playing a move that already exists as a continuation just follows it,
+// while a new move branches off as a variation rather than truncating the line.
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { Chess } from 'chess.js'
 import { STARTPOS_FEN } from '../lib/fen'
-import type { BoardMove, Color, Dests, Square } from '../types'
-
-interface Ply {
-  san: string
-  from: Square
-  to: Square
-  fen: string // position after this move
-}
+import {
+  emptyTree,
+  appendChild,
+  deleteSubtree,
+  childWithSan,
+  firstChild,
+  getNode,
+  lastMainlineId,
+  sanPath,
+} from '../lib/moveTree'
+import type { BoardMove, Color, Dests, MoveTree, Square } from '../types'
 
 export const useGameStore = defineStore('game', () => {
-  let chess: Chess = new Chess() // positioned at the current ply
+  let chess: Chess = new Chess() // positioned at the current node
 
-  const startFen = ref(chess.fen()) // position before the first move
-  const line = ref<Ply[]>([]) // full game line
-  const ply = ref(0) // cursor: 0 = start, n = after the nth move
+  const startFen = ref(chess.fen()) // position at the root (before the first move)
+  const tree = ref<MoveTree>(emptyTree())
+  const currentId = ref(tree.value.root) // cursor: which node the board shows
   const fen = ref(chess.fen())
+  const lastMove = ref<[Square, Square] | null>(null) // move into the current node
   const orientation = ref<Color>('white') // board orientation
   const mode = ref<'analyse' | 'play'>('analyse') // 'analyse' | 'play'
   const playColor = ref<Color>('white') // human's color in play mode
 
-  /** SAN moves played, as a flat list — drives the move-list notation panel. */
-  const history = computed<string[]>(() => line.value.map((m) => m.san))
+  /** SAN moves from the root to the current node — drives the move panel / export. */
+  const history = computed<string[]>(() => sanPath(tree.value, currentId.value))
 
-  /** FEN of the position after `n` plies (`n` is clamped to the line). */
-  function fenAt(n: number): string {
-    return n <= 0 ? startFen.value : line.value[n - 1].fen
-  }
-
-  const atStart = computed(() => ply.value <= 0)
-  const atEnd = computed(() => ply.value >= line.value.length)
-
-  /** `[from, to]` of the move leading to the current ply, for board highlight. */
-  const lastMove = computed<[Square, Square] | null>(() => {
-    if (ply.value <= 0) return null
-    const m = line.value[ply.value - 1]
-    return m ? [m.from, m.to] : null
-  })
+  const atStart = computed(() => currentId.value === tree.value.root)
+  const atEnd = computed(() => firstChild(tree.value, currentId.value) == null)
 
   const turnColor = computed(() => (fen.value && chess.turn() === 'b' ? 'black' : 'white'))
 
@@ -75,6 +67,17 @@ export const useGameStore = defineStore('game', () => {
     return map
   })
 
+  /** Reposition `chess` at node `id` by replaying the line, syncing fen/lastMove. */
+  function seek(id: number) {
+    chess = new Chess(startFen.value)
+    for (const san of sanPath(tree.value, id)) chess.move(san)
+    currentId.value = id
+    fen.value = chess.fen()
+    const hist = chess.history({ verbose: true })
+    const last = hist[hist.length - 1]
+    lastMove.value = last ? [last.from as Square, last.to as Square] : null
+  }
+
   /** Apply a board move {from,to,promotion?}; returns the SAN or null if illegal. */
   function playMove({ from, to, promotion = 'q' }: BoardMove): string | null {
     let move
@@ -84,11 +87,19 @@ export const useGameStore = defineStore('game', () => {
       return null
     }
     if (!move) return null
-    // Branch off the current cursor: drop any line past it, append this move.
-    line.value = line.value.slice(0, ply.value)
-    line.value.push({ san: move.san, from: move.from, to: move.to, fen: chess.fen() })
-    ply.value = line.value.length
+    // Follow an existing continuation, else branch a new variation off the cursor.
+    const existing = childWithSan(tree.value, currentId.value, move.san)
+    if (existing != null) {
+      currentId.value = existing
+    } else {
+      const appended = appendChild(tree.value, currentId.value, move.san)
+      if (appended) {
+        tree.value = appended.tree
+        currentId.value = appended.id
+      }
+    }
     fen.value = chess.fen()
+    lastMove.value = [move.from as Square, move.to as Square]
     return move.san
   }
 
@@ -102,36 +113,38 @@ export const useGameStore = defineStore('game', () => {
     })
   }
 
-  /** Move the cursor to ply `n` (clamped); the board/engine follow `fen`. */
-  function goto(n: number) {
-    const target = Math.max(0, Math.min(n, line.value.length))
-    if (target === ply.value) return
-    chess = new Chess(fenAt(target))
-    ply.value = target
-    fen.value = chess.fen()
+  /** Move the cursor to node `id` (ignored if absent); the board/engine follow `fen`. */
+  function goto(id: number) {
+    if (id === currentId.value || !getNode(tree.value, id)) return
+    seek(id)
   }
 
-  const next = () => goto(ply.value + 1)
-  const prev = () => goto(ply.value - 1)
-  const first = () => goto(0)
-  const last = () => goto(line.value.length)
+  const next = () => {
+    const child = firstChild(tree.value, currentId.value)
+    if (child != null) seek(child)
+  }
+  const prev = () => {
+    const parent = getNode(tree.value, currentId.value)?.parent
+    if (parent != null) seek(parent)
+  }
+  const first = () => seek(tree.value.root)
+  const last = () => seek(lastMainlineId(tree.value, currentId.value))
 
   function reset(fenString: string = STARTPOS_FEN) {
     chess = new Chess(fenString)
     startFen.value = chess.fen()
-    line.value = []
-    ply.value = 0
+    tree.value = emptyTree()
+    currentId.value = tree.value.root
     fen.value = chess.fen()
+    lastMove.value = null
   }
 
-  /** Remove the last move of the line; the cursor follows back to the new tip. */
+  /** Delete the current node and its subtree, dropping the cursor to its parent. */
   function undo() {
-    if (!line.value.length) return
-    line.value = line.value.slice(0, -1)
-    const target = Math.min(ply.value, line.value.length)
-    chess = new Chess(fenAt(target))
-    ply.value = target
-    fen.value = chess.fen()
+    if (currentId.value === tree.value.root) return
+    const { tree: pruned, parentId } = deleteSubtree(tree.value, currentId.value)
+    tree.value = pruned
+    seek(parentId)
   }
 
   /** Load an arbitrary position as a fresh start; returns false on invalid FEN. */
@@ -144,16 +157,18 @@ export const useGameStore = defineStore('game', () => {
     }
     chess = next
     startFen.value = chess.fen()
-    line.value = []
-    ply.value = 0
+    tree.value = emptyTree()
+    currentId.value = tree.value.root
     fen.value = chess.fen()
+    lastMove.value = null
     return true
   }
 
   return {
     fen,
     history,
-    ply,
+    tree,
+    currentId,
     atStart,
     atEnd,
     lastMove,

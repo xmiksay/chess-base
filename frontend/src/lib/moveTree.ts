@@ -5,6 +5,65 @@
 
 import type { MoveNode, MoveToken, MoveTree } from '../types'
 
+/** A fresh tree holding only the root sentinel (san=null = the start position). */
+export function emptyTree(): MoveTree {
+  return {
+    root: 0,
+    nodes: [{ id: 0, parent: null, san: null, comment: null, nags: [], children: [] }],
+  }
+}
+
+/** One past the highest node id — ids stay unique across appends and deletes. */
+function nextId(tree: MoveTree): number {
+  return tree.nodes.reduce((max, n) => Math.max(max, n.id), 0) + 1
+}
+
+/**
+ * Append `san` as a new child of `parentId`, returning the new tree and node id.
+ * `children[0]` is the mainline, so the first child of a node is its mainline
+ * continuation and any later child is a variation — branching, not truncation.
+ * Returns null when `parentId` is absent.
+ */
+export function appendChild(
+  tree: MoveTree,
+  parentId: number,
+  san: string,
+): { tree: MoveTree; id: number } | null {
+  if (!getNode(tree, parentId)) return null
+  const id = nextId(tree)
+  const nodes = tree.nodes.map((n) =>
+    n.id === parentId ? { ...n, children: [...n.children, id] } : n,
+  )
+  nodes.push({ id, parent: parentId, san, comment: null, nags: [], children: [] })
+  return { tree: { root: tree.root, nodes }, id }
+}
+
+/**
+ * Remove `id` and its whole subtree, returning the new tree and the parent the
+ * caller should select next. The root sentinel cannot be deleted (no-op).
+ */
+export function deleteSubtree(tree: MoveTree, id: number): { tree: MoveTree; parentId: number } {
+  if (id === tree.root) return { tree, parentId: tree.root }
+  const map = nodeMap(tree)
+  const node = map.get(id)
+  if (!node) return { tree, parentId: tree.root }
+  const parentId = node.parent ?? tree.root
+  const doomed = new Set<number>()
+  const stack = [id]
+  while (stack.length) {
+    const cur = stack.pop() as number
+    doomed.add(cur)
+    const n = map.get(cur)
+    if (n) stack.push(...n.children)
+  }
+  const nodes = tree.nodes
+    .filter((n) => !doomed.has(n.id))
+    .map((n) =>
+      n.id === parentId ? { ...n, children: n.children.filter((c) => c !== id) } : n,
+    )
+  return { tree: { root: tree.root, nodes }, parentId }
+}
+
 /** Index a tree's nodes by id (ids are dense but we never assume id === index). */
 export function nodeMap(tree: MoveTree): Map<number, MoveNode> {
   const m = new Map<number, MoveNode>()
