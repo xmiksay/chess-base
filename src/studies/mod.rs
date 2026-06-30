@@ -18,11 +18,32 @@ pub mod routes;
 use crate::db::entities::studies;
 use crate::pgn_tree::pgn::{self, PgnError};
 use crate::pgn_tree::{lichess, MoveTree, Shape, TreeError};
-use crate::position::{legal_sans, replay, CastlingMode, PositionError, STARTPOS_FEN};
+use crate::position::{
+    apply_san, legal_sans, replay, uci_to_san, CastlingMode, PositionError, STARTPOS_FEN,
+};
 use crate::server::identity::{assert_admin, assert_can_write, scope, CurrentUser};
 
 /// Studies are standard chess; castling rights parse the normal way.
 const MODE: CastlingMode = CastlingMode::Standard;
+
+/// A move to append to a study node, given either as SAN or as UCI long
+/// algebraic (`g1f3`). UCI sidesteps SAN's strict disambiguation — e.g. a
+/// redundant `Ref1` where `Rf1` is the only legal rook move — so an agent can
+/// always pass the engine's own UCI output without reformatting (issue #125).
+pub enum MoveInput {
+    San(String),
+    Uci(String),
+}
+
+/// The result of appending a move: the new node id, the FEN of the position it
+/// reaches, and the canonical SAN that was stored. Returned so a caller chaining
+/// moves over MCP need not re-derive the position itself (issue #125).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AddedMove {
+    pub node_id: usize,
+    pub fen: String,
+    pub san: String,
+}
 
 /// Why a study operation failed. Transport-agnostic — the HTTP / MCP layer maps
 /// each variant onto its own status / error envelope.
@@ -234,6 +255,8 @@ impl StudyService {
 
     /// Append `san` as a child of `from_node_id`, after validating it is legal in
     /// the position reached by replaying that node's line. Returns the new node id.
+    /// Thin wrapper over [`add_move_detailed`](Self::add_move_detailed) for callers
+    /// (the HTTP route) that only need the id.
     pub async fn add_move(
         &self,
         user: &CurrentUser,
@@ -241,6 +264,26 @@ impl StudyService {
         from_node_id: usize,
         san: &str,
     ) -> Result<usize, StudyError> {
+        self.add_move_detailed(
+            user,
+            study_id,
+            from_node_id,
+            MoveInput::San(san.to_string()),
+        )
+        .await
+        .map(|added| added.node_id)
+    }
+
+    /// Append a move (SAN or UCI) as a child of `from_node_id` and report back the
+    /// new node id, the FEN it reaches and the canonical SAN stored. The move is
+    /// validated against the legal moves in the position at that node.
+    pub async fn add_move_detailed(
+        &self,
+        user: &CurrentUser,
+        study_id: i32,
+        from_node_id: usize,
+        mv: MoveInput,
+    ) -> Result<AddedMove, StudyError> {
         let study = self.load_writable(user, study_id).await?;
         let mut tree: MoveTree = serde_json::from_str(&study.tree_json)?;
 
@@ -248,19 +291,18 @@ impl StudyService {
             .line_to(from_node_id)
             .ok_or(StudyError::InvalidNode(from_node_id))?;
         let fen = fen_at(&line)?;
-        // Validate against the legal-move set at this position; accept user input
-        // with or without a check/mate suffix and store the canonical SAN.
-        let canonical = legal_sans(&fen, MODE)?
-            .into_iter()
-            .find(|legal| san_core(legal) == san_core(san))
-            .ok_or_else(|| StudyError::IllegalMove {
-                san: san.to_string(),
-                fen,
-            })?;
+        let canonical = resolve_move(&fen, &mv)?;
+        // The position after the move — handed back so an agent chaining moves
+        // doesn't replay the line itself. `canonical` is already legal here.
+        let (after_fen, _) = apply_san(&fen, &canonical, MODE)?;
 
-        let new_id = tree.add_move(from_node_id, canonical);
+        let new_id = tree.add_move(from_node_id, canonical.clone());
         self.persist(study, &tree).await?;
-        Ok(new_id)
+        Ok(AddedMove {
+            node_id: new_id,
+            fen: after_fen,
+            san: canonical,
+        })
     }
 
     /// Set the comment and/or toggle a NAG on a node of a study the caller may
@@ -390,6 +432,26 @@ fn fen_at(line: &[String]) -> Result<String, PositionError> {
     match replay(STARTPOS_FEN, line, MODE)?.last() {
         Some(ply) => Ok(ply.fen.clone()),
         None => Ok(STARTPOS_FEN.to_string()),
+    }
+}
+
+/// Resolve a [`MoveInput`] to the canonical SAN stored in the tree, validating
+/// legality in `fen`. SAN is matched against the generated legal-move set
+/// (accepting a check/mate suffix); UCI is converted via shakmaty, which tolerates
+/// the disambiguation SAN rejects. Either way an illegal move is an `IllegalMove`.
+fn resolve_move(fen: &str, mv: &MoveInput) -> Result<String, StudyError> {
+    match mv {
+        MoveInput::San(san) => legal_sans(fen, MODE)?
+            .into_iter()
+            .find(|legal| san_core(legal) == san_core(san))
+            .ok_or_else(|| StudyError::IllegalMove {
+                san: san.clone(),
+                fen: fen.to_string(),
+            }),
+        MoveInput::Uci(uci) => uci_to_san(fen, uci, MODE).map_err(|_| StudyError::IllegalMove {
+            san: uci.clone(),
+            fen: fen.to_string(),
+        }),
     }
 }
 

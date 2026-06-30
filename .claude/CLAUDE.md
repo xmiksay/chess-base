@@ -43,7 +43,11 @@ src/
                    study; exposed as MCP `generate_study` + POST /api/studies/generate   ← unit-tested
   auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
   server/          Axum app: routes, state, embedded SPA, browser launch,
-                   MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016)
+                   MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016).
+                   routes/mcp/ tools: engine_analyse + analyse_position/analyse_game
+                   (#125), study_* (create/get/import_pgn/add_move/annotate/export,
+                   #125), list_databases/db_list_games/db_read_game (#125),
+                   generate_study — all thin callers of the shared services
   bin/chess-base.rs  CLI entry (clap)
 frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
                    (strict `vue-tsc`; shared API/domain types in src/types.ts; ADR 0021)

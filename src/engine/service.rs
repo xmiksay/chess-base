@@ -30,8 +30,10 @@ use super::manager::Engine;
 use super::EngineConfig;
 
 /// Search depth applied when a caller passes fully-unbounded limits, so a
-/// one-shot `analyse` always terminates instead of searching forever.
-const DEFAULT_DEPTH: u32 = 20;
+/// one-shot `analyse` always terminates instead of searching forever. Public so
+/// the MCP analysis tools document — and share — the *one* default depth that
+/// every "explain this position/game" path falls back to (issue #125).
+pub const DEFAULT_DEPTH: u32 = 20;
 
 /// Hard ceiling on a single one-shot search when no `movetime` bounds it (a
 /// depth/nodes search). The backstop against a stuck or pathologically slow

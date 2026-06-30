@@ -36,7 +36,7 @@ pub use download::{
 };
 pub use manager::Engine;
 pub use registry::{resolve, EngineRegistry, RegistryError};
-pub use service::{Analysis, EngineService};
+pub use service::{Analysis, EngineService, DEFAULT_DEPTH};
 
 /// A configured, runnable engine. `Serialize`/`Deserialize` so the
 /// [`EngineRegistry`] can persist a list of these in the `settings` store.
