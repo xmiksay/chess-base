@@ -43,7 +43,7 @@ fn list_databases_tool() -> Tool {
         "List the databases (game collections) you can see — your own plus the \
          global ones — each with its id, name, owner, `global` flag and game \
          count. Use this to discover the `database_id` that `study_create`, \
-         `study_import_pgn`, `generate_study` and `db_list_games` need.",
+         `study_import_pgn` and `db_list_games` need.",
         json!({ "type": "object", "properties": {} }),
         |app, user, _args| async move { list_databases(app, user).await },
     )

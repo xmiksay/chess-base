@@ -148,7 +148,9 @@ async fn engine_analyse_without_engine_is_a_tool_error() {
 }
 
 #[tokio::test]
-async fn tools_list_includes_generate_study() {
+async fn tools_list_includes_the_preprocessing_tools() {
+    // ADR-0027: the engine/DB data tools that replaced the LLM-internal
+    // generate_study / generate_danger_map on the MCP surface.
     let (status, v) = rpc(json!({
         "jsonrpc": "2.0", "id": 60, "method": "tools/list"
     }))
@@ -156,19 +158,20 @@ async fn tools_list_includes_generate_study() {
 
     assert_eq!(status, StatusCode::OK);
     let tools = v["result"]["tools"].as_array().unwrap();
-    assert!(tools.iter().any(|t| t["name"] == "generate_study"));
+    for name in ["opening_tree", "danger_map", "position_concepts"] {
+        assert!(tools.iter().any(|t| t["name"] == name), "missing {name}");
+    }
+    // The LLM-internal generators are gone from the MCP surface.
+    assert!(!tools.iter().any(|t| t["name"] == "generate_study"));
+    assert!(!tools.iter().any(|t| t["name"] == "generate_danger_map"));
 }
 
 #[tokio::test]
-async fn generate_study_without_engine_is_a_tool_error() {
-    // No engine and no model wired ⇒ the orchestrator tool reports a graceful
-    // `isError`, not a panic or transport error. The dispatch itself succeeds.
+async fn opening_tree_without_engine_is_a_tool_error() {
+    // The tree needs per-position engine evals ⇒ a graceful `isError`, not a panic.
     let (status, v) = rpc(json!({
         "jsonrpc": "2.0", "id": 61, "method": "tools/call",
-        "params": {
-            "name": "generate_study",
-            "arguments": { "database_id": 1, "name": "From e4" }
-        }
+        "params": { "name": "opening_tree", "arguments": {} }
     }))
     .await;
 
@@ -181,39 +184,12 @@ async fn generate_study_without_engine_is_a_tool_error() {
 }
 
 #[tokio::test]
-async fn generate_study_requires_arguments() {
-    // Missing the required `database_id` / `name` is rejected before any stage.
-    let (status, v) = rpc(json!({
-        "jsonrpc": "2.0", "id": 62, "method": "tools/call",
-        "params": { "name": "generate_study", "arguments": {} }
-    }))
-    .await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(v["result"]["isError"], json!(true));
-}
-
-#[tokio::test]
-async fn tools_list_includes_generate_danger_map() {
-    let (status, v) = rpc(json!({
-        "jsonrpc": "2.0", "id": 63, "method": "tools/list"
-    }))
-    .await;
-
-    assert_eq!(status, StatusCode::OK);
-    let tools = v["result"]["tools"].as_array().unwrap();
-    assert!(tools.iter().any(|t| t["name"] == "generate_danger_map"));
-}
-
-#[tokio::test]
-async fn generate_danger_map_without_engine_is_a_tool_error() {
-    // No engine and no model wired ⇒ the orchestrator tool reports a graceful
-    // `isError`, not a panic or transport error. The dispatch itself succeeds.
+async fn danger_map_without_engine_is_a_tool_error() {
     let (status, v) = rpc(json!({
         "jsonrpc": "2.0", "id": 64, "method": "tools/call",
         "params": {
-            "name": "generate_danger_map",
-            "arguments": { "database_id": 1, "name": "Sicilian traps", "spine_pgn": "1. e4 c5 *" }
+            "name": "danger_map",
+            "arguments": { "spine_pgn": "1. e4 c5 *" }
         }
     }))
     .await;
@@ -227,12 +203,45 @@ async fn generate_danger_map_without_engine_is_a_tool_error() {
 }
 
 #[tokio::test]
-async fn generate_danger_map_requires_arguments() {
-    // Missing the required `database_id` / `name` / `spine_pgn` is rejected before
-    // any stage.
+async fn danger_map_requires_a_spine() {
+    // The `spine_pgn` is rejected as missing before any engine/DB work.
     let (status, v) = rpc(json!({
         "jsonrpc": "2.0", "id": 65, "method": "tools/call",
-        "params": { "name": "generate_danger_map", "arguments": { "database_id": 1, "name": "x" } }
+        "params": { "name": "danger_map", "arguments": {} }
+    }))
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["result"]["isError"], json!(true));
+    assert!(v["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("spine_pgn"));
+}
+
+#[tokio::test]
+async fn position_concepts_works_without_an_engine() {
+    // Pure structural analysis: no engine or DB, so it succeeds even on a bare app.
+    let (status, v) = rpc(json!({
+        "jsonrpc": "2.0", "id": 62, "method": "tools/call",
+        "params": {
+            "name": "position_concepts",
+            "arguments": { "fen": chess_base::position::STARTPOS_FEN }
+        }
+    }))
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(v["result"].get("isError").is_none());
+    let text = v["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("concepts"));
+}
+
+#[tokio::test]
+async fn position_concepts_requires_a_fen() {
+    let (status, v) = rpc(json!({
+        "jsonrpc": "2.0", "id": 63, "method": "tools/call",
+        "params": { "name": "position_concepts", "arguments": {} }
     }))
     .await;
 
