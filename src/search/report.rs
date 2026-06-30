@@ -12,7 +12,9 @@
 
 use std::collections::HashMap;
 
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect, QueryTrait,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::db::entities::position_index;
@@ -203,7 +205,7 @@ impl PositionReportService {
     ) -> Result<Vec<Transposition>, SearchError> {
         let occurrences: Vec<(i32, i32)> = position_index::Entity::find()
             .filter(position_index::Column::Zobrist.eq(position_index::to_i64(zobrist)))
-            .filter(position_index::Column::DatabaseId.is_in(visible))
+            .filter(position_index::Column::DatabaseId.is_in(visible.clone()))
             .select_only()
             .column(position_index::Column::GameId)
             .column(position_index::Column::Ply)
@@ -224,10 +226,18 @@ impl PositionReportService {
         }
 
         // Load every indexed move of those games; the line reaching the position
-        // at `arrival[g]` is each move played at a lower ply.
-        let game_ids: Vec<i32> = arrival.keys().copied().collect();
+        // at `arrival[g]` is each move played at a lower ply. The "those games" set
+        // is the same games-reaching-this-zobrist subquery used above — kept inside
+        // the DB rather than round-tripped back as an `IN (?, ?, …)` id list.
+        let games_here = position_index::Entity::find()
+            .filter(position_index::Column::Zobrist.eq(position_index::to_i64(zobrist)))
+            .filter(position_index::Column::DatabaseId.is_in(visible))
+            .select_only()
+            .column(position_index::Column::GameId)
+            .distinct()
+            .into_query();
         let rows: Vec<(i32, i32, String)> = position_index::Entity::find()
-            .filter(position_index::Column::GameId.is_in(game_ids))
+            .filter(position_index::Column::GameId.in_subquery(games_here))
             .select_only()
             .column(position_index::Column::GameId)
             .column(position_index::Column::Ply)
