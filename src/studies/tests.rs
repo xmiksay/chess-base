@@ -154,6 +154,48 @@ async fn annotate_persists_comment_and_nag() {
 }
 
 #[tokio::test]
+async fn annotate_extracts_board_shapes_from_comment() {
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+    let study = svc.create(&alice, db_id, "Notes", false).await.unwrap();
+    let e4 = svc.add_move(&alice, study.id, 0, "e4").await.unwrap();
+
+    // A comment carrying [%cal]/[%csl] (as study_add_move/study_annotate or an
+    // imported PGN delivers it) must pin the arrows/circles into `shapes`, not
+    // leave the raw commands as dead text — the board renders `shapes`.
+    svc.annotate(
+        &alice,
+        study.id,
+        e4,
+        Some("the plan [%csl Re5][%cal Gd2d4,Bg1f3]".into()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let tree = tree_of(&svc, &alice, study.id).await;
+    assert_eq!(tree.nodes[e4].comment.as_deref(), Some("the plan"));
+    let shapes = &tree.nodes[e4].shapes;
+    assert_eq!(shapes.len(), 3);
+    assert_eq!(shapes[0].orig, "e5");
+    assert_eq!(shapes[0].dest, None);
+    assert_eq!(shapes[1].dest.as_deref(), Some("d4"));
+    assert_eq!(shapes[2].dest.as_deref(), Some("f3"));
+
+    // A later comment without shape commands keeps the pinned plan intact.
+    svc.annotate(&alice, study.id, e4, Some("still sharp".into()), None)
+        .await
+        .unwrap();
+    let tree = tree_of(&svc, &alice, study.id).await;
+    assert_eq!(tree.nodes[e4].comment.as_deref(), Some("still sharp"));
+    assert_eq!(
+        tree.nodes[e4].shapes.len(),
+        3,
+        "plan survives a text-only edit"
+    );
+}
+
+#[tokio::test]
 async fn annotate_toggles_nag_off_and_replaces_quality() {
     let (svc, db_id) = setup().await;
     let alice = user("alice");

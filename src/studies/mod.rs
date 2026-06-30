@@ -23,7 +23,7 @@ use crate::db::entities::studies;
 use crate::engine::{EngineService, Limits};
 use crate::features::features_of_fen;
 use crate::pgn_tree::pgn::{self, PgnError};
-use crate::pgn_tree::{lichess, MoveTree, Shape, TreeError};
+use crate::pgn_tree::{lichess, shapes, MoveTree, Shape, TreeError};
 use crate::position::{
     apply_san, black_to_move, legal_sans, replay, uci_to_san, CastlingMode, PositionError,
 };
@@ -332,7 +332,15 @@ impl StudyService {
             return Err(StudyError::InvalidNode(node_id));
         }
         if let Some(comment) = comment {
-            tree.set_comment(node_id, comment);
+            // A comment may carry board annotations ([%cal]/[%csl]) exactly as an
+            // imported PGN comment does. Extract them into pinned shapes so the
+            // board renders the plan, instead of leaving raw commands as dead text
+            // and an empty `shapes` (the import path already does this).
+            let (parsed, text) = shapes::parse(&comment);
+            tree.set_comment(node_id, text);
+            if !parsed.is_empty() {
+                tree.set_shapes(node_id, parsed);
+            }
         }
         if let Some(nag) = nag {
             tree.toggle_nag(node_id, nag);
