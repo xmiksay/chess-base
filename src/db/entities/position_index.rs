@@ -25,7 +25,16 @@ pub struct Model {
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    /// Each indexed ply belongs to the game it was replayed from; enables joining
+    /// the game's `result` in position search instead of a second id round-trip.
+    #[sea_orm(
+        belongs_to = "super::games::Entity",
+        from = "Column::GameId",
+        to = "super::games::Column::Id"
+    )]
+    Game,
+}
 
 impl ActiveModelBehavior for ActiveModel {}
 

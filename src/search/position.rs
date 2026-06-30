@@ -9,10 +9,11 @@
 //! global (`owner_id IS NULL`) ones, filtered on the denormalized
 //! `position_index.database_id` so no join to `games` is needed for scoping.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    ColumnTrait, DatabaseConnection, DbErr, EntityTrait, JoinType, QueryFilter, QueryOrder,
+    QuerySelect, QueryTrait, RelationTrait,
 };
 use serde::Serialize;
 
@@ -116,13 +117,16 @@ impl PositionSearchService {
         }
 
         // Each indexed row at this position carries the move played from it; join
-        // the owning game's result in-process to break the count down by outcome.
-        let rows: Vec<(String, i32)> = position_index::Entity::find()
+        // the owning game so its `result` arrives in the same query (no second
+        // round-trip to fetch results by id).
+        let rows: Vec<(String, i32, Option<String>)> = position_index::Entity::find()
             .filter(position_index::Column::Zobrist.eq(position_index::to_i64(zobrist)))
             .filter(position_index::Column::DatabaseId.is_in(visible))
+            .join(JoinType::InnerJoin, position_index::Relation::Game.def())
             .select_only()
             .column(position_index::Column::Move)
             .column(position_index::Column::GameId)
+            .column(games::Column::Result)
             .into_tuple()
             .all(&self.db)
             .await?;
@@ -130,28 +134,26 @@ impl PositionSearchService {
             return Ok(Vec::new());
         }
 
-        let results = self.results_for(rows.iter().map(|(_, g)| *g)).await?;
-
         // Count distinct games per continuation, not raw index rows: a game that
         // revisits this Zobrist (maneuvering/repetition — the Polyglot key ignores
         // clocks) must contribute its single result once, not once per occurrence.
-        let mut games_by_san: HashMap<String, HashSet<i32>> = HashMap::new();
-        for (san, game_id) in rows {
-            games_by_san.entry(san).or_default().insert(game_id);
+        let mut games_by_san: HashMap<String, HashMap<i32, Option<String>>> = HashMap::new();
+        for (san, game_id, result) in rows {
+            games_by_san.entry(san).or_default().insert(game_id, result);
         }
 
         let mut tree: Vec<MoveStat> = games_by_san
             .into_iter()
-            .map(|(san, game_ids)| {
+            .map(|(san, games)| {
                 let mut stat = MoveStat {
                     san,
-                    count: game_ids.len() as u64,
+                    count: games.len() as u64,
                     white: 0,
                     draws: 0,
                     black: 0,
                 };
-                for game_id in game_ids {
-                    match results.get(&game_id).and_then(Option::as_deref) {
+                for result in games.into_values() {
+                    match result.as_deref() {
                         Some("1-0") => stat.white += 1,
                         Some("0-1") => stat.black += 1,
                         Some("1/2-1/2") => stat.draws += 1,
@@ -179,23 +181,19 @@ impl PositionSearchService {
             return Ok(Vec::new());
         }
 
-        // A game may reach the same position more than once (repetition), so take
-        // distinct game ids before loading the games themselves.
-        let game_ids: Vec<i32> = position_index::Entity::find()
+        // A game may reach the same position more than once (repetition); keep the
+        // distinct game-id set inside the database as a subquery instead of pulling
+        // it into Rust only to bind it straight back as an `IN (?, ?, …)` list.
+        let game_ids = position_index::Entity::find()
             .filter(position_index::Column::Zobrist.eq(position_index::to_i64(zobrist)))
             .filter(position_index::Column::DatabaseId.is_in(visible))
             .select_only()
             .column(position_index::Column::GameId)
             .distinct()
-            .into_tuple()
-            .all(&self.db)
-            .await?;
-        if game_ids.is_empty() {
-            return Ok(Vec::new());
-        }
+            .into_query();
 
         let mut query = games::Entity::find()
-            .filter(games::Column::Id.is_in(game_ids))
+            .filter(games::Column::Id.in_subquery(game_ids))
             .order_by_asc(games::Column::Id);
         if let Some(limit) = limit {
             query = query.limit(limit);
@@ -223,24 +221,6 @@ impl PositionSearchService {
             .into_tuple()
             .all(&self.db)
             .await?)
-    }
-
-    /// `game_id -> result` for the given games, loaded in one query.
-    async fn results_for(
-        &self,
-        game_ids: impl Iterator<Item = i32>,
-    ) -> Result<HashMap<i32, Option<String>>, SearchError> {
-        let ids: HashSet<i32> = game_ids.collect();
-        Ok(games::Entity::find()
-            .filter(games::Column::Id.is_in(ids))
-            .select_only()
-            .column(games::Column::Id)
-            .column(games::Column::Result)
-            .into_tuple::<(i32, Option<String>)>()
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .collect())
     }
 }
 
