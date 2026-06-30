@@ -400,3 +400,48 @@ export interface ImportSummary {
   imported: number
   state: ImportState
 }
+
+// --- AI study assistant (issue #20) -----------------------------------------
+
+/** A model-requested tool call; `requires_approval` marks a mutating tool. */
+export interface AssistantToolCall {
+  id: string
+  name: string
+  input: unknown
+  requires_approval: boolean
+}
+
+/** A tool result fed back into the loop. */
+export interface AssistantToolResult {
+  tool_call_id: string
+  content: string
+  is_error: boolean
+}
+
+/** One transcript turn: `role` plus whichever of the optional fields applies. */
+export interface AssistantMessage {
+  role: 'user' | 'assistant' | 'tool_results'
+  text?: string
+  tool_calls?: AssistantToolCall[]
+  tool_results?: AssistantToolResult[]
+}
+
+/** A session sidebar row (no transcript). */
+export interface AssistantSessionSummary {
+  id: number
+  title: string
+  model: string
+}
+
+/** A full session with its transcript + agent-loop state. */
+export interface AssistantSession {
+  id: number
+  title: string
+  model: string
+  messages: AssistantMessage[]
+  /** Mutating calls awaiting an approve/deny decision. */
+  pending_approvals: AssistantToolCall[]
+  awaiting_approval: boolean
+  iterations: number
+  iteration_cap: number
+}

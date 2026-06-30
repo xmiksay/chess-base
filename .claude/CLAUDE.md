@@ -35,6 +35,11 @@ src/
   games/export.rs  pure: mainline → MoveTree (+#119 review: [%eval]/NAGs/why) for
                    GET /api/games/{id}/export?annotated= — extended-PGN download (#120) ← unit-tested
   ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
+  ai/providers.rs  ProviderService over llm_providers table (#20): admin-managed providers
+                   (key server-side); default row builds the provider at startup, else env
+  ai/assistant/    embedded Claude study assistant (#20, Direction B): agent loop driving the
+                   SAME in-process MCP ToolRegistry — iteration cap + per-tool approval
+                   (mutating tools gated); store.rs persists sessions/transcript   ← unit-tested
   study_gen/       study-gen stages (Epic 9): tree (#29) builds a pruned VariationTree;
                    features.rs (#30) pure pawn-structure & key-square concepts;
                    annotate.rs (#31) batch LLM annotation pass + verification loop
@@ -47,7 +52,8 @@ src/
                    routes/mcp/ tools: engine_analyse + analyse_position/analyse_game
                    (#125), study_* (create/get/import_pgn/add_move/annotate/export,
                    #125), list_databases/db_list_games/db_read_game (#125),
-                   generate_study — all thin callers of the shared services
+                   generate_study — all thin callers of the shared services.
+                   routes/assistant.rs: AI assistant chat + provider registry (#20)
   bin/chess-base.rs  CLI entry (clap)
 frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
                    (strict `vue-tsc`; shared API/domain types in src/types.ts; ADR 0021)

@@ -4,6 +4,8 @@ import type {
   AddMoveResult,
   Annotation,
   ApiSettings,
+  AssistantSession,
+  AssistantSessionSummary,
   AuthResponse,
   Database,
   DatabaseKind,
@@ -244,6 +246,25 @@ export const api = {
       }),
     uploadPgn: (databaseId: number, pgn: string) =>
       send<ImportResult>('POST', '/api/import/pgn', { database_id: databaseId, pgn }),
+  },
+
+  // Embedded AI study assistant (issue #20). A chat session drives an agent loop
+  // over the same tools the MCP endpoint exposes; mutating tools pause for the
+  // user's approval. `create` / `send` / `respond` return the full session with
+  // its transcript and loop state. 503 when no LLM provider is configured.
+  assistant: {
+    listSessions: () => getJson<AssistantSessionSummary[]>('/api/assistant/sessions'),
+    getSession: (id: number) => getJson<AssistantSession>(`/api/assistant/sessions/${id}`),
+    createSession: (title?: string, model?: string) =>
+      send<AssistantSession>('POST', '/api/assistant/sessions', { title, model }),
+    deleteSession: (id: number) => send<null>('DELETE', `/api/assistant/sessions/${id}`),
+    // Post a user message and run the loop until it answers, pauses for an
+    // approval, or hits the iteration cap.
+    send: (id: number, text: string) =>
+      send<AssistantSession>('POST', `/api/assistant/sessions/${id}/messages`, { text }),
+    // Resolve a pending approval: a map of tool-call id → approve (true) / deny.
+    respond: (id: number, decisions: Record<string, boolean>) =>
+      send<AssistantSession>('POST', `/api/assistant/sessions/${id}/respond`, { decisions }),
   },
 
   // Per-user settings (issue #13): theme, board theme, default database.

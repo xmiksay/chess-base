@@ -5,4 +5,6 @@
 //! (Epic 7). Both need a Claude API client; extracting it here keeps the core
 //! batch pass from depending on the optional interactive work.
 
+pub mod assistant;
 pub mod llm;
+pub mod providers;

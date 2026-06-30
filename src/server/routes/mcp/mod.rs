@@ -36,6 +36,8 @@ const SERVER_NAME: &str = "chess-base";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: &str = "2025-03-26";
 
+pub use tools::default_registry;
+
 /// Mount the `/mcp` endpoint with the default tool registry.
 pub fn router(app: AppState) -> Router {
     let state = McpState {
@@ -111,6 +113,13 @@ impl Tool {
             handler: Arc::new(move |state, user, args| Box::pin(handler(state, user, args))),
         }
     }
+
+    /// Run this tool's handler. The embedded assistant (issue #20) invokes the
+    /// same handlers in-process as the `/mcp` transport does, so one tool surface
+    /// backs both — no second implementation.
+    pub async fn invoke(&self, app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
+        (self.handler)(app, user, args).await
+    }
 }
 
 /// The set of tools exposed over MCP. Epic 9 issues register their tools here.
@@ -130,6 +139,24 @@ impl ToolRegistry {
 
     fn find(&self, name: &str) -> Option<&Tool> {
         self.tools.iter().find(|t| t.name == name)
+    }
+
+    /// The registered tools, for callers that drive the surface in-process (the
+    /// embedded assistant builds its tool specs from these — issue #20).
+    pub fn tools(&self) -> &[Tool] {
+        &self.tools
+    }
+
+    /// Run the named tool, or `None` if no tool by that name is registered.
+    pub async fn invoke(
+        &self,
+        name: &str,
+        app: AppState,
+        user: CurrentUser,
+        args: Value,
+    ) -> Option<ToolOutcome> {
+        let tool = self.find(name)?;
+        Some(tool.invoke(app, user, args).await)
     }
 
     /// The `tools/list` payload: `[{ name, description, inputSchema }]`.
