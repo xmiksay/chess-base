@@ -4,6 +4,7 @@
 // board (chessground) and tree stay in sync through the study-editor store.
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Board from '../components/Board.vue'
+import BoardControls from '../components/BoardControls.vue'
 import MoveTree from '../components/MoveTree.vue'
 import AnnotationEditor from '../components/AnnotationEditor.vue'
 import StudyAnalysis from '../components/StudyAnalysis.vue'
@@ -13,17 +14,25 @@ import { downloadText } from '../lib/download'
 import { useStudiesStore } from '../stores/studies'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { useSettingsStore } from '../stores/settings'
-import { useEngineStore } from '../stores/engine'
+import { useBoardOverlays } from '../lib/useBoardOverlays'
 import type { DrawShape } from 'chessground/draw'
 import type { BoardMove, Database, Shape } from '../types'
 
 const studies = useStudiesStore()
 const editor = useStudyEditorStore()
 const settings = useSettingsStore()
-const engine = useEngineStore()
 
-// Live engine PV arrows, overlaid on the board without touching pinned plans.
-const engineShapes = computed(() => engine.shapes as unknown as DrawShape[])
+const boardRef = ref<InstanceType<typeof Board> | null>(null)
+
+// Toggleable overlay layers (plans / threats / master, #123) driven by the
+// selected node's FEN. The engine-PV arrows ride along as the Plans layer, so
+// they stay read-only auto-shapes that never clobber the node's pinned drawings.
+const { boardShapes } = useBoardOverlays(() => editor.fen)
+
+/** Clear the user's hand-drawn arrows; the computed overlay layers stay. */
+function clearArrows() {
+  boardRef.value?.clearUserShapes()
+}
 
 const databases = ref<Database[]>([])
 const newName = ref('')
@@ -233,61 +242,40 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         class="lg:w-2/5"
       >
         <Board
+          ref="boardRef"
           :fen="editor.fen"
           :dests="editor.legalDests"
           :movable="true"
           :last-move="editor.lastMove"
           :board-theme="settings.boardTheme"
           :shapes="pinnedShapes"
-          :overlay-shapes="engineShapes"
+          :overlay-shapes="boardShapes"
           :persist-shapes="true"
           :editable-shapes="true"
           @move="onBoardMove"
           @drawn="onShapesDrawn"
         />
 
-        <div class="mt-3 flex items-center gap-2">
-          <button
-            class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
-            :disabled="editor.atStart"
-            aria-label="Start"
-            @click="editor.goToStart()"
-          >
-            ⏮
-          </button>
-          <button
-            class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
-            :disabled="editor.atStart"
-            aria-label="Back"
-            @click="editor.back()"
-          >
-            ◀
-          </button>
-          <button
-            class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
-            :disabled="editor.atEnd"
-            aria-label="Forward"
-            @click="editor.forward()"
-          >
-            ▶
-          </button>
-          <button
-            class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
-            :disabled="editor.atEnd"
-            aria-label="End"
-            @click="editor.goToEnd()"
-          >
-            ⏭
-          </button>
-          <button
-            v-if="editor.currentNode?.shapes?.length"
-            class="ml-auto rounded border border-neutral-300 px-2 py-1 text-sm"
-            data-test="clear-pin"
-            @click="editor.setShapes([])"
-          >
-            Clear pinned plan
-          </button>
-        </div>
+        <BoardControls
+          class="mt-3"
+          :at-start="editor.atStart"
+          :at-end="editor.atEnd"
+          @first="editor.goToStart()"
+          @prev="editor.back()"
+          @next="editor.forward()"
+          @last="editor.goToEnd()"
+          @clear-arrows="clearArrows"
+        />
+
+        <!-- Per-view extra: clear the persisted pinned plan on this node (#61). -->
+        <button
+          v-if="editor.currentNode?.shapes?.length"
+          class="mt-2 rounded border border-neutral-300 px-2 py-1 text-sm"
+          data-test="clear-pin"
+          @click="editor.setShapes([])"
+        >
+          Clear pinned plan
+        </button>
 
         <!-- Engine analysis for the selected node (#5 in studies). -->
         <StudyAnalysis class="mt-4" />
