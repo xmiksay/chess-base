@@ -82,11 +82,10 @@ fn no_second_line_means_no_gap() {
 
 #[test]
 fn only_move_when_gap_clears_threshold() {
-    let cfg = DangerConfig::default(); // 120
-    assert!(is_only_move(cp(50), cp(-80), &cfg)); // gap 130
-    assert!(!is_only_move(cp(50), cp(-50), &cfg)); // gap 100
-    // Exactly on the threshold counts.
-    assert!(is_only_move(cp(0), cp(-120), &cfg)); // gap 120
+    let cfg = DangerConfig::default(); // only_move_gap_cp = 120
+    assert!(is_only_move(cp(50), cp(-80), &cfg)); // gap 130 > 120
+    assert!(!is_only_move(cp(50), cp(-50), &cfg)); // gap 100 < 120
+    assert!(is_only_move(cp(0), cp(-120), &cfg)); // gap 120 == 120, inclusive
 }
 
 #[test]
