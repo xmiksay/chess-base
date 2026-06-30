@@ -50,7 +50,9 @@ src/
                    weapon/hope-chess + only-move gap (engine as adjudicator);
                    spine.rs (#139) PGN-repertoire walk: per opponent position runs
                    analyse_multi (movetime/variation) → reachability/trap/only-move
-                   → a tagged DangerTree (Weapon/Caution/Off-book);
+                   /attack → a tagged DangerTree (Weapon/Caution/Off-book);
+                   attack.rs (#142) pure pawn-storm-toward-king detector reusing
+                   plans.rs → Caution;
                    danger_generate.rs (#140) orchestrator: spine walk → fold to a
                    VariationTree (role tags as concept hints) → annotate/verify →
                    persist a study; surfaces rejected claims + role tags   ← unit-tested

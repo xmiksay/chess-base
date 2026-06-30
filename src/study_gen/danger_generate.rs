@@ -231,7 +231,7 @@ fn collect_roles(danger: &DangerTree) -> Vec<TaggedRole> {
         .nodes
         .iter()
         .filter_map(|n| {
-            n.tag.map(|tag| TaggedRole {
+            n.tag.as_ref().map(|tag| TaggedRole {
                 node_id: n.id,
                 san: n.san.clone(),
                 kind: tag.kind,
@@ -291,6 +291,9 @@ fn role_concept(tag: &DangerTag) -> String {
         }
         (DangerKind::OnlyMove, DangerRole::Weapon) => {
             "danger weapon: a narrow only-move path the opponent frequently misses".into()
+        }
+        (DangerKind::Attack, _) => {
+            "danger caution: this move concedes a pawn storm marching toward your king — warn about the attack".into()
         }
         (DangerKind::OffBook, _) => {
             "danger off-book: a reply order the repertoire does not yet answer".into()

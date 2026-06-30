@@ -10,7 +10,7 @@ use async_trait::async_trait;
 
 use crate::engine::{Analysis, Score};
 use crate::pgn_tree::MoveTree;
-use crate::position::{replay, STARTPOS_FEN};
+use crate::position::{apply_san, replay, STARTPOS_FEN};
 use crate::search::report::MoveReport;
 
 const STD: CastlingMode = CastlingMode::Standard;
@@ -128,8 +128,9 @@ async fn offbook_reply_tagged_onbook_reply_recurses() {
     assert!(c5.tag.is_none(), "a prepared reply is plain, not tagged");
 
     let e5 = node_by_san(&tree, "e5");
-    assert_eq!(e5.tag.unwrap().kind, DangerKind::OffBook);
-    assert_eq!(e5.tag.unwrap().role, DangerRole::OffBook);
+    let e5_tag = e5.tag.as_ref().expect("e5 is off-book");
+    assert_eq!(e5_tag.kind, DangerKind::OffBook);
+    assert_eq!(e5_tag.role, DangerRole::OffBook);
     // The off-book node is a leaf: the repertoire has nothing beyond it.
     assert!(e5.children.is_empty());
 }
@@ -159,7 +160,7 @@ async fn weapon_trap_tagged_on_our_move() {
 
     // The danger is judged on *our* move (e4), not the opponent position.
     let e4 = node_by_san(&tree, "e4");
-    let tag = e4.tag.expect("e4 is tagged");
+    let tag = e4.tag.as_ref().expect("e4 is tagged");
     assert_eq!(tag.kind, DangerKind::Trap);
     assert_eq!(tag.role, DangerRole::Weapon);
     assert_eq!(tag.trap, Some(TrapVerdict::Weapon));
@@ -188,7 +189,8 @@ async fn refuted_bait_tagged_caution() {
     .await
     .unwrap();
 
-    let tag = node_by_san(&tree, "e4").tag.expect("e4 is tagged");
+    let node = node_by_san(&tree, "e4");
+    let tag = node.tag.as_ref().expect("e4 is tagged");
     assert_eq!(tag.kind, DangerKind::Trap);
     assert_eq!(tag.role, DangerRole::Caution);
     assert_eq!(tag.trap, Some(TrapVerdict::HopeChess));
@@ -218,7 +220,8 @@ async fn only_move_weapon_when_humans_miss_it() {
     .await
     .unwrap();
 
-    let tag = node_by_san(&tree, "e4").tag.expect("e4 is tagged");
+    let node = node_by_san(&tree, "e4");
+    let tag = node.tag.as_ref().expect("e4 is tagged");
     assert_eq!(tag.kind, DangerKind::OnlyMove);
     assert_eq!(tag.role, DangerRole::Weapon);
     assert_eq!(tag.miss_rate, Some(0.5));
@@ -286,7 +289,7 @@ async fn black_repertoire_expands_opponent_first_and_never_tags_root() {
     // The prepared opponent move is on-book (plain); the unprepared one is off-book.
     assert!(node_by_san(&tree, "e4").tag.is_none());
     assert_eq!(
-        node_by_san(&tree, "d4").tag.unwrap().kind,
+        node_by_san(&tree, "d4").tag.as_ref().unwrap().kind,
         DangerKind::OffBook
     );
 }
@@ -314,6 +317,64 @@ async fn max_depth_bounds_the_walk() {
     // Root (ply 0) + e4 (ply 1) only; the opponent replies at ply 2 are cut.
     assert_eq!(tree.nodes.len(), 2);
     assert!(tree.nodes.iter().all(|n| n.ply <= 1));
+}
+
+#[tokio::test]
+async fn attack_pawn_storm_tagged_caution_on_our_move() {
+    // A quiet middlegame: both kings castled short, only the f/g/h pawns left.
+    // Our spine plays 1.Kf1; the engine's best reply for Black is a g-pawn storm
+    // (g5-g4-g3) toward our king — no trap, no narrow path, so the attack signal
+    // is what fires, flagging Kf1 as a Caution.
+    let start = "6k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1";
+    let after_kf1 = apply_san(start, "Kf1", STD).unwrap().0;
+
+    let mut spine = MoveTree::new();
+    spine.add_move(spine.root, "Kf1");
+
+    // Neutral evals (Black +50 best, 0 second) ⇒ Quiet trap, gap 50 < 120 ⇒ not
+    // an only-move. The best line is the storm.
+    let storm = Analysis {
+        bestmove: "g7g5".to_string(),
+        ponder: None,
+        score: Some(Score::Cp { value: 50 }),
+        depth: None,
+        pv: vec![
+            "g7g5".to_string(),
+            "f1g1".to_string(),
+            "g5g4".to_string(),
+            "g1f1".to_string(),
+            "g4g3".to_string(),
+        ],
+    };
+    let mut an = HashMap::new();
+    an.insert(after_kf1.clone(), vec![storm, line("f7f5", 0)]);
+    let mut stats = HashMap::new();
+    stats.insert(after_kf1, vec![report("g5", 0.5)]);
+
+    let config = SpineConfig {
+        max_depth: 2,
+        ..SpineConfig::default()
+    };
+
+    let tree = walk_danger_spine(
+        &FakeAnalyzer(an),
+        &FakeStats(stats),
+        &spine,
+        start,
+        &config,
+        STD,
+    )
+    .await
+    .unwrap();
+
+    let node = node_by_san(&tree, "Kf1");
+    let tag = node.tag.as_ref().expect("Kf1 is tagged");
+    assert_eq!(tag.kind, DangerKind::Attack);
+    assert_eq!(tag.role, DangerRole::Caution);
+    let attack = tag.attack.as_ref().expect("storm recorded");
+    assert_eq!(attack.pawn, 'p', "Black's storming pawn");
+    assert_eq!(attack.path, vec!["g7", "g5", "g4", "g3"]);
+    assert_eq!(attack.advances, 3);
 }
 
 #[tokio::test]
