@@ -8,6 +8,7 @@
 //! types and pruning logic live in [`tree`].
 
 pub mod annotate;
+pub mod danger;
 pub mod features;
 pub mod generate;
 pub mod tree;
@@ -26,6 +27,7 @@ pub use annotate::{
     annotate_tree, build_prompt, build_request, verify_and_commit, AnnotateError,
     AnnotationOutcome, Claim, DraftAnnotation, Rejection,
 };
+pub use danger::{is_only_move, only_move_gap, trap_verdict, DangerConfig, TrapVerdict};
 pub use features::{concepts_of_fen, concepts_of_fen_with, Concepts, KeySquare};
 pub use generate::{
     generate_study, generate_study_live, GenerateError, GenerateOutcome, GenerateParams,
