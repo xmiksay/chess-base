@@ -4,13 +4,14 @@
 //! is validated for legality against [`position`](crate::position) as it is
 //! replayed, so malformed PGN yields an error instead of a silently broken tree.
 //! Export walks the tree back into standard PGN movetext, re-validating each SAN.
-//! Both directions assume the standard start position (set-up `[FEN]` tags are
-//! out of scope for the move tree).
+//! A set-up `[FEN]`/`[SetUp]` header is honoured on import (recorded as the
+//! tree's [`MoveTree::start_fen`]) and re-emitted on export, so a study built
+//! from a custom origin round-trips (issue #135).
 
 use std::io::Cursor;
 use std::ops::ControlFlow;
 
-use pgn_reader::{Nag, RawComment, Reader, SanPlus, Skip, Visitor};
+use pgn_reader::{Nag, RawComment, RawTag, Reader, SanPlus, Skip, Visitor};
 
 use super::{eval, shapes, MoveTree};
 use crate::position::{apply_san, CastlingMode, PositionError, STARTPOS_FEN};
@@ -42,18 +43,30 @@ pub enum PgnError {
 /// [`PgnError::Empty`] for input with no game and an error (never a panic) for
 /// malformed input or illegal moves.
 pub fn from_pgn(pgn: &str) -> Result<MoveTree, PgnError> {
-    from_pgn_with_start(pgn, STARTPOS_FEN)
+    read_game(
+        pgn,
+        Importer {
+            explicit_start: None,
+        },
+    )
 }
 
-/// Like [`from_pgn`], but seed the importer from `start_fen` instead of the
-/// standard start position. The visitor ignores header tags, so a game stored
-/// with a SetUp `[FEN]` (recorded separately as the game's `start_fen`) needs
-/// its origin threaded in for the moves to replay legally (issue #135).
+/// Like [`from_pgn`], but seed the importer from `start_fen`, which **overrides**
+/// any `[FEN]` header in the PGN. Used when the origin is known out-of-band (e.g.
+/// a repertoire spine whose start comes from the request, not the movetext).
 pub fn from_pgn_with_start(pgn: &str, start_fen: &str) -> Result<MoveTree, PgnError> {
+    read_game(
+        pgn,
+        Importer {
+            explicit_start: Some(start_fen.to_string()),
+        },
+    )
+}
+
+/// Read the first game of `pgn` with `importer`, mapping the reader's outcomes
+/// onto [`PgnError`] (empty input / malformed PGN) without ever panicking.
+fn read_game(pgn: &str, mut importer: Importer) -> Result<MoveTree, PgnError> {
     let mut reader = Reader::new(Cursor::new(pgn.as_bytes()));
-    let mut importer = Importer {
-        start_fen: start_fen.to_string(),
-    };
     match reader.read_game(&mut importer) {
         Ok(Some(result)) => result,
         Ok(None) => Err(PgnError::Empty),
@@ -68,15 +81,44 @@ pub fn from_pgn_with_start(pgn: &str, start_fen: &str) -> Result<MoveTree, PgnEr
 /// `( … )`, comments render as `{ … }` and NAGs as `$N`.
 pub fn to_pgn(tree: &MoveTree) -> Result<String, PgnError> {
     let mut out = String::new();
+    // A set-up origin is re-emitted as `[SetUp]`/`[FEN]` so the export is
+    // self-contained and re-importable; standard-start trees stay header-free.
+    if let Some(fen) = &tree.start_fen {
+        push_header_tag(&mut out, "SetUp", "1");
+        push_header_tag(&mut out, "FEN", fen);
+        out.push('\n');
+    }
+    out.push_str(&movetext(tree)?);
+    Ok(out)
+}
+
+/// The numbered movetext alone (no header tags), replayed from the tree's start
+/// position. Shared by [`to_pgn`] and the Lichess-study export so a set-up
+/// position's move numbering and per-SAN legality validation use one path.
+pub(crate) fn movetext(tree: &MoveTree) -> Result<String, PgnError> {
+    let mut out = String::new();
     if let Some(comment) = &tree.nodes[tree.root].comment {
         out.push('{');
         out.push_str(comment);
         out.push('}');
     }
-    write_line(tree, tree.root, STARTPOS_FEN, 0, false, &mut out)?;
+    let start = tree.start_position();
+    let (ply, force) = start_ply_and_force(start);
+    write_line(tree, tree.root, start, ply, force, &mut out)?;
     separate(&mut out);
     out.push('*');
     Ok(out)
+}
+
+/// Half-move count and whether Black is to move at `fen` — the seed for move
+/// numbering when a tree starts from a set-up position. Falls back to a
+/// white-to-move ply-0 start for a malformed FEN (the SANs still re-validate on
+/// the way out, so a bad origin surfaces as a move error, never silently).
+fn start_ply_and_force(fen: &str) -> (usize, bool) {
+    let fields: Vec<&str> = fen.split_whitespace().collect();
+    let black = fields.get(1) == Some(&"b");
+    let fullmove: usize = fields.get(5).and_then(|s| s.parse().ok()).unwrap_or(1);
+    ((fullmove.max(1) - 1) * 2 + black as usize, black)
 }
 
 // ---- Import ---------------------------------------------------------------
@@ -97,7 +139,13 @@ struct Build {
 
 impl Build {
     fn new(start_fen: &str) -> Self {
-        let tree = MoveTree::new();
+        let mut tree = MoveTree::new();
+        // Record a non-standard origin on the tree so every later replay (export,
+        // study editing, the SPA board) seeds from it; the standard start stays
+        // `None` so existing studies are byte-for-byte unchanged.
+        if start_fen != STARTPOS_FEN {
+            tree.start_fen = Some(start_fen.to_string());
+        }
         Build {
             cur: tree.root,
             fens: vec![start_fen.to_string()],
@@ -108,23 +156,45 @@ impl Build {
 }
 
 /// Streaming visitor that replays one game into a [`MoveTree`], seeding the
-/// first position from `start_fen` (the standard start position via [`from_pgn`],
-/// or a SetUp origin via [`from_pgn_with_start`]).
+/// first position from (in priority) an explicit caller origin, the game's
+/// `[FEN]` header, or the standard start position.
 struct Importer {
-    start_fen: String,
+    /// An explicit start position supplied by the caller ([`from_pgn_with_start`]);
+    /// when set it overrides any `[FEN]` header. `None` for [`from_pgn`], which
+    /// then honours the header (or the standard start when absent).
+    explicit_start: Option<String>,
 }
 
 impl Visitor for Importer {
-    type Tags = ();
+    /// The captured `[FEN]` header value, if the game carried one.
+    type Tags = Option<String>;
     type Movetext = Build;
     type Output = Result<MoveTree, PgnError>;
 
     fn begin_tags(&mut self) -> ControlFlow<Self::Output, Self::Tags> {
+        ControlFlow::Continue(None)
+    }
+
+    fn tag(
+        &mut self,
+        tags: &mut Self::Tags,
+        name: &[u8],
+        value: RawTag<'_>,
+    ) -> ControlFlow<Self::Output> {
+        if name == b"FEN" {
+            *tags = Some(value.decode_utf8_lossy().to_string());
+        }
         ControlFlow::Continue(())
     }
 
-    fn begin_movetext(&mut self, _tags: ()) -> ControlFlow<Self::Output, Self::Movetext> {
-        ControlFlow::Continue(Build::new(&self.start_fen))
+    fn begin_movetext(&mut self, fen_tag: Self::Tags) -> ControlFlow<Self::Output, Self::Movetext> {
+        // Explicit caller origin wins; otherwise the `[FEN]` header; else startpos.
+        let start = self
+            .explicit_start
+            .take()
+            .or(fen_tag)
+            .unwrap_or_else(|| STARTPOS_FEN.to_string());
+        ControlFlow::Continue(Build::new(&start))
     }
 
     fn san(&mut self, b: &mut Build, san_plus: SanPlus) -> ControlFlow<Self::Output> {
@@ -357,8 +427,46 @@ mod tests {
         let fen = "4k3/8/8/8/8/8/8/3QK3 w - - 0 1";
         let tree = from_pgn_with_start("1. Qd8+ *", fen).unwrap();
         assert_eq!(tree.mainline(), vec!["Qd8+"]);
+        assert_eq!(tree.start_fen.as_deref(), Some(fen));
         // The same movetext is illegal from the standard start position.
         assert!(matches!(from_pgn("1. Qd8+ *"), Err(PgnError::Position(_))));
+    }
+
+    #[test]
+    fn from_pgn_honours_a_setup_fen_header() {
+        // The Catalan after 1.d4 Nf6 2.c4 e6 3.g3, Black to move. `d5` is illegal
+        // from the standard start, so plain from_pgn must read the header to
+        // replay it — the bug that motivated issue #135 on the study import path.
+        let fen = "rnbqkb1r/pppp1ppp/4pn2/8/2PP4/6P1/PP2PP1P/RNBQKBNR b KQkq - 0 3";
+        let pgn = format!("[SetUp \"1\"]\n[FEN \"{fen}\"]\n\n3... d5 4. Bg2 *");
+        let tree = from_pgn(&pgn).unwrap();
+        assert_eq!(tree.start_fen.as_deref(), Some(fen));
+        assert_eq!(tree.mainline(), vec!["d5", "Bg2"]);
+    }
+
+    #[test]
+    fn round_trips_a_setup_position_with_correct_numbering() {
+        let fen = "rnbqkb1r/pppp1ppp/4pn2/8/2PP4/6P1/PP2PP1P/RNBQKBNR b KQkq - 0 3";
+        let tree = from_pgn_with_start("3... d5 4. Bg2 *", fen).unwrap();
+        let pgn = to_pgn(&tree).unwrap();
+        // Self-contained: re-emits the origin and numbers from the FEN's move 3.
+        assert!(pgn.contains(&format!("[FEN \"{fen}\"]")));
+        assert!(pgn.contains("[SetUp \"1\"]"));
+        assert!(pgn.contains("3... d5"));
+        assert!(pgn.contains("4. Bg2"));
+        // …and the export re-imports to an identical tree.
+        assert_eq!(from_pgn(&pgn).unwrap(), tree);
+    }
+
+    #[test]
+    fn explicit_start_overrides_the_header() {
+        // A header FEN is present, but the caller's explicit origin wins.
+        let header_fen = "4k3/8/8/8/8/8/8/3QK3 w - - 0 1";
+        let pgn = format!("[SetUp \"1\"]\n[FEN \"{header_fen}\"]\n\n1. e4 *");
+        let tree = from_pgn_with_start(&pgn, STARTPOS_FEN).unwrap();
+        // Explicit STARTPOS ⇒ no recorded origin, and `e4` is legal from startpos.
+        assert_eq!(tree.start_fen, None);
+        assert_eq!(tree.mainline(), vec!["e4"]);
     }
 
     #[test]

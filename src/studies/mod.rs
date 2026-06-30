@@ -19,9 +19,7 @@ pub mod routes;
 use crate::db::entities::studies;
 use crate::pgn_tree::pgn::{self, PgnError};
 use crate::pgn_tree::{lichess, MoveTree, Shape, TreeError};
-use crate::position::{
-    apply_san, legal_sans, replay, uci_to_san, CastlingMode, PositionError, STARTPOS_FEN,
-};
+use crate::position::{apply_san, legal_sans, replay, uci_to_san, CastlingMode, PositionError};
 use crate::server::identity::{assert_admin, assert_can_write, scope, CurrentUser};
 
 /// Studies are standard chess; castling rights parse the normal way.
@@ -291,7 +289,7 @@ impl StudyService {
         let line = tree
             .line_to(from_node_id)
             .ok_or(StudyError::InvalidNode(from_node_id))?;
-        let fen = fen_at(&line)?;
+        let fen = fen_at(tree.start_position(), &line)?;
         let canonical = resolve_move(&fen, &mv)?;
         // The position after the move — handed back so an agent chaining moves
         // doesn't replay the line itself. `canonical` is already legal here.
@@ -428,11 +426,12 @@ impl StudyService {
     }
 }
 
-/// FEN of the position reached by replaying a node's SAN line from the start.
-fn fen_at(line: &[String]) -> Result<String, PositionError> {
-    match replay(STARTPOS_FEN, line, MODE)?.last() {
+/// FEN of the position reached by replaying a node's SAN `line` from the study's
+/// start position (`start_fen`, or the standard start when the study has none).
+fn fen_at(start_fen: &str, line: &[String]) -> Result<String, PositionError> {
+    match replay(start_fen, line, MODE)?.last() {
         Some(ply) => Ok(ply.fen.clone()),
-        None => Ok(STARTPOS_FEN.to_string()),
+        None => Ok(start_fen.to_string()),
     }
 }
 

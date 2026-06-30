@@ -20,7 +20,8 @@ Full detail in [`../docs/architecture.md`](../docs/architecture.md); decisions i
 ```
 src/
   position.rs      pure: FEN/SAN, legal moves, Zobrist hash (shakmaty)   ← unit-tested
-  pgn_tree.rs      pure: study move-tree (variations/comments/NAGs/shapes/[%eval]) ← unit-tested
+  pgn_tree.rs      pure: study move-tree (variations/comments/NAGs/shapes/[%eval] +
+                   set-up start_fen, ADR-0028: [FEN] header honoured on import/export) ← unit-tested
   openings.rs      pure: ECO classification (embedded lichess dataset)     ← unit-tested
   plans.rs         pure: engine-PV → per-piece trajectories (ADR 0017)      ← unit-tested
   features.rs      pure: position feature tags (material/phase/check, #33)    ← unit-tested

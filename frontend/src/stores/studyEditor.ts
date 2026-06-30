@@ -12,6 +12,19 @@ import { useStudiesStore } from './studies'
 import { childWithSan, firstChild, getNode, lastMainlineId, sanPath } from '../lib/moveTree'
 import type { Annotation, BoardMove, Shape, Square } from '../types'
 
+/** A chess.js seeded from a study's set-up `start_fen`, or the standard start
+ *  when absent or malformed (a bad origin must not blank the board). */
+function startChess(startFen?: string): Chess {
+  if (startFen) {
+    try {
+      return new Chess(startFen)
+    } catch {
+      // fall through to the standard start position
+    }
+  }
+  return new Chess()
+}
+
 export const useStudyEditorStore = defineStore('studyEditor', () => {
   const studies = useStudiesStore()
 
@@ -25,7 +38,7 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
   // position so the board, legal moves and last-move highlight follow selection.
   const line = computed(() => (tree.value ? sanPath(tree.value, nodeId.value) : []))
   const _chess = computed(() => {
-    const c = new Chess()
+    const c = startChess(tree.value?.start_fen)
     for (const san of line.value) {
       try {
         c.move(san)

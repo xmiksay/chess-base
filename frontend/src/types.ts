@@ -146,6 +146,8 @@ export interface MoveNode {
 export interface MoveTree {
   root: number
   nodes: MoveNode[]
+  /** Set-up start position the moves replay from; absent ⇒ the standard start. */
+  start_fen?: string
 }
 
 export interface StudySummary {

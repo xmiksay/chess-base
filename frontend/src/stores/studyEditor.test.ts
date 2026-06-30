@@ -130,6 +130,38 @@ describe('studyEditor store', () => {
     expect(studies.current!.tree.nodes[1].shapes).toEqual(shapes)
   })
 
+  it('seeds the board from a set-up start_fen and replays edits from it', () => {
+    // The Catalan after 1.d4 Nf6 2.c4 e6 3.g3, Black to move — `d5` is illegal
+    // from the standard start, so the board must seed from start_fen.
+    const fen = 'rnbqkb1r/pppp1ppp/4pn2/8/2PP4/6P1/PP2PP1P/RNBQKBNR b KQkq - 0 3'
+    studies.current = {
+      id: 11,
+      database_id: 1,
+      name: 'Catalan',
+      global: false,
+      owner_id: null,
+      tree: {
+        root: 0,
+        start_fen: fen,
+        nodes: [
+          { id: 0, parent: null, san: null, comment: null, nags: [], children: [1] },
+          { id: 1, parent: 0, san: 'd5', comment: null, nags: [], children: [] },
+        ],
+      },
+    }
+    editor.select(0)
+    expect(editor.fen.startsWith('rnbqkb1r/pppp1ppp/4pn2/8/2PP4/6P1/PP2PP1P/RNBQKBNR b')).toBe(
+      true,
+    )
+    expect(editor.turnColor).toBe('black')
+
+    editor.select(1)
+    expect(editor.line).toEqual(['d5'])
+    expect(editor.fen.startsWith('rnbqkb1r/ppp2ppp/4pn2/3p4/2PP4/6P1/PP2PP1P/RNBQKBNR w')).toBe(
+      true,
+    )
+  })
+
   it('deleteNode refreshes the tree and resets the selection to the root', async () => {
     const pruned = sampleStudy()
     pruned.tree.nodes[1].children = [2] // variation removed

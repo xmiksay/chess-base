@@ -110,10 +110,12 @@ fn study_import_pgn_tool() -> Tool {
         "study_import_pgn",
         "Import a PGN game as a new study in a single call: the first game's \
          mainline, variations, comments and NAGs are parsed into the move tree \
-         (every move validated for legality). Pairs with `study_export` for a full \
-         export → edit → re-import round trip. The study is owned by you; set \
-         `global: true` for an admin study (requires admin). Returns the new study \
-         id.",
+         (every move validated for legality). A `[SetUp \"1\"]`/`[FEN \"…\"]` header \
+         is honoured, so a study can start from a custom position (e.g. an opening \
+         tabiya or an endgame) and its moves number from there. Pairs with \
+         `study_export` for a full export → edit → re-import round trip. The study \
+         is owned by you; set `global: true` for an admin study (requires admin). \
+         Returns the new study id.",
         json!({
             "type": "object",
             "properties": {
