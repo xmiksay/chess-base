@@ -11,6 +11,7 @@ pub mod annotate;
 pub mod danger;
 pub mod features;
 pub mod generate;
+pub mod spine;
 pub mod tree;
 
 use std::collections::BTreeMap;
@@ -18,7 +19,8 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::engine::{EngineService, Limits, Score};
+use crate::engine::{Analysis, EngineService, Limits, Score};
+use crate::pgn_tree::MoveTree;
 use crate::position::CastlingMode;
 use crate::search::report::{MoveReport, PositionReportService};
 use crate::server::identity::CurrentUser;
@@ -31,6 +33,10 @@ pub use danger::{is_only_move, only_move_gap, trap_verdict, DangerConfig, TrapVe
 pub use features::{concepts_of_fen, concepts_of_fen_with, Concepts, KeySquare};
 pub use generate::{
     generate_study, generate_study_live, GenerateError, GenerateOutcome, GenerateParams,
+};
+pub use spine::{
+    walk_danger_spine, DangerKind, DangerNode, DangerRole, DangerTag, DangerTree, MultiAnalyzer,
+    Side, SpineConfig, SpineError,
 };
 pub use tree::{
     build_tree, score_to_cp, select_continuations, Candidate, ContinuationSource, Evaluator,
@@ -104,4 +110,67 @@ pub async fn build_variation_tree(
     let evaluator = EngineEvaluator::new(engine, engine_limits);
     let continuations = ReportContinuations::new(reports, user);
     build_tree(&evaluator, &continuations, start_fen, config, castling).await
+}
+
+/// [`MultiAnalyzer`] backed by the pooled engine facade. Every opponent position
+/// gets one `analyse_multi` search under a fixed **movetime-per-variation**
+/// budget (clamped to `MAX_MOVETIME_MS` inside the engine, ADR-0026).
+pub struct EngineMultiAnalyzer<'a> {
+    engine: &'a EngineService,
+    limits: Limits,
+    multipv: u16,
+}
+
+impl<'a> EngineMultiAnalyzer<'a> {
+    /// Search each position for `movetime_ms` milliseconds, returning up to
+    /// `multipv` lines. At least two lines are needed for the trap / only-move
+    /// gap, so `multipv` is floored at 2.
+    pub fn new(engine: &'a EngineService, movetime_ms: u64, multipv: u16) -> Self {
+        Self {
+            engine,
+            limits: Limits {
+                movetime_ms: Some(movetime_ms),
+                ..Limits::default()
+            },
+            multipv: multipv.max(2),
+        }
+    }
+}
+
+#[async_trait]
+impl MultiAnalyzer for EngineMultiAnalyzer<'_> {
+    async fn analyse_multi(&self, fen: &str) -> Result<Vec<Analysis>> {
+        self.engine
+            .analyse_multi(fen, &self.limits, self.multipv)
+            .await
+    }
+}
+
+/// Walk a repertoire `spine` from `start_fen` against the live engine + DB,
+/// scoped to `user`, tagging the dangerous opponent positions (issue #139). A
+/// thin convenience over [`walk_danger_spine`] with the concrete adapters;
+/// `movetime_ms` is the per-variation search budget and `multipv` the line count.
+#[allow(clippy::too_many_arguments)]
+pub async fn walk_danger_spine_live(
+    engine: &EngineService,
+    reports: &PositionReportService,
+    user: &CurrentUser,
+    spine: &MoveTree,
+    start_fen: &str,
+    config: &SpineConfig,
+    castling: CastlingMode,
+    movetime_ms: u64,
+    multipv: u16,
+) -> Result<DangerTree, SpineError> {
+    let analyzer = EngineMultiAnalyzer::new(engine, movetime_ms, multipv);
+    let continuations = ReportContinuations::new(reports, user);
+    walk_danger_spine(
+        &analyzer,
+        &continuations,
+        spine,
+        start_fen,
+        config,
+        castling,
+    )
+    .await
 }
