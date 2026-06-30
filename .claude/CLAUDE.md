@@ -41,7 +41,9 @@ src/
   ai/assistant/    embedded Claude study assistant (#20, Direction B): agent loop driving the
                    SAME in-process MCP ToolRegistry — iteration cap + per-tool approval
                    (mutating tools gated); store.rs persists sessions/transcript   ← unit-tested
-  study_gen/       study-gen stages (Epic 9): tree (#29) builds a pruned VariationTree;
+  study_gen/       study-gen stages (Epic 9): tree (#29) builds a pruned VariationTree
+                   (TreeConfig.max_children_by_depth tapers branching with depth —
+                   broad near the root, narrow on deep main lines, #160);
                    features.rs (#30) pure pawn-structure & key-square concepts;
                    annotate.rs (#31) batch LLM annotation pass + verification loop
                    (tool-free prompt, claims checked vs engine/DB before commit);

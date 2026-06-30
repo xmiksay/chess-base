@@ -108,6 +108,7 @@ fn tree_config() -> TreeConfig {
         max_nodes: 100,
         min_frequency: 0.0,
         eval_margin_cp: 10_000,
+        ..TreeConfig::default()
     }
 }
 

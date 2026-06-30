@@ -95,7 +95,7 @@ fn opening_tree_tool() -> Tool {
                 },
                 "tree": {
                     "type": "object",
-                    "description": "Optional tree pruning thresholds (max_depth, max_children, max_nodes, min_frequency, eval_margin_cp); partial overrides over the defaults."
+                    "description": "Optional tree pruning thresholds (max_depth, max_children, max_nodes, min_frequency, eval_margin_cp); partial overrides over the defaults. Set max_children_by_depth (e.g. [3,3,2,1]) to taper branching with depth — broad near the root, narrowing on deep main lines; the last entry repeats past its length and it overrides max_children."
                 },
                 "save_as": save_as_schema()
             }
