@@ -15,6 +15,8 @@
 //! and the PGN-spine walk that produces these evals, are out of this slice and
 //! handled by the orchestrator (issue #131, increments 2–5).
 
+use serde::{Deserialize, Serialize};
+
 use crate::engine::Score;
 
 use super::tree::score_to_cp;
@@ -46,7 +48,7 @@ impl Default for DangerConfig {
 }
 
 /// Outcome of the asymmetric trap test for one candidate move.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TrapVerdict {
     /// Bounded downside (`>= downside_floor_cp`) **and** a baiting upside
     /// (`>= baited_upside_cp`): a real, recommendable trap.

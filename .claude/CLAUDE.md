@@ -47,7 +47,10 @@ src/
                    generate.rs (#115) orchestrator: tree → annotate/verify → persist a
                    study; exposed as MCP `generate_study` + POST /api/studies/generate;
                    danger.rs (#131, ADR-0026) pure "danger-map" classifier — trap
-                   weapon/hope-chess + only-move gap (engine as adjudicator, WIP)   ← unit-tested
+                   weapon/hope-chess + only-move gap (engine as adjudicator);
+                   spine.rs (#139) PGN-repertoire walk: per opponent position runs
+                   analyse_multi (movetime/variation) → reachability/trap/only-move
+                   → a tagged DangerTree (Weapon/Caution/Off-book), WIP   ← unit-tested
   auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
   server/          Axum app: routes, state, embedded SPA, browser launch,
                    MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016).
