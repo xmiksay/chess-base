@@ -136,6 +136,15 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
     studies.current = await api.studies.setShapes(studyId.value!, id, shapes)
   }
 
+  /**
+   * Fill `[%eval]` on every non-terminal node via the engine (#162), so the
+   * exported PGN carries evals Lichess renders. Eval-only — comments / NAGs /
+   * shapes are left untouched. Returns the refreshed study into `current`.
+   */
+  async function analyseStudy() {
+    studies.current = await api.studies.analyse(studyId.value!)
+  }
+
   /** Promote a variation toward the mainline. */
   async function promote(id: number) {
     studies.current = await api.studies.promote(studyId.value!, id)
@@ -177,6 +186,7 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
     playMove,
     annotate,
     setShapes,
+    analyseStudy,
     promote,
     reorder,
     deleteNode,

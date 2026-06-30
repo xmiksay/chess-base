@@ -162,6 +162,11 @@ export const api = {
     // the per-move `[%eval]` annotations; `false` exports plain movetext.
     exportPgn: (id: number, { eval: withEval = true }: { eval?: boolean } = {}) =>
       getText(`/api/studies/${id}/export?eval=${withEval}`),
+    // Fill `[%eval]` on every non-terminal node from the engine (issue #162), so
+    // the exported PGN carries evals Lichess renders. Eval-only: comments / NAGs /
+    // shapes stay put. Returns the refreshed study; 503 when no engine is configured.
+    analyse: (id: number, depth?: number) =>
+      send<Study>('POST', `/api/studies/${id}/analyse`, depth == null ? {} : { depth }),
     rename: (id: number, name: string) => send<Study>('PATCH', `/api/studies/${id}`, { name }),
     remove: (id: number) => send<null>('DELETE', `/api/studies/${id}`),
     // Append a SAN move under `fromNodeId` (a variation when it already has kids).

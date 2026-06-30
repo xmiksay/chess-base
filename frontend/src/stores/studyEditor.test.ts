@@ -9,6 +9,7 @@ vi.mock('../api', () => ({
       addMove: vi.fn(),
       annotate: vi.fn(),
       setShapes: vi.fn(),
+      analyse: vi.fn(),
       promote: vi.fn(),
       reorder: vi.fn(),
       deleteNode: vi.fn(),
@@ -128,6 +129,17 @@ describe('studyEditor store', () => {
     await editor.setShapes(shapes)
     expect(api.studies.setShapes).toHaveBeenCalledWith(10, 1, shapes)
     expect(studies.current!.tree.nodes[1].shapes).toEqual(shapes)
+  })
+
+  it('analyseStudy fills evals and stores the refreshed study', async () => {
+    const analysed = sampleStudy()
+    analysed.tree.nodes[1].eval = { cp: 31 }
+    analysed.tree.nodes[2].eval = { cp: 18 }
+    vi.mocked(api.studies.analyse).mockResolvedValue(analysed)
+
+    await editor.analyseStudy()
+    expect(api.studies.analyse).toHaveBeenCalledWith(10)
+    expect(studies.current!.tree.nodes[1].eval).toEqual({ cp: 31 })
   })
 
   it('seeds the board from a set-up start_fen and replays edits from it', () => {
