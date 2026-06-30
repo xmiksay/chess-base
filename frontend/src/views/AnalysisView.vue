@@ -4,6 +4,7 @@ import Board from '../components/Board.vue'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import BoardControls from '../components/BoardControls.vue'
 import MoveTree from '../components/MoveTree.vue'
+import MoveComment from '../components/MoveComment.vue'
 import { useGameStore } from '../stores/game'
 import { useSettingsStore } from '../stores/settings'
 import { useBoardOverlays } from '../lib/useBoardOverlays'
@@ -93,6 +94,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         @next="game.next()"
         @last="game.last()"
         @clear-arrows="clearArrows"
+      />
+
+      <MoveComment
+        class="mt-3"
+        :tree="game.tree"
+        :current-id="game.currentId"
       />
 
       <MoveTree

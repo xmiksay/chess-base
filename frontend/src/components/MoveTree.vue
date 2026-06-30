@@ -21,7 +21,7 @@ const tokens = computed(() => treeTokens(props.tree))
 
 <template>
   <div
-    class="flex flex-wrap items-baseline gap-x-1 gap-y-1 text-sm leading-6"
+    class="flex flex-wrap items-baseline gap-x-0.5 gap-y-0.5 text-sm leading-tight"
     data-test="move-tree"
   >
     <p
@@ -47,7 +47,7 @@ const tokens = computed(() => treeTokens(props.tree))
         v-else
         type="button"
         data-test="move"
-        class="rounded px-1 hover:bg-neutral-200"
+        class="rounded px-0.5 hover:bg-neutral-200"
         :class="[
           t.depth === 0 ? 'font-medium text-neutral-900' : 'text-neutral-600',
           t.id === currentId ? 'bg-yellow-200 hover:bg-yellow-200' : '',
@@ -62,11 +62,12 @@ const tokens = computed(() => treeTokens(props.tree))
           v-for="(n, ni) in t.nags"
           :key="ni"
           class="text-blue-600"
-        >{{ nagGlyph(n) }}</span>
-        <span
+        >{{ nagGlyph(n) }}</span><span
           v-if="t.comment"
-          class="ml-1 italic text-green-700"
-        >{{ t.comment }}</span>
+          class="ml-0.5 text-green-600"
+          data-test="comment-marker"
+          title="has comment"
+        >•</span>
       </button>
     </template>
   </div>

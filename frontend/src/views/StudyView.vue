@@ -6,6 +6,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Board from '../components/Board.vue'
 import BoardControls from '../components/BoardControls.vue'
 import MoveTree from '../components/MoveTree.vue'
+import MoveComment from '../components/MoveComment.vue'
 import AnnotationEditor from '../components/AnnotationEditor.vue'
 import StudyAnalysis from '../components/StudyAnalysis.vue'
 import GenerateStudyDialog from '../components/GenerateStudyDialog.vue'
@@ -303,6 +304,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           @next="editor.forward()"
           @last="editor.goToEnd()"
           @clear-arrows="clearArrows"
+        />
+
+        <!-- Read surface for the selected move's comment, right under the board. -->
+        <MoveComment
+          class="mt-3"
+          :tree="editor.tree"
+          :current-id="editor.nodeId"
         />
 
         <!-- Per-view extra: clear the persisted pinned plan on this node (#61). -->

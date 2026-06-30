@@ -15,15 +15,18 @@ function sampleTree() {
 }
 
 describe('MoveTree', () => {
-  it('renders mainline moves, a bracketed variation, comment and NAG', () => {
+  it('renders mainline moves, a bracketed variation, a comment marker and NAG', () => {
     const wrapper = mount(MoveTree, { props: { tree: sampleTree(), currentId: 1 } })
     const text = wrapper.text()
     expect(text).toContain('1.e4')
     expect(text).toContain('e5')
     expect(text).toContain('(')
     expect(text).toContain('c5')
-    expect(text).toContain('Sicilian')
     expect(text).toContain('!?') // NAG 5
+    // The comment text is shown in MoveComment, not inline; the list only marks
+    // commented moves with a single dot (and never the literal text).
+    expect(text).not.toContain('Sicilian')
+    expect(wrapper.findAll('[data-test="comment-marker"]')).toHaveLength(1)
     expect(wrapper.findAll('[data-test="move"]')).toHaveLength(3)
   })
 

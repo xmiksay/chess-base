@@ -7,6 +7,7 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import Board from '../components/Board.vue'
 import BoardControls from '../components/BoardControls.vue'
 import MoveTree from '../components/MoveTree.vue'
+import MoveComment from '../components/MoveComment.vue'
 import EnginePanel from '../components/EnginePanel.vue'
 import GameReviewPanel from '../components/GameReviewPanel.vue'
 import { api } from '../api'
@@ -254,6 +255,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           {{ games.openGame.white ?? '?' }} – {{ games.openGame.black ?? '?' }}
           <span class="text-neutral-500">{{ games.openGame.result ?? '*' }}</span>
         </p>
+
+        <MoveComment
+          class="mt-2"
+          :tree="games.tree"
+          :current-id="games.currentId"
+        />
 
         <MoveTree
           class="mt-2"
