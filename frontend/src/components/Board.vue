@@ -6,6 +6,7 @@ import type { Api } from 'chessground/api'
 import type { DrawShape } from 'chessground/draw'
 import { STARTPOS_FEN, sideToMove } from '../lib/fen'
 import { planBrushes } from '../lib/plansToShapes'
+import { overlayBrushes } from '../lib/boardShapes'
 import type { Color, Square, Dests, BoardMove, Shape } from '../types'
 
 // Presentational board: the parent owns position/legality and supplies the
@@ -69,7 +70,7 @@ function config(): Config {
     // Register the plan brushes; right-click user drawings stay enabled. In the
     // study editor those drawings are the pinned plan, so capture every change.
     drawable: {
-      brushes: planBrushes() as unknown as import('chessground/draw').DrawBrushes,
+      brushes: { ...planBrushes(), ...overlayBrushes() } as unknown as import('chessground/draw').DrawBrushes,
       onChange: props.editableShapes
         ? (shapes: DrawShape[]) => emit('drawn', shapes as unknown as Shape[])
         : undefined,
@@ -116,6 +117,15 @@ watch(
     else if (cg) cg.setAutoShapes([])
   },
 )
+
+// Clear the user's right-click-drawn arrows (issue #123). Leaves the computed
+// auto-shape layers (plans / threats / master) intact — those are toggled off
+// via their layer switches, not this control.
+function clearUserShapes() {
+  cg?.setShapes([])
+}
+
+defineExpose({ clearUserShapes })
 </script>
 
 <template>

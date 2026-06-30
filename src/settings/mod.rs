@@ -42,6 +42,16 @@ pub struct UserSettings {
     /// Default database id for new searches/imports. Must be visible to the user.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_database_id: Option<i32>,
+    /// Board-overlay layer toggles (issue #123): whether the Plans (engine-PV
+    /// trajectories), Threats (hanging pieces) and Database-master-move arrow
+    /// layers render. `None` ⇒ the frontend's default applies (plans on, threats
+    /// and master off), so the union shown is the caller's enabled layers only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_plans: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_threats: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_master_moves: Option<bool>,
 }
 
 /// Why a settings operation failed. Transport-agnostic — the HTTP / MCP layer

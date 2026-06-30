@@ -364,6 +364,11 @@ export interface ApiSettings {
   board_theme?: string
   piece_set?: string
   default_database_id?: number | null
+  // Board-overlay layer toggles (issue #123). Absent ⇒ the store's defaults
+  // apply (plans on, threats/master off).
+  show_plans?: boolean
+  show_threats?: boolean
+  show_master_moves?: boolean
 }
 
 // --- imports ----------------------------------------------------------------

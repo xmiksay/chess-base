@@ -39,6 +39,7 @@ async fn set_then_get_round_trips_and_returns_canonical() {
                 board_theme: Some("  blue  ".into()),
                 piece_set: Some("cburnett".into()),
                 default_database_id: None,
+                ..Default::default()
             },
         )
         .await
@@ -51,6 +52,37 @@ async fn set_then_get_round_trips_and_returns_canonical() {
     assert_eq!(got.theme.as_deref(), Some("dark"));
     assert_eq!(got.board_theme.as_deref(), Some("blue"));
     assert_eq!(got.piece_set.as_deref(), Some("cburnett"));
+}
+
+#[tokio::test]
+async fn overlay_layer_flags_round_trip() {
+    let svc = SettingsService::new(conn().await);
+    let alice = user("alice");
+
+    // Unset by default — the frontend supplies the layer defaults.
+    let got = svc.get(&alice).await.unwrap();
+    assert_eq!(got.show_plans, None);
+    assert_eq!(got.show_threats, None);
+    assert_eq!(got.show_master_moves, None);
+
+    let saved = svc
+        .set(
+            &alice,
+            UserSettings {
+                show_plans: Some(false),
+                show_threats: Some(true),
+                show_master_moves: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved.show_plans, Some(false));
+
+    let got = svc.get(&alice).await.unwrap();
+    assert_eq!(got.show_plans, Some(false));
+    assert_eq!(got.show_threats, Some(true));
+    assert_eq!(got.show_master_moves, Some(true));
 }
 
 #[tokio::test]
@@ -91,6 +123,7 @@ async fn blank_strings_normalize_to_none() {
                 board_theme: Some("   ".into()),
                 piece_set: Some("".into()),
                 default_database_id: None,
+                ..Default::default()
             },
         )
         .await
