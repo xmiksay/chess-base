@@ -13,6 +13,7 @@ pub mod danger;
 pub mod danger_generate;
 pub mod features;
 pub mod generate;
+pub mod seed;
 pub mod spine;
 pub mod tree;
 
@@ -41,6 +42,7 @@ pub use features::{concepts_of_fen, concepts_of_fen_with, Concepts, KeySquare};
 pub use generate::{
     generate_study, generate_study_live, GenerateError, GenerateOutcome, GenerateParams,
 };
+pub use seed::{seed_study_from_danger, seed_study_from_tree, SeedOutcome, SeedParams};
 pub use spine::{
     walk_danger_spine, DangerKind, DangerNode, DangerRole, DangerTag, DangerTree, MultiAnalyzer,
     Side, SpineConfig, SpineError,

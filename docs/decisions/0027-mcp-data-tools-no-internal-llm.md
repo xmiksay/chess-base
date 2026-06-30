@@ -76,3 +76,30 @@ compose-and-annotate work itself (tree/danger → annotate → `study_create` +
 `study_add_move`/`study_annotate`) instead of one `generate_study` call — which is
 the point, since that client is a language model. The app keeps the one-shot path
 over HTTP. Supersedes the MCP-transport half of ADR-0026 (#141).
+
+## Addendum (#155) — `save_as`: seed a study without the round-trip
+
+Returning the whole tree so the client can hand-serialize it into PGN and re-import
+it is the slow path the data tools left open: a 120-node `VariationTree` is ≈104k
+chars (overflows the tool-result budget), the hand-written PGN got variation
+placement wrong (`illegal san`), and the server ends up building a tree, shipping
+it out, and rebuilding an equivalent one. The server already builds the tree and
+already knows how to persist one.
+
+So `opening_tree` / `danger_map` take an optional `save_as { database_id, name,
+global? }`:
+
+- **absent** → return the tree as data (unchanged behaviour);
+- **present** → build the tree, convert it to a `MoveTree`
+  (`study_gen::annotate::move_tree_from`, carrying the set-up `start_fen` per
+  ADR-0028), persist it via `StudyService::create_with_tree`, and return only
+  `{ study_id, node_count }` — no tree JSON.
+
+This stays within the ADR-0027 boundary: **no language model runs anywhere in the
+path.** Seeding is exactly what `generate_study` does *minus* the LLM annotation
+step; the model that layers the prose is still the MCP client, via `study_annotate`.
+The seam lives in `study_gen::seed` (`seed_study_from_tree` /
+`seed_study_from_danger`), unit-tested with fake evaluator / analyzer / continuation
+source against an in-memory `StudyService`; the MCP tools stay thin callers. Every
+move is `apply_san`-validated during the build, so the seeded tree is correct by
+construction — the hand-PGN structural bugs cannot occur.

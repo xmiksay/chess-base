@@ -185,6 +185,16 @@ impl Session {
 /// Build a reusable [`Session`] over one in-memory DB seeded with `pgns` in a
 /// global database (owner `NULL`, visible to the local-admin caller).
 pub async fn seeded_session(pgns: &[&str]) -> Session {
+    seeded_session_with_engine(pgns, None).await
+}
+
+/// As [`seeded_session`], but allows wiring a pooled engine service so the
+/// engine-backed data tools (`opening_tree` / `danger_map`) can be exercised
+/// end-to-end across calls.
+pub async fn seeded_session_with_engine(
+    pgns: &[&str],
+    engine_service: Option<Arc<EngineService>>,
+) -> Session {
     use chess_base::db::entities::databases;
     use chess_base::ingest_pgn;
     use sea_orm::{ActiveModelTrait, Set};
@@ -206,7 +216,7 @@ pub async fn seeded_session(pgns: &[&str]) -> Session {
     let app = build_router(AppState {
         db,
         mode: Mode::Local,
-        engine_service: None,
+        engine_service,
         llm_provider: None,
     });
     Session { app, token }

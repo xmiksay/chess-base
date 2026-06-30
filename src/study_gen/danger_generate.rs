@@ -247,7 +247,10 @@ fn collect_roles(danger: &DangerTree) -> Vec<TaggedRole> {
 /// tagged node's role as a synthetic concept tag so the model annotates
 /// danger-aware. `eval` is left `None` — the danger tree stores only the role
 /// verdict, so quality claims cannot be confirmed and the verifier drops them.
-fn to_variation_tree(danger: &DangerTree) -> VariationTree {
+///
+/// Shared with the LLM-free seed path (issue #155): seeding a study from a danger
+/// map folds the tagged tree the same way, then persists it without annotation.
+pub fn to_variation_tree(danger: &DangerTree) -> VariationTree {
     let nodes = danger
         .nodes
         .iter()
