@@ -17,6 +17,7 @@ use crate::games::{
     export, GameError, GameListParams, GameService, GameSort, SortDir, DEFAULT_LIMIT,
 };
 use crate::ingest::parse_pgn;
+use crate::pgn_tree::pgn::from_pgn_with_start;
 use crate::position::STARTPOS_FEN;
 use crate::review::{review_game, ReviewError};
 use crate::server::download::pgn_attachment;
@@ -33,6 +34,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/games", get(list))
         .route("/api/games/{id}", get(get_one))
+        .route("/api/games/{id}/tree", get(get_tree))
         .route("/api/games/{id}/export", get(export_pgn))
         .with_state(state)
 }
@@ -79,6 +81,27 @@ async fn get_one(
 ) -> Result<Response, GameError> {
     let game = service(&state).get(&user, id).await?;
     Ok((StatusCode::OK, Json(game)).into_response())
+}
+
+/// `GET /api/games/{id}/tree` — the stored game parsed into a [`MoveTree`],
+/// preserving the `(…)` sub-variations the frontend's chess.js flattener drops.
+/// Thin caller of [`from_pgn_with_start`]; the game's `start_fen` (a SetUp `[FEN]`
+/// origin) is threaded in so non-standard starts round-trip. A parse / illegal-
+/// move failure maps to a clean 422 — no raw `DbErr` or panic leaks.
+async fn get_tree(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+) -> Result<Response, Response> {
+    let game = service(&state)
+        .get(&user, id)
+        .await
+        .map_err(game_error_response)?;
+    let pgn = game.pgn.as_deref().unwrap_or_default();
+    let start_fen = game.start_fen.as_deref().unwrap_or(STARTPOS_FEN);
+    let tree = from_pgn_with_start(pgn, start_fen)
+        .map_err(|e| error_response(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?;
+    Ok((StatusCode::OK, Json(tree)).into_response())
 }
 
 /// `?annotated=<bool>&depth=<n>` for the export endpoint. `annotated=false` (the
