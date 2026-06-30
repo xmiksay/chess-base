@@ -20,7 +20,7 @@ Full detail in [`../docs/architecture.md`](../docs/architecture.md); decisions i
 ```
 src/
   position.rs      pure: FEN/SAN, legal moves, Zobrist hash (shakmaty)   ← unit-tested
-  pgn_tree.rs      pure: study move-tree (variations/comments/NAGs)       ← unit-tested
+  pgn_tree.rs      pure: study move-tree (variations/comments/NAGs/shapes/[%eval]) ← unit-tested
   openings.rs      pure: ECO classification (embedded lichess dataset)     ← unit-tested
   plans.rs         pure: engine-PV → per-piece trajectories (ADR 0017)      ← unit-tested
   features.rs      pure: position feature tags (material/phase/check, #33)    ← unit-tested
@@ -31,6 +31,8 @@ src/
   review/          Mode A (#119): engine-only full-game review — classify (pure
                    buckets + accuracy), explain (pure MoveFact "why" + the seam to
                    Mode B), service.review_game, POST /api/games/{id}/analyse   ← unit-tested
+  games/export.rs  pure: mainline → MoveTree (+#119 review: [%eval]/NAGs/why) for
+                   GET /api/games/{id}/export?annotated= — extended-PGN download (#120) ← unit-tested
   ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
   study_gen/       study-gen stages (Epic 9): tree (#29) builds a pruned VariationTree;
                    features.rs (#30) pure pawn-structure & key-square concepts;

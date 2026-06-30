@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod browser;
 pub mod config;
+pub(crate) mod download;
 pub mod embed;
 pub mod engine_ws;
 pub(crate) mod error;

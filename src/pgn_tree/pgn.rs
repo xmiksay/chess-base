@@ -12,7 +12,7 @@ use std::ops::ControlFlow;
 
 use pgn_reader::{Nag, RawComment, Reader, SanPlus, Skip, Visitor};
 
-use super::{shapes, MoveTree};
+use super::{eval, shapes, MoveTree};
 use crate::position::{apply_san, CastlingMode, PositionError, STARTPOS_FEN};
 
 /// Move trees are standard chess; castling rights parse the normal way.
@@ -132,10 +132,15 @@ impl Visitor for Importer {
     fn comment(&mut self, b: &mut Build, comment: RawComment<'_>) -> ControlFlow<Self::Output> {
         let raw = String::from_utf8_lossy(comment.as_bytes());
         // Pull any `[%csl]`/`[%cal]` shape commands out into the node's shapes,
-        // leaving the free text as the comment.
+        // then the `[%eval …]` command into its evaluation, leaving the free text
+        // (including a preserved `[%clk …]`) as the comment.
         let (parsed, text) = shapes::parse(&raw);
+        let (parsed_eval, text) = eval::parse(&text);
         let node = &mut b.tree.nodes[b.cur];
         node.shapes.extend(parsed);
+        if let Some(parsed_eval) = parsed_eval {
+            node.eval = Some(parsed_eval);
+        }
         if !text.is_empty() {
             match &mut node.comment {
                 Some(existing) => {
@@ -170,6 +175,14 @@ impl Visitor for Importer {
     }
 }
 
+/// Append a single `[Key "Value"]` PGN header tag (value escaped) plus a
+/// newline. Shared by the Lichess-study and game exports so the tag escaping
+/// lives in one place (issue #120).
+pub(crate) fn push_header_tag(out: &mut String, key: &str, value: &str) {
+    let value = value.replace('\\', "\\\\").replace('"', "\\\"");
+    out.push_str(&format!("[{key} \"{value}\"]\n"));
+}
+
 // ---- Export ---------------------------------------------------------------
 
 /// Append a separating space unless we are at the start or just opened a `(`.
@@ -196,9 +209,14 @@ fn write_move(out: &mut String, ply: usize, san: &str, node: &super::Node, force
     for nag in &node.nags {
         out.push_str(&format!(" ${nag}"));
     }
-    // Shapes serialize as Lichess `[%csl]`/`[%cal]` commands at the head of the
-    // comment, so a node with only shapes still emits a `{ … }` block.
-    let commands = shapes::encode(&node.shapes);
+    // The evaluation and shapes serialize as Lichess `[%eval]`/`[%csl]`/`[%cal]`
+    // commands at the head of the comment, so a node carrying only an eval (or
+    // only shapes) still emits a `{ … }` block.
+    let mut commands = String::new();
+    if let Some(eval) = &node.eval {
+        commands.push_str(&eval::encode(eval));
+    }
+    commands.push_str(&shapes::encode(&node.shapes));
     match (commands.is_empty(), &node.comment) {
         (true, None) => {}
         (false, None) => out.push_str(&format!(" {{{commands}}}")),
@@ -353,6 +371,42 @@ mod tests {
         let pgn = to_pgn(&t).unwrap();
         assert_eq!(pgn, "1. e4 {[%csl Ge4][%cal Rg1f3] grabs the centre} *");
         assert_eq!(from_pgn(&pgn).unwrap(), t);
+    }
+
+    #[test]
+    fn exports_and_reimports_an_eval_with_a_nag_and_comment() {
+        use super::super::Eval;
+        let mut t = MoveTree::new();
+        let e4 = t.add_move(t.root, "e4");
+        let d5 = t.add_move(e4, "d5"); // a dubious reply
+        t.set_eval(e4, Eval::Cp(31));
+        t.set_eval(d5, Eval::Cp(95));
+        t.add_nag(d5, 6); // ?!
+        t.set_comment(d5, "loosens the centre");
+
+        let pgn = to_pgn(&t).unwrap();
+        assert_eq!(
+            pgn,
+            "1. e4 {[%eval 0.31]} d5 $6 {[%eval 0.95] loosens the centre} *"
+        );
+        // export → re-import → equal tree (the round-trip the issue asks for).
+        assert_eq!(from_pgn(&pgn).unwrap(), t);
+    }
+
+    #[test]
+    fn exports_a_mate_eval_and_preserves_a_clk_tag() {
+        use super::super::Eval;
+        let mut t = MoveTree::new();
+        let e4 = t.add_move(t.root, "e4");
+        t.set_eval(e4, Eval::Mate(3));
+        // A `[%clk]` is not an eval/shape: it stays in the comment text verbatim.
+        t.set_comment(e4, "[%clk 0:05:00]");
+
+        let pgn = to_pgn(&t).unwrap();
+        assert_eq!(pgn, "1. e4 {[%eval #3] [%clk 0:05:00]} *");
+        let back = from_pgn(&pgn).unwrap();
+        assert_eq!(back.nodes[1].eval, Some(Eval::Mate(3)));
+        assert_eq!(back.nodes[1].comment.as_deref(), Some("[%clk 0:05:00]"));
     }
 
     #[test]

@@ -68,6 +68,13 @@ async function getJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>
 }
 
+// Fetch a plain-text body (the `.pgn` export downloads, issue #120).
+async function getText(path: string): Promise<string> {
+  const res = await fetch(path, { headers: withAuth() })
+  if (!res.ok) throw new Error(`${path} → ${res.status}`)
+  return res.text()
+}
+
 // The search endpoints stream NDJSON (one JSON object per line); parse it into
 // an array. Blank lines are skipped so a trailing newline is harmless.
 async function getNdjson<T>(path: string): Promise<T[]> {
@@ -144,8 +151,10 @@ export const api = {
       send<Study>('POST', '/api/studies', { database_id: databaseId, name, global }),
     importPgn: (databaseId: number, name: string, pgn: string, global = false) =>
       send<Study>('POST', '/api/studies/import', { database_id: databaseId, name, pgn, global }),
-    exportPgn: (id: number) =>
-      getJson<{ pgn: string }>(`/api/studies/${id}/export`).then((r) => r.pgn),
+    // Download a study as a `.pgn` file (issue #120). `eval` (default true) keeps
+    // the per-move `[%eval]` annotations; `false` exports plain movetext.
+    exportPgn: (id: number, { eval: withEval = true }: { eval?: boolean } = {}) =>
+      getText(`/api/studies/${id}/export?eval=${withEval}`),
     rename: (id: number, name: string) => send<Study>('PATCH', `/api/studies/${id}`, { name }),
     remove: (id: number) => send<null>('DELETE', `/api/studies/${id}`),
     // Append a SAN move under `fromNodeId` (a variation when it already has kids).
@@ -194,6 +203,15 @@ export const api = {
     // chooses. 503 (no engine), 422 (bad game), 404 (not found) → thrown Error.
     analyse: (id: number, depth?: number) =>
       send<GameReview>('POST', `/api/games/${id}/analyse` + (depth != null ? `?depth=${depth}` : '')),
+    // Download a game as a `.pgn` file (issue #120). `annotated` runs the #119
+    // review and embeds `[%eval]` + NAGs + why-notes (engine required, 503 else).
+    exportPgn: (id: number, { annotated = false, depth }: { annotated?: boolean; depth?: number } = {}) => {
+      const params = new URLSearchParams()
+      if (annotated) params.set('annotated', 'true')
+      if (depth != null) params.set('depth', String(depth))
+      const qs = params.toString()
+      return getText(`/api/games/${id}/export${qs ? `?${qs}` : ''}`)
+    },
   },
 
   // Game search (issues #6/#7). Header/metadata search (`headers`) is keyset-

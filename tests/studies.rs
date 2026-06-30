@@ -32,6 +32,24 @@ async fn send(app: &Router, req: Request<Body>) -> (StatusCode, Value) {
     (status, body)
 }
 
+/// Like [`send`] but for downloads: returns the status, the `Content-Disposition`
+/// header (if any) and the raw text body (issue #120 `.pgn` exports).
+async fn send_download(app: &Router, req: Request<Body>) -> (StatusCode, Option<String>, String) {
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let disposition = resp
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (
+        status,
+        disposition,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
+}
+
 /// Register a user and return their bearer token. The first registered user is
 /// admin (auth bootstrap rule).
 async fn register(app: &Router, username: &str) -> String {
@@ -481,14 +499,18 @@ async fn lifecycle_crud_and_pgn_round_trip() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(renamed["name"], "Ruy Lopez");
 
-    // Export it and re-import the result: the mainline survives the round trip.
-    let (status, exported) = send(
+    // Export it as a `.pgn` download and re-import: the mainline survives the
+    // round trip, and the response is an attachment (issue #120), not JSON.
+    let (status, disposition, pgn_out) = send_download(
         &app,
         get_req(&format!("/api/studies/{study_id}/export"), &bob),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let pgn_out = exported["pgn"].as_str().unwrap();
+    assert_eq!(
+        disposition.as_deref(),
+        Some(&format!("attachment; filename=\"study-{study_id}.pgn\"")[..])
+    );
     let (status, reimported) = send(
         &app,
         json_req(
@@ -547,13 +569,16 @@ async fn lichess_export_returns_headered_pgn() {
     assert_eq!(status, StatusCode::CREATED);
     let study_id = study["id"].as_i64().unwrap();
 
-    let (status, exported) = send(
+    let (status, disposition, pgn_out) = send_download(
         &app,
         get_req(&format!("/api/studies/{study_id}/export/lichess"), &bob),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let pgn_out = exported["pgn"].as_str().unwrap();
+    assert_eq!(
+        disposition.as_deref(),
+        Some(&format!("attachment; filename=\"study-{study_id}-lichess.pgn\"")[..])
+    );
     assert!(pgn_out.starts_with("[Event \"Italian\"]"));
     assert!(pgn_out.contains("Nf3 {develops}"));
 

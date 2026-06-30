@@ -290,7 +290,7 @@ async fn study_export(app: AppState, user: CurrentUser, args: Value) -> ToolOutc
     let format = args.get("format").and_then(Value::as_str).unwrap_or("pgn");
     let service = StudyService::new(app.db.clone());
     let exported = match format {
-        "pgn" => service.export_pgn(&user, study_id as i32).await,
+        "pgn" => service.export_pgn(&user, study_id as i32, true).await,
         "lichess" => service.export_lichess(&user, study_id as i32).await,
         other => {
             return ToolOutcome::error(format!(

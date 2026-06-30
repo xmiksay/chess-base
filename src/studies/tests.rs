@@ -328,7 +328,7 @@ async fn pgn_import_export_round_trips() {
     assert_eq!(tree.mainline(), vec!["e4", "e5", "Nf3"]);
 
     // Export, re-import, and confirm the mainline survives the round trip.
-    let exported = svc.export_pgn(&alice, study.id).await.unwrap();
+    let exported = svc.export_pgn(&alice, study.id, true).await.unwrap();
     let again = svc
         .import_pgn(&alice, db_id, "Reimported", &exported, false)
         .await
@@ -337,6 +337,28 @@ async fn pgn_import_export_round_trips() {
         tree_of(&svc, &alice, again.id).await.mainline(),
         vec!["e4", "e5", "Nf3"]
     );
+}
+
+#[tokio::test]
+async fn export_eval_flag_keeps_or_strips_eval_annotations() {
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+    // A study imported from extended PGN carries per-move `[%eval]` (issue #120).
+    let pgn = "1. e4 {[%eval 0.31]} e5 {[%eval 0.18] solid} *";
+    let study = svc
+        .import_pgn(&alice, db_id, "Eval", pgn, false)
+        .await
+        .unwrap();
+
+    // include_eval = true keeps the eval commands; false strips them but leaves
+    // the rest of the comment intact.
+    let extended = svc.export_pgn(&alice, study.id, true).await.unwrap();
+    assert!(extended.contains("[%eval 0.31]"));
+    assert!(extended.contains("[%eval 0.18]"));
+
+    let plain = svc.export_pgn(&alice, study.id, false).await.unwrap();
+    assert!(!plain.contains("[%eval"));
+    assert!(plain.contains("solid"), "non-eval comment text survives");
 }
 
 #[tokio::test]

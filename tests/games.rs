@@ -160,6 +160,77 @@ async fn get_single_game_returns_pgn() {
     assert!(body["pgn"].as_str().unwrap().contains("Qxf7#"));
 }
 
+/// GET `uri` as a download: returns (status, Content-Disposition, text body).
+async fn get_download(
+    app: &Router,
+    uri: &str,
+    token: &str,
+) -> (StatusCode, Option<String>, String) {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let disposition = resp
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (
+        status,
+        disposition,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
+}
+
+#[tokio::test]
+async fn export_downloads_the_stored_pgn_verbatim() {
+    let (app, db) = app_with_db().await;
+    let (alice, alice_id) = register(&app, "alice").await;
+    let db_id = seed(&db, &alice_id, &[SCHOLARS_MATE]).await;
+
+    let (_, list) = get(&app, &format!("/api/games?database_id={db_id}"), &alice).await;
+    let game_id = list["games"][0]["id"].as_i64().unwrap();
+
+    let (status, disposition, pgn) =
+        get_download(&app, &format!("/api/games/{game_id}/export"), &alice).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        disposition.as_deref(),
+        Some(&format!("attachment; filename=\"game-{game_id}.pgn\"")[..])
+    );
+    // The stored game movetext comes back verbatim.
+    assert!(pgn.contains("Qxf7#"));
+}
+
+#[tokio::test]
+async fn annotated_export_without_engine_is_unavailable() {
+    // `app_with_db` configures no engine, so an annotated export reports the
+    // operator-configuration gap (503) instead of attempting analysis.
+    let (app, db) = app_with_db().await;
+    let (alice, alice_id) = register(&app, "alice").await;
+    let db_id = seed(&db, &alice_id, &[SCHOLARS_MATE]).await;
+
+    let (_, list) = get(&app, &format!("/api/games?database_id={db_id}"), &alice).await;
+    let game_id = list["games"][0]["id"].as_i64().unwrap();
+
+    let (status, _, _) = get_download(
+        &app,
+        &format!("/api/games/{game_id}/export?annotated=true"),
+        &alice,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+}
+
 #[tokio::test]
 async fn list_scope_excludes_other_users_database() {
     let (app, db) = app_with_db().await;

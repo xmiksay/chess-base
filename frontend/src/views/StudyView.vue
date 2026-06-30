@@ -9,6 +9,7 @@ import AnnotationEditor from '../components/AnnotationEditor.vue'
 import StudyAnalysis from '../components/StudyAnalysis.vue'
 import GenerateStudyDialog from '../components/GenerateStudyDialog.vue'
 import { api } from '../api'
+import { downloadText } from '../lib/download'
 import { useStudiesStore } from '../stores/studies'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { useSettingsStore } from '../stores/settings'
@@ -38,6 +39,19 @@ async function onGenerated(id: number) {
 }
 
 const hasStudy = computed(() => !!studies.current)
+
+// Export the open study as a `.pgn` download (issue #120). `withEval` keeps the
+// per-move `[%eval]` annotations (extended); `false` exports plain movetext.
+async function onExport(withEval: boolean) {
+  const study = studies.current
+  if (!study) return
+  try {
+    const pgn = await studies.exportPgn(study.id, withEval)
+    downloadText(`study-${study.id}.pgn`, pgn)
+  } catch (e) {
+    loadError.value = String((e as Error)?.message ?? e)
+  }
+}
 
 // Pinned plan arrows on the selected node (#61); the stored `Shape` model
 // matches chessground's `DrawShape` (orig/dest/brush).
@@ -118,9 +132,27 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         Studies
       </h2>
       <button
+        v-if="hasStudy"
+        type="button"
+        data-test="export"
+        class="ml-auto rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+        @click="onExport(false)"
+      >
+        Export PGN
+      </button>
+      <button
+        v-if="hasStudy"
+        type="button"
+        data-test="export-eval"
+        class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+        @click="onExport(true)"
+      >
+        Export with eval
+      </button>
+      <button
         type="button"
         data-test="open-generate"
-        class="ml-auto rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+        :class="['rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100', { 'ml-auto': !hasStudy }]"
         @click="showGenerate = true"
       >
         Generate study
