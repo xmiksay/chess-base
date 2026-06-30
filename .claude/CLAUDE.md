@@ -58,7 +58,11 @@ src/
                    VariationTree (role tags as concept hints) → annotate/verify →
                    persist a study; surfaces rejected claims + role tags;
                    exposed via POST /api/studies/generate-danger-map (#141, NOT
-                   MCP, ADR-0027; studies/danger_route.rs);
+                   MCP, ADR-0027; studies/danger_route.rs). The engine-only
+                   sibling POST /api/studies/danger-map (#156, same file) is a
+                   thin caller over walk_danger_spine_live returning the raw
+                   DangerTree (+roles digest) — NO LLM, so the FE danger overlay
+                   works on a no-key install;
                    seed.rs (#155) LLM-free seed seam: convert a built tree to a
                    MoveTree (move_tree_from, carries start_fen) → create_with_tree;
                    backs the data tools' `save_as` (no LLM, no PGN round-trip)  ← unit-tested

@@ -10,18 +10,22 @@ import AnnotationEditor from '../components/AnnotationEditor.vue'
 import StudyAnalysis from '../components/StudyAnalysis.vue'
 import GenerateStudyDialog from '../components/GenerateStudyDialog.vue'
 import GenerateDangerMapDialog from '../components/GenerateDangerMapDialog.vue'
+import DangerMapPanel from '../components/DangerMapPanel.vue'
 import { api } from '../api'
 import { downloadText } from '../lib/download'
 import { useStudiesStore } from '../stores/studies'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { useSettingsStore } from '../stores/settings'
+import { useDangerStore } from '../stores/danger'
 import { useBoardOverlays } from '../lib/useBoardOverlays'
+import { dangerShapesForFen } from '../lib/dangerShapes'
 import type { DrawShape } from 'chessground/draw'
 import type { BoardMove, Database, Shape } from '../types'
 
 const studies = useStudiesStore()
 const editor = useStudyEditorStore()
 const settings = useSettingsStore()
+const danger = useDangerStore()
 
 const boardRef = ref<InstanceType<typeof Board> | null>(null)
 
@@ -29,6 +33,14 @@ const boardRef = ref<InstanceType<typeof Board> | null>(null)
 // selected node's FEN. The engine-PV arrows ride along as the Plans layer, so
 // they stay read-only auto-shapes that never clobber the node's pinned drawings.
 const { boardShapes } = useBoardOverlays(() => editor.fen)
+
+// Engine-only danger arrows (#156): the dangerous replies available from the
+// selected node, derived locally from the walked DangerTree. Composed on top of
+// the standard overlay layers so they coexist with plans / threats / master.
+const overlayShapes = computed(() => [
+  ...boardShapes.value,
+  ...dangerShapesForFen(danger.tree, editor.fen),
+])
 
 /** Clear the user's hand-drawn arrows; the computed overlay layers stay. */
 function clearArrows() {
@@ -39,8 +51,10 @@ const databases = ref<Database[]>([])
 const newName = ref('')
 const newDb = ref<number | null>(null)
 const loadError = ref<string | null>(null)
-// LLM capability flag from `/api/health`, and the generate-dialog toggle.
+// Capability flags from `/api/health`: LLM gates the generate dialogs; the engine
+// alone gates the engine-only danger overlay (#156). Plus the generate-dialog toggle.
 const llmEnabled = ref(false)
+const engineEnabled = ref(false)
 const showGenerate = ref(false)
 const showDangerMap = ref(false)
 
@@ -121,7 +135,13 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
-  api.health().then((h) => (llmEnabled.value = h.llm === true)).catch(() => {})
+  api
+    .health()
+    .then((h) => {
+      llmEnabled.value = h.llm === true
+      engineEnabled.value = h.engine === true
+    })
+    .catch(() => {})
   try {
     await studies.refresh()
     databases.value = await api.databases.list()
@@ -267,7 +287,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           :last-move="editor.lastMove"
           :board-theme="settings.boardTheme"
           :shapes="pinnedShapes"
-          :overlay-shapes="boardShapes"
+          :overlay-shapes="overlayShapes"
           :persist-shapes="true"
           :editable-shapes="true"
           @move="onBoardMove"
@@ -297,6 +317,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
         <!-- Engine analysis for the selected node (#5 in studies). -->
         <StudyAnalysis class="mt-4" />
+
+        <!-- Engine-only danger overlay (#156): walk a spine for danger and show
+             Weapon / Caution / Off-book replies as arrows + a digest. No LLM. -->
+        <DangerMapPanel
+          class="mt-4"
+          :engine-enabled="engineEnabled"
+          :study-id="studies.current?.id ?? null"
+          :start-fen="editor.tree?.start_fen"
+        />
       </section>
 
       <!-- Tree + annotations -->
