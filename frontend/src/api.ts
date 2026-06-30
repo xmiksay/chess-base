@@ -17,6 +17,8 @@ import type {
   GameRow,
   DangerMapBody,
   DangerMapView,
+  DangerWalkBody,
+  DangerWalkResult,
   GenerateBody,
   GenerateView,
   Health,
@@ -184,6 +186,11 @@ export const api = {
     // engine or LLM is configured.
     generateDangerMap: (body: DangerMapBody) =>
       send<DangerMapView>('POST', '/api/studies/generate-danger-map', body),
+    // Engine-only danger walk (issue #156): walk a spine and return the raw
+    // DangerTree (Weapon / Caution / Off-book) — no LLM, so the danger overlay
+    // works on a no-key install. 503 when no engine is configured.
+    dangerMap: (body: DangerWalkBody) =>
+      send<DangerWalkResult>('POST', '/api/studies/danger-map', body),
   },
 
   // Ownable databases (issue #6): collections to search/import into. `list`

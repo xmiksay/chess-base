@@ -54,3 +54,88 @@ fn spine_accepts_partial_overrides_keeping_other_defaults() {
     );
     assert_eq!(body.spine.attack, defaults.attack);
 }
+
+#[test]
+fn danger_walk_body_needs_only_a_spine_and_defaults_the_rest() {
+    // The engine-only `/api/studies/danger-map` body (issue #156) carries no
+    // database/name — it returns data, not a persisted study.
+    let body: DangerWalkBody = serde_json::from_value(serde_json::json!({
+        "spine_pgn": "1. e4 c5 *",
+    }))
+    .expect("minimal danger-walk body deserializes");
+
+    assert_eq!(body.spine_pgn, "1. e4 c5 *");
+    assert!(body.fen.is_none());
+    assert!(body.movetime_ms.is_none());
+    assert!(body.multipv.is_none());
+    assert_eq!(body.spine, SpineConfig::default());
+}
+
+#[test]
+fn danger_walk_body_accepts_partial_spine_overrides() {
+    let body: DangerWalkBody = serde_json::from_value(serde_json::json!({
+        "spine_pgn": "1. e4 e5 *",
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "movetime_ms": 250,
+        "multipv": 3,
+        "spine": { "our_side": "Black", "max_depth": 10 }
+    }))
+    .expect("danger-walk body with overrides deserializes");
+
+    let defaults = SpineConfig::default();
+    assert_eq!(body.movetime_ms, Some(250));
+    assert_eq!(body.multipv, Some(3));
+    assert_eq!(body.spine.our_side, Side::Black);
+    assert_eq!(body.spine.max_depth, 10);
+    // Untouched fields keep their defaults.
+    assert_eq!(body.spine.min_frequency, defaults.min_frequency);
+}
+
+#[test]
+fn roles_digest_keeps_only_tagged_nodes_in_walk_order() {
+    use crate::study_gen::spine::{DangerKind, DangerNode, DangerRole, DangerTag, DangerTree};
+
+    let tag = |kind, role| DangerTag {
+        kind,
+        role,
+        trap: None,
+        only_move_gap: None,
+        miss_rate: None,
+        attack: None,
+    };
+    let node = |id: usize, san: Option<&str>, tag: Option<DangerTag>| DangerNode {
+        id,
+        parent: if id == 0 { None } else { Some(id - 1) },
+        san: san.map(str::to_string),
+        fen: STARTPOS_FEN.to_string(),
+        ply: id,
+        tag,
+        children: vec![],
+    };
+
+    let tree = DangerTree {
+        nodes: vec![
+            node(0, None, None),       // root, untagged
+            node(1, Some("e4"), None), // plain spine move
+            node(
+                2,
+                Some("Qh5"),
+                Some(tag(DangerKind::Trap, DangerRole::Caution)),
+            ),
+            node(
+                3,
+                Some("Nf6"),
+                Some(tag(DangerKind::OnlyMove, DangerRole::Weapon)),
+            ),
+        ],
+        root: 0,
+    };
+
+    let roles = roles_digest(&tree);
+    assert_eq!(roles.len(), 2);
+    assert_eq!(roles[0].node_id, 2);
+    assert_eq!(roles[0].san.as_deref(), Some("Qh5"));
+    assert_eq!(roles[0].kind, "Trap");
+    assert_eq!(roles[0].role, "Caution");
+    assert_eq!(roles[1].role, "Weapon");
+}

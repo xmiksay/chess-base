@@ -405,6 +405,63 @@ export interface DangerMapView {
   roles: DangerMapRole[]
 }
 
+// --- engine-only danger walk (issue #156, ADR-0026 / ADR-0027) --------------
+// The lightweight, LLM-free sibling of the generator above: `POST
+// /api/studies/danger-map` returns the raw engine-adjudicated tree for a spine so
+// the SPA can render the danger overlay without any language model configured.
+
+/** Trap-test verdict on a candidate move (`src/study_gen/danger.rs`). */
+export type TrapVerdict = 'Weapon' | 'HopeChess' | 'Quiet'
+
+/** A pawn storm toward our king found in the opponent's best line (issue #142). */
+export interface AttackSignal {
+  pawn: string // colour-cased FEN char of the storming pawn ('P' / 'p')
+  path: string[] // the pawn's squares across the line, origin first
+  advances: number // forward pushes along the path
+}
+
+/** The danger signal on one node, with the raw figures behind the verdict. */
+export interface DangerTag {
+  kind: string // Trap | OnlyMove | Attack | OffBook
+  role: string // Weapon | Caution | OffBook
+  trap?: TrapVerdict // trap verdict on the move that reached this node
+  only_move_gap?: number // PV1 − PV2 gap (opponent's perspective), centipawns
+  miss_rate?: number // share of DB games humans missed the best reply (0..1)
+  attack?: AttackSignal
+}
+
+/** One node of the engine-adjudicated danger tree (`src/study_gen/spine.rs`). */
+export interface DangerNode {
+  id: number
+  parent: number | null
+  san?: string // move leading here; absent only at the root
+  fen: string
+  ply: number
+  tag?: DangerTag // present only on flagged (dangerous) moves
+  children: number[]
+}
+
+/** A walked, tagged repertoire tree — the output of the engine danger walk. */
+export interface DangerTree {
+  nodes: DangerNode[]
+  root: number
+}
+
+/** Request body for `POST /api/studies/danger-map` (engine only, no LLM). */
+export interface DangerWalkBody {
+  spine_pgn: string // the repertoire spine as PGN movetext to walk for danger
+  fen?: string // defaults to startpos server-side
+  spine?: SpineConfig
+  movetime_ms?: number // per-variation engine budget, capped server-side
+  multipv?: number // MultiPV line count, floored at 2 server-side
+}
+
+/** Result of the engine danger walk: the full tree + a flat tagged-node digest. */
+export interface DangerWalkResult {
+  tree: DangerTree
+  roles: DangerMapRole[]
+}
+
 // --- settings ---------------------------------------------------------------
 
 /** Backend settings payload (`/api/settings`). */

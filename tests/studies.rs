@@ -785,3 +785,53 @@ async fn generate_danger_map_with_bad_pgn_is_bad_request() {
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("invalid spine PGN"), "body was: {text}");
 }
+
+/// `POST /api/studies/danger-map` (issue #156) is the engine-only sibling of the
+/// LLM generator: it walks a spine for danger and returns the raw `DangerTree`
+/// without ever touching a language model. With no engine wired it surfaces a clean
+/// `503` (the full happy path needs a real engine, covered at the service layer).
+#[tokio::test]
+async fn danger_map_walk_without_engine_is_service_unavailable() {
+    let app = server_app().await;
+    let admin = register(&app, "alice").await; // first user → admin
+
+    let resp = app
+        .clone()
+        .oneshot(json_req(
+            "POST",
+            "/api/studies/danger-map",
+            &admin,
+            json!({"spine_pgn": "1. e4 c5 *"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("No engine configured"), "body was: {text}");
+}
+
+/// A malformed spine PGN is a client `400` on the engine-only walk too — rejected
+/// at the transport before the engine-presence check, with no LLM involved.
+#[tokio::test]
+async fn danger_map_walk_with_bad_pgn_is_bad_request() {
+    let app = server_app().await;
+    let admin = register(&app, "alice").await;
+
+    let resp = app
+        .clone()
+        .oneshot(json_req(
+            "POST",
+            "/api/studies/danger-map",
+            &admin,
+            json!({"spine_pgn": "1. e4 e4 *"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("invalid spine PGN"), "body was: {text}");
+}
