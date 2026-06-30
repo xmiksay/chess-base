@@ -50,7 +50,10 @@ src/
                    weapon/hope-chess + only-move gap (engine as adjudicator);
                    spine.rs (#139) PGN-repertoire walk: per opponent position runs
                    analyse_multi (movetime/variation) → reachability/trap/only-move
-                   → a tagged DangerTree (Weapon/Caution/Off-book), WIP   ← unit-tested
+                   → a tagged DangerTree (Weapon/Caution/Off-book);
+                   danger_generate.rs (#140) orchestrator: spine walk → fold to a
+                   VariationTree (role tags as concept hints) → annotate/verify →
+                   persist a study; surfaces rejected claims + role tags   ← unit-tested
   auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
   server/          Axum app: routes, state, embedded SPA, browser launch,
                    MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016).
