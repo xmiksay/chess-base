@@ -13,13 +13,20 @@ use sea_orm::{
     ActiveModelTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder, Set,
 };
 
+pub mod analyse;
 pub mod danger_route;
 pub mod routes;
 
+use std::collections::BTreeMap;
+
 use crate::db::entities::studies;
+use crate::engine::{EngineService, Limits};
+use crate::features::features_of_fen;
 use crate::pgn_tree::pgn::{self, PgnError};
 use crate::pgn_tree::{lichess, MoveTree, Shape, TreeError};
-use crate::position::{apply_san, legal_sans, replay, uci_to_san, CastlingMode, PositionError};
+use crate::position::{
+    apply_san, black_to_move, legal_sans, replay, uci_to_san, CastlingMode, PositionError,
+};
 use crate::server::identity::{assert_admin, assert_can_write, scope, CurrentUser};
 
 /// Studies are standard chess; castling rights parse the normal way.
@@ -73,6 +80,10 @@ pub enum StudyError {
     /// Replaying the tree to the target node hit an illegal position/move.
     #[error(transparent)]
     Position(#[from] PositionError),
+    /// The engine pool failed during an "Analyse study" pass (issue #162).
+    /// Internal — never surfaced raw to clients.
+    #[error(transparent)]
+    Engine(anyhow::Error),
     /// Underlying database error (never surfaced verbatim to clients).
     #[error(transparent)]
     Db(#[from] DbErr),
@@ -350,6 +361,40 @@ impl StudyService {
         Ok(())
     }
 
+    /// Walk the engine over every move-bearing node of a study the caller may
+    /// write and pin a White-perspective `[%eval]` to each (issue #162), so an
+    /// export carries the evals Lichess renders. **Eval-only**: comments / NAGs /
+    /// shapes are never touched. Terminal positions (checkmate / stalemate) are
+    /// skipped — there is no move to search from them. Returns the refreshed row.
+    pub async fn analyse_study(
+        &self,
+        engine: &EngineService,
+        user: &CurrentUser,
+        id: i32,
+        depth: u32,
+    ) -> Result<studies::Model, StudyError> {
+        let study = self.load_writable(user, id).await?;
+        let mut tree: MoveTree = serde_json::from_str(&study.tree_json)?;
+
+        let limits = Limits::depth(depth).clamped();
+        let options = BTreeMap::new();
+        for (node_id, fen) in analyse::node_fens(&tree)? {
+            if is_terminal(&fen) {
+                continue;
+            }
+            let result = engine
+                .analyse(&fen, &limits, &options)
+                .await
+                .map_err(StudyError::Engine)?;
+            let Some(score) = result.score else { continue };
+            let white_to_move = !black_to_move(&fen, MODE)?;
+            tree.set_eval(node_id, analyse::white_eval(score, white_to_move));
+        }
+
+        self.persist(study, &tree).await?;
+        self.get(user, id).await
+    }
+
     /// Promote a variation to the mainline (move it to the front of its parent's
     /// children) on a study the caller may write.
     pub async fn promote_variation(
@@ -433,6 +478,15 @@ fn fen_at(start_fen: &str, line: &[String]) -> Result<String, PositionError> {
         Some(ply) => Ok(ply.fen.clone()),
         None => Ok(start_fen.to_string()),
     }
+}
+
+/// Whether the side to move in `fen` has no legal move (checkmate or stalemate),
+/// so the engine has nothing to search there. Mirrors `review::is_terminal`; a
+/// FEN that won't parse is treated as non-terminal (the engine call surfaces it).
+fn is_terminal(fen: &str) -> bool {
+    features_of_fen(fen)
+        .map(|f| f.legal_move_count == 0)
+        .unwrap_or(false)
 }
 
 /// Resolve a [`MoveInput`] to the canonical SAN stored in the tree, validating

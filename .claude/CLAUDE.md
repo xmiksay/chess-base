@@ -35,6 +35,12 @@ src/
                    Mode B), service.review_game, POST /api/games/{id}/analyse   ← unit-tested
   games/export.rs  pure: mainline → MoveTree (+#119 review: [%eval]/NAGs/why) for
                    GET /api/games/{id}/export?annotated= — extended-PGN download (#120) ← unit-tested
+  studies/         StudyService: study CRUD + PGN import/export + MoveTree edits;
+                   analyse.rs (#162) pure node_fens + white_eval seam for the
+                   non-destructive "Analyse study" pass — StudyService::analyse_study
+                   engine-fills White-perspective [%eval] on every non-terminal node
+                   (eval-only, never clobbers comments/NAGs/shapes), so an export
+                   carries the evals Lichess renders; POST /api/studies/{id}/analyse ← unit-tested
   ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
   ai/providers.rs  ProviderService over llm_providers table (#20): admin-managed providers
                    (key server-side); default row builds the provider at startup, else env

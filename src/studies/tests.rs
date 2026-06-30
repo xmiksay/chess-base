@@ -508,3 +508,61 @@ async fn list_scopes_to_own_plus_global() {
         .collect();
     assert_eq!(names, vec!["Alice's", "Global"]);
 }
+
+/// Path to a real UCI engine, or `None` to skip (mirrors `tests/engine.rs`).
+fn engine_path() -> Option<String> {
+    match std::env::var("CHESS_BASE_TEST_ENGINE") {
+        Ok(p) if !p.trim().is_empty() => Some(p),
+        _ => {
+            eprintln!("skipping: set CHESS_BASE_TEST_ENGINE to a UCI engine binary to run");
+            None
+        }
+    }
+}
+
+/// `analyse_study` fills `[%eval]` on every non-terminal node and leaves the
+/// existing comment / NAG / shapes alone (issue #162). Gated on a real engine.
+#[tokio::test]
+async fn analyse_study_fills_evals_and_keeps_annotations() {
+    use crate::engine::{EngineConfig, EngineService};
+    use crate::pgn_tree::Shape;
+
+    let Some(path) = engine_path() else { return };
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+
+    // 1. e4 e5 — two move-bearing nodes, neither terminal.
+    let study = svc.create(&alice, db_id, "Openings", false).await.unwrap();
+    let e4 = svc.add_move(&alice, study.id, 0, "e4").await.unwrap();
+    let e5 = svc.add_move(&alice, study.id, e4, "e5").await.unwrap();
+
+    // Pin a human annotation we expect the eval-only pass to preserve.
+    svc.annotate(&alice, study.id, e4, Some("Best by test".into()), Some(1))
+        .await
+        .unwrap();
+    let shape = Shape {
+        orig: "e2".into(),
+        dest: Some("e4".into()),
+        brush: "green".into(),
+    };
+    svc.set_shapes(&alice, study.id, e4, vec![shape.clone()])
+        .await
+        .unwrap();
+
+    let engine = EngineService::new(EngineConfig::new("test", path), 1);
+    svc.analyse_study(&engine, &alice, study.id, 8)
+        .await
+        .unwrap();
+    engine.shutdown().await;
+
+    let tree = tree_of(&svc, &alice, study.id).await;
+    // Both non-terminal nodes now carry an eval…
+    assert!(tree.nodes[e4].eval.is_some(), "e4 eval");
+    assert!(tree.nodes[e5].eval.is_some(), "e5 eval");
+    // …the root (no move) does not.
+    assert!(tree.nodes[0].eval.is_none(), "root has no eval");
+    // …and the human annotations are untouched.
+    assert_eq!(tree.nodes[e4].comment.as_deref(), Some("Best by test"));
+    assert_eq!(tree.nodes[e4].nags, vec![1]);
+    assert_eq!(tree.nodes[e4].shapes, vec![shape]);
+}

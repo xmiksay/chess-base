@@ -835,3 +835,40 @@ async fn danger_map_walk_with_bad_pgn_is_bad_request() {
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("invalid spine PGN"), "body was: {text}");
 }
+
+/// `POST /api/studies/{id}/analyse` (#162) without an engine configured returns
+/// 503 with the operator-facing guidance — the `server_app` wires no engine.
+#[tokio::test]
+async fn analyse_study_without_an_engine_is_service_unavailable() {
+    let app = server_app().await;
+    let bob = register(&app, "bob").await;
+    let db_id = make_database(&app, &bob).await;
+
+    let (status, study) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies",
+            &bob,
+            json!({"database_id": db_id, "name": "Openings"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let study_id = study["id"].as_i64().unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(json_req(
+            "POST",
+            &format!("/api/studies/{study_id}/analyse"),
+            &bob,
+            json!({}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("No engine configured"), "body was: {text}");
+}

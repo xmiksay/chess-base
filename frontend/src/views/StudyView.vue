@@ -178,6 +178,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         type="button"
         data-test="export-eval"
         class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+        title="Lichess imports the eval gauge + arrows from this PGN; chess.com ignores them. Run 'Analyse study' first to fill the evals."
         @click="onExport(true)"
       >
         Export with eval

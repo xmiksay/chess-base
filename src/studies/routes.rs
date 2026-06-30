@@ -34,6 +34,11 @@ use crate::study_gen::{generate_study_live, GenerateError, GenerateOutcome, Gene
 /// land quickly; capped server-side via [`Limits::clamped`].
 const DEFAULT_GENERATE_DEPTH: u32 = 18;
 
+/// Per-position engine search depth used by `POST /api/studies/{id}/analyse`
+/// (issue #162) when the request doesn't override it. Capped server-side via
+/// [`Limits::clamped`].
+const DEFAULT_ANALYSE_DEPTH: u32 = 18;
+
 /// Study routes, mounted under the main API router.
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -46,6 +51,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/studies/{id}/export", get(export))
         .route("/api/studies/{id}/export/lichess", get(export_lichess))
+        .route("/api/studies/{id}/analyse", post(analyse))
         .route("/api/studies/{id}/moves", post(add_move))
         .route(
             "/api/studies/{id}/nodes/{node_id}",
@@ -343,6 +349,47 @@ async fn export_lichess(
     Ok(pgn_attachment(&format!("study-{id}-lichess.pgn"), pgn))
 }
 
+/// Body for `POST /api/studies/{id}/analyse` — the non-destructive "Analyse
+/// study" pass (#162). Optional `depth` overrides the per-position engine search
+/// depth; everything else is taken from the stored tree.
+#[derive(Deserialize, Default)]
+struct AnalyseBody {
+    /// Per-position engine search depth (plies); capped server-side.
+    #[serde(default)]
+    depth: Option<u32>,
+}
+
+/// Fill `[%eval]` on every non-terminal node of a study and persist it
+/// (`POST /api/studies/{id}/analyse`, #162). Eval-only — comments / NAGs / shapes
+/// stay put. Mirrors `generate`'s engine-from-state 503 guard; returns the
+/// refreshed `StudyView` so the editor re-renders from one response.
+async fn analyse(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+    body: Option<Json<AnalyseBody>>,
+) -> Result<Response, Response> {
+    // A missing engine is an operator-configuration gap, not a leaked internal —
+    // surface the guidance verbatim (like `generate`), not a 5xx.
+    let engine = state.engine_service.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "No engine configured: start chess-base with --engine / CHESS_BASE_ENGINE.",
+        )
+            .into_response()
+    })?;
+
+    let depth = body
+        .and_then(|Json(b)| b.depth)
+        .unwrap_or(DEFAULT_ANALYSE_DEPTH);
+    let model = service(&state)
+        .analyse_study(engine, &user, id, depth)
+        .await
+        .map_err(IntoResponse::into_response)?;
+    let view = StudyView::try_from(model).map_err(IntoResponse::into_response)?;
+    Ok((StatusCode::OK, Json(view)).into_response())
+}
+
 async fn rename(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -467,9 +514,10 @@ impl IntoResponse for StudyError {
             // a missing SAN means our own stored tree is corrupt (500).
             StudyError::Pgn(PgnError::MissingSan(_)) => StatusCode::INTERNAL_SERVER_ERROR,
             StudyError::Pgn(_) => StatusCode::BAD_REQUEST,
-            StudyError::Tree(_) | StudyError::Position(_) | StudyError::Db(_) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
+            StudyError::Tree(_)
+            | StudyError::Position(_)
+            | StudyError::Db(_)
+            | StudyError::Engine(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         error_response(status, self.to_string())
     }
