@@ -140,6 +140,41 @@ async fn global_databases_require_admin_to_create_and_mutate() {
 }
 
 #[tokio::test]
+async fn list_with_counts_reports_game_counts_per_database() {
+    use crate::db::entities::games;
+    use sea_orm::{ActiveModelTrait, Set};
+
+    let conn = connect(&DbConfig::in_memory()).await.unwrap();
+    let svc = DatabaseService::new(conn.clone());
+    let alice = user("alice");
+
+    let full = svc.create(&alice, "Full", "own", false).await.unwrap();
+    let empty = svc.create(&alice, "Empty", "own", false).await.unwrap();
+
+    // Two games land in `full`, none in `empty`.
+    for _ in 0..2 {
+        games::ActiveModel {
+            database_id: Set(full.id),
+            variant: Set("standard".into()),
+            ..Default::default()
+        }
+        .insert(&conn)
+        .await
+        .unwrap();
+    }
+
+    let counts: std::collections::HashMap<i32, i64> = svc
+        .list_with_counts(&alice)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(d, n)| (d.id, n))
+        .collect();
+    assert_eq!(counts.get(&full.id), Some(&2));
+    assert_eq!(counts.get(&empty.id), Some(&0), "empty DBs default to 0");
+}
+
+#[tokio::test]
 async fn deleting_a_missing_database_is_not_found() {
     let svc = service().await;
     assert!(matches!(

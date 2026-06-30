@@ -74,6 +74,31 @@ async fn add_move_validates_san_and_appends_to_tree() {
 }
 
 #[tokio::test]
+async fn add_move_detailed_accepts_uci_and_reports_fen_and_san() {
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+    let study = svc.create(&alice, db_id, "Openings", false).await.unwrap();
+
+    // A UCI move is accepted and stored as canonical SAN, with the resulting FEN.
+    let added = svc
+        .add_move_detailed(&alice, study.id, 0, MoveInput::Uci("g1f3".into()))
+        .await
+        .unwrap();
+    assert_eq!(added.san, "Nf3");
+    assert!(added.fen.starts_with("rnbqkbnr/pppppppp/8/8/8/5N2"));
+    let tree = tree_of(&svc, &alice, study.id).await;
+    assert_eq!(tree.mainline(), vec!["Nf3"]);
+
+    // An illegal UCI move is rejected, not panicked on.
+    assert!(matches!(
+        svc.add_move_detailed(&alice, study.id, 0, MoveInput::Uci("e2e5".into()))
+            .await
+            .unwrap_err(),
+        StudyError::IllegalMove { .. }
+    ));
+}
+
+#[tokio::test]
 async fn annotate_persists_comment_and_nag() {
     let (svc, db_id) = setup().await;
     let alice = user("alice");

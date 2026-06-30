@@ -21,8 +21,8 @@ commented PGN studies, and integrates UCI engines.
 | `features` | Factual position **feature tags** (`features_of_fen`, #33): material census + balance, game phase, side to move, check/mate/stalemate, insufficient material, mobility, castling rights, plus a short human-readable `tags` list; grounded facts the interactive analysis tool hands the model (deeper pawn-structure classification #30 layers on) | none (pure) |
 | `threats` | Static **threat scan** for the Threats board overlay (`threats`, #123): which of the side-to-move's pieces are hanging — attacked by the opponent and either undefended or defended only behind a cheaper attacker — surfaced as red `threat` arrows (shared `pgn_tree::Shape`) from the cheapest attacker to each target. A cheap, deterministic attack/defence scan (no engine search; ignores pins/X-rays/deeper tactics by design). HTTP route (`threats/routes.rs`, `GET /api/threats?fen=…` → JSON `Shape[]`) is a thin caller | none (pure) |
 | `db` | SeaORM connection, entities, migrations; SQLite/Postgres selection | DB |
-| `databases` | Transport-agnostic `DatabaseService`: collection CRUD (create/list/get/rename/delete) over the `databases` table; `kind ∈ {lichess,chesscom,master,own}`, `index_depth` derived from `kind`. Ownership read scope + write guards (ADR 0007/0011) — global (`owner_id IS NULL`) create/mutate requires admin. HTTP routes (`databases/routes.rs`, `/api/databases`) are thin callers | DB |
-| `studies` | Transport-agnostic `StudyService`: study lifecycle CRUD (`create`/`list`/`get`/`rename`/`delete`) + PGN import/export (`import_pgn`/`export_pgn` via `pgn_tree::pgn`, issue #9 — `export_pgn(include_eval)` keeps or strips the per-move `[%eval]` annotations for the extended vs plain export, issue #120; `export_lichess` emits a header-tagged Lichess-study chapter, issue #32; both export routes serve a real `.pgn` download via `server::download::pgn_attachment`) + node-level `MoveTree` mutations (`add_move`/variation SAN-validated via `position::legal_sans`, `annotate`, `promote_variation`/`reorder_variation`/`delete_node`, issue #18; `set_shapes` pins a plan's board shapes to a node, issue #61); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — both the HTTP routes (`studies/routes.rs`, `/api/studies`) and the scoped MCP study tools (`server/routes/mcp/tools.rs`, issue #17 / ADR-0016) are thin callers | DB |
+| `databases` | Transport-agnostic `DatabaseService`: collection CRUD (create/list/get/rename/delete) over the `databases` table; `kind ∈ {lichess,chesscom,master,own}`, `index_depth` derived from `kind`. `list_with_counts` pairs each visible database with its game count in one grouped query (powers the MCP `list_databases` tool, #125). Ownership read scope + write guards (ADR 0007/0011) — global (`owner_id IS NULL`) create/mutate requires admin. HTTP routes (`databases/routes.rs`, `/api/databases`) are thin callers | DB |
+| `studies` | Transport-agnostic `StudyService`: study lifecycle CRUD (`create`/`list`/`get`/`rename`/`delete`) + PGN import/export (`import_pgn`/`export_pgn` via `pgn_tree::pgn`, issue #9 — `export_pgn(include_eval)` keeps or strips the per-move `[%eval]` annotations for the extended vs plain export, issue #120; `export_lichess` emits a header-tagged Lichess-study chapter, issue #32; both export routes serve a real `.pgn` download via `server::download::pgn_attachment`) + node-level `MoveTree` mutations (`add_move`/variation SAN-validated via `position::legal_sans`, `annotate`, `promote_variation`/`reorder_variation`/`delete_node`, issue #18; `set_shapes` pins a plan's board shapes to a node, issue #61); ownership read scope + write guards (ADR 0007/0011). Pure of HTTP/MCP — both the HTTP routes (`studies/routes.rs`, `/api/studies`) and the scoped MCP study tools (`server/routes/mcp/study_tools.rs`, issue #17/#125 / ADR-0016) are thin callers | DB |
 | `settings` | Transport-agnostic `SettingsService`: per-user UI preferences (theme, board theme, piece set, default database, plus the board-overlay layer toggles `show_plans`/`show_threats`/`show_master_moves`, #123) stored as one JSON blob per user under a `user_settings:{id}` key in the key/value `settings` table — no new entity. Validates the theme value and that `default_database_id` is visible to the caller (own ∪ global). HTTP routes (`settings/routes.rs`, `GET/PUT /api/settings`) are thin callers | DB |
 | `auth` | Server-mode auth (ADR 0015): `users`/`sessions` tables, Argon2 hashing, transport-agnostic `AuthService` (register/login/logout/authenticate), `/api/auth/*` routes. Inert in local mode | DB |
 | `ingest` | Shared game-ingest path (`ingest_pgn`): parses a PGN, dedups players/event, stores the game, replays the mainline via `position::replay`, and bulk-inserts the `position_index` rows (one per ply, capped by the database's `index_depth`; ADR-0003). One transaction per game; every collector funnels through it. A game carrying a provider permalink (`source_ref`) already present in the target database is skipped (returns `Ok(None)`), so a re-sync never doubles games (issue #95). `ingest_pgn_all` ingests every game in a multi-game blob (splitting on `[Event ` — the helper shared with the streaming collectors), returning only the newly-stored games; used by PGN upload. The store path is factored into reusable seams — `parse_pgn`, `prepare_game` (validate/replay), `load_index_depth` and `store_prepared` (write one game + its index rows in a caller-supplied transaction) — so the bulk importer can batch many games per transaction. `ParsedGame::content_hash` is a SHA-256 dedup key (stored as `source_ref`) for permalink-less master games | DB |
@@ -203,25 +203,41 @@ so the form surfaces them verbatim without leaking internals.
 `ToolOutcome` the dispatcher wraps into the MCP `content`/`isError` envelope.
 Unknown method → `-32601`, unknown tool → `-32602`. The tool builders live in
 `server/routes/mcp/tools.rs`: an `echo` stub proves dispatch, the engine facade
-registers `engine_analyse` (#27, see ADR 0014), and the study tools
-(`study_create` / `study_add_move` / `study_annotate`, #17) edit the caller's
-studies through `StudyService`. The **study-generation tool** `generate_study`
-(#115) is the AI-assisted end-to-end entry point: it runs the `study_gen::generate`
-orchestrator (tree → annotate/verify → persist) and needs both an engine and an
-LLM provider configured (a miss returns a graceful `isError`, never a panic). The
-**pre-chewed DB tools** live in
-`server/routes/mcp/db_tools.rs` (#28): `db_position_report` (ECO + per-move
-win/draw/loss with frequency/score + transpositions) and `db_reference_games`
-(scoped reference games), both thin callers of `search::PositionReportService`
-returning synthesized JSON the LLM consumes but never recomputes (ADR-0009). The
-**interactive analysis tool** lives in `server/routes/mcp/analysis.rs` (#33):
+registers `engine_analyse` (#27, see ADR 0014), and the **study-generation tool**
+`generate_study` (#115) is the AI-assisted end-to-end entry point: it runs the
+`study_gen::generate` orchestrator (tree → annotate/verify → persist) and needs
+both an engine and an LLM provider configured (a miss returns a graceful
+`isError`, never a panic). The **study tools** live in
+`server/routes/mcp/study_tools.rs` (#17, completed in #125): `study_create`,
+`study_import_pgn` (build a whole study from PGN in one call, reusing the
+`pgn_tree::pgn` parser), `study_get` (read back a study's `{summary, tree}` with
+node ids — the seam that lets an agent annotate an existing study),
+`study_add_move` (move as SAN **or** UCI — UCI sidesteps SAN's strict
+disambiguation — returning `{node_id, fen, san}` and accepting an inline
+`comment`/`nag`), `study_annotate` and `study_export`, all thin callers of
+`StudyService` scoped to the caller. The **pre-chewed DB tools** live in
+`server/routes/mcp/db_tools.rs` (#28, completed in #125): `db_position_report`
+(ECO + per-move win/draw/loss with frequency/score + transpositions) and
+`db_reference_games` (scoped reference games), thin callers of
+`search::PositionReportService`; plus `list_databases` (the caller's + global
+collections with game counts — how an agent discovers a `database_id`),
+`db_list_games` (keyset page of a database's games) and `db_read_game` (one game
+with its PGN), thin callers of `DatabaseService` / `GameService`, all returning
+synthesized JSON the LLM consumes but never recomputes (ADR-0009). The
+**interactive analysis tools** live in `server/routes/mcp/analysis.rs` (#33):
 `analyse_position` is the one-shot "explain this position" entry point — it
 bundles the engine eval/PV, the `db_position_report`, and the pure
 `features::features_of_fen` feature tags (material, game phase, check/mate,
 castling rights) into a single grounded snapshot so a connected client cites tool
 output rather than inventing lines. A missing engine leaves `engine: null` with an
-explanatory note; the DB report and features are always present. The unbundled
-tools stay available for an agent that wants to drill in further.
+explanatory note; the DB report and features are always present. `analyse_game`
+(#125) is its whole-game counterpart: it parses a PGN and walks the engine over
+every ply via the #119 `review::review_game`, returning the per-ply review facts
+(eval, best move, classification, note) + accuracy summary and the same game as
+annotated PGN movetext (the single `games::export` + `pgn_tree::pgn` serializer,
+#120). `analyse_position` and `engine_analyse` share one default search depth
+(`engine::DEFAULT_DEPTH`). The unbundled tools stay available for an agent that
+wants to drill in further.
 
 Every `/mcp` call is **authenticated** (ADR 0016): `server/auth.rs::authenticate_mcp`
 resolves an OAuth access token then a service token to the one `CurrentUser`, which

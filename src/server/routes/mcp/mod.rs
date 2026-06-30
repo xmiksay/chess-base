@@ -10,6 +10,7 @@
 
 mod analysis;
 mod db_tools;
+mod study_tools;
 mod tools;
 
 use std::future::Future;
@@ -340,14 +341,22 @@ over JSON-RPC; the available tools depend on what is registered (call \
 - **Interactive analysis** — `analyse_position` is the one-shot \"explain this \
   position\" entry point: it bundles engine eval, the database report and factual \
   feature tags for a single FEN so an explanation cites tool output, not guesses. \
-  The tools below are the same sources unbundled, for drilling in further.
+  `analyse_game` is its whole-game counterpart: walk the engine over a PGN for a \
+  per-ply eval + best-move + classification review. The tools below are the same \
+  sources unbundled, for drilling in further.
 - **Engine** — request Stockfish/Lc0 evaluation of a position (best move, score, \
   principal variation) to use as ground truth when annotating.
-- **Database** — search the caller's databases and the global ones by game \
-  header or by position (64-bit Zobrist hash), and read individual games.
-- **Studies** — create studies and edit their move-trees (add moves, annotate). \
-  Every edit is scoped to the authenticated caller: you may only mutate your own \
-  studies (global studies require admin).
+- **Database** — `list_databases` discovers the collections you can see (with \
+  game counts) and the `database_id`s the study tools need; `db_list_games` / \
+  `db_read_game` page through and read individual games; `db_position_report` / \
+  `db_reference_games` search by position (64-bit Zobrist hash).
+- **Studies** — create studies and edit their move-trees: `study_import_pgn` \
+  builds a whole study from PGN in one call, or `study_create` + `study_add_move` \
+  (SAN or UCI, with optional inline comment/NAG) build one move at a time; \
+  `study_get` reads an existing study's tree (with node ids) so you can \
+  `study_annotate` it; `study_export` emits re-importable PGN. Every edit is \
+  scoped to the authenticated caller: you may only mutate your own studies \
+  (global studies require admin).
 
 ## Board directives
 

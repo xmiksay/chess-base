@@ -8,7 +8,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use chess_base::db::{connect, DbConfig};
@@ -133,6 +133,83 @@ pub async fn rpc_seeded(pgns: &[&str], body: Value) -> (StatusCode, Value) {
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     (status, value)
+}
+
+/// A reusable `/mcp` session over a single in-memory DB: many requests hit the
+/// *same* state, so a tool that writes (import/create/add_move) is visible to a
+/// later read (`study_get`, `db_list_games`). The per-call harnesses above each
+/// build a fresh DB, which can't model a multi-step flow.
+pub struct Session {
+    app: axum::Router,
+    token: String,
+}
+
+impl Session {
+    /// POST a JSON-RPC `body` and return (status, parsed-or-null body).
+    pub async fn call(&self, body: Value) -> (StatusCode, Value) {
+        let resp = self
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {}", self.token))
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (status, value)
+    }
+
+    /// Call a tool by name and return its result, asserting the dispatch and the
+    /// tool itself both succeeded (no `isError`).
+    pub async fn tool(&self, id: i64, name: &str, arguments: Value) -> Value {
+        let (status, v) = self
+            .call(json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": { "name": name, "arguments": arguments }
+            }))
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(v["result"].get("isError").is_none(), "body: {v}");
+        v["result"].clone()
+    }
+}
+
+/// Build a reusable [`Session`] over one in-memory DB seeded with `pgns` in a
+/// global database (owner `NULL`, visible to the local-admin caller).
+pub async fn seeded_session(pgns: &[&str]) -> Session {
+    use chess_base::db::entities::databases;
+    use chess_base::ingest_pgn;
+    use sea_orm::{ActiveModelTrait, Set};
+
+    let db = connect(&DbConfig::in_memory()).await.unwrap();
+    let token = ensure_local_service_token(&db).await.unwrap();
+    let database = databases::ActiveModel {
+        owner_id: Set(None),
+        name: Set("Masters".into()),
+        kind: Set("master".into()),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    for pgn in pgns {
+        ingest_pgn(&db, database.id, pgn).await.unwrap();
+    }
+    let app = build_router(AppState {
+        db,
+        mode: Mode::Local,
+        engine_service: None,
+        llm_provider: None,
+    });
+    Session { app, token }
 }
 
 /// Parse the (single) text content block of a successful `tools/call` result as JSON.

@@ -8,11 +8,14 @@
 //! global (`owner_id IS NULL`) ones; writes touch only the caller's own
 //! databases, and a global database requires admin.
 
+use std::collections::HashMap;
+
 use sea_orm::{
-    ActiveModelTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set,
 };
 
-use crate::db::entities::databases;
+use crate::db::entities::{databases, games};
 use crate::server::identity::{assert_admin, assert_can_write, scope, CurrentUser};
 
 /// Why a database operation failed. Transport-agnostic — the HTTP / MCP layer
@@ -91,6 +94,26 @@ impl DatabaseService {
         Ok(rows)
     }
 
+    /// All databases visible to the caller paired with their game counts, in one
+    /// extra grouped query. Powers the MCP `list_databases` tool (issue #125), so
+    /// an agent can both discover a `database_id` and see how populated each
+    /// collection is before building a study against it.
+    pub async fn list_with_counts(
+        &self,
+        user: &CurrentUser,
+    ) -> Result<Vec<(databases::Model, i64)>, DatabaseError> {
+        let rows = self.list(user).await?;
+        let ids: Vec<i32> = rows.iter().map(|d| d.id).collect();
+        let counts = game_counts(&self.db, &ids).await?;
+        Ok(rows
+            .into_iter()
+            .map(|d| {
+                let n = counts.get(&d.id).copied().unwrap_or(0);
+                (d, n)
+            })
+            .collect())
+    }
+
     /// A single database, if it is visible to the caller.
     pub async fn get(
         &self,
@@ -141,6 +164,25 @@ impl DatabaseService {
         assert_can_write(model.owner_id.as_deref(), user).map_err(|_| DatabaseError::Forbidden)?;
         Ok(model)
     }
+}
+
+/// `database_id -> game count` for the given database ids, in a single grouped
+/// query. Empty `ids` short-circuits without touching the DB; databases with no
+/// games are simply absent from the map (the caller defaults them to `0`).
+async fn game_counts(db: &DatabaseConnection, ids: &[i32]) -> Result<HashMap<i32, i64>, DbErr> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = games::Entity::find()
+        .filter(games::Column::DatabaseId.is_in(ids.iter().copied()))
+        .select_only()
+        .column(games::Column::DatabaseId)
+        .column_as(games::Column::Id.count(), "count")
+        .group_by(games::Column::DatabaseId)
+        .into_tuple::<(i32, i64)>()
+        .all(db)
+        .await?;
+    Ok(rows.into_iter().collect())
 }
 
 /// Trim and reject a blank name.

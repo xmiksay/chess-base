@@ -8,7 +8,9 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::{Tool, ToolOutcome, ToolRegistry};
+use crate::databases::{DatabaseError, DatabaseService};
 use crate::engine::{Limits, MAX_DEPTH, MAX_MOVETIME_MS};
+use crate::games::{GameError, GameService, MAX_LIMIT as MAX_GAME_LIMIT};
 use crate::search::report::PositionReportService;
 use crate::search::SearchError;
 use crate::server::identity::CurrentUser;
@@ -25,6 +27,137 @@ const MAX_REFERENCE_LIMIT: u64 = 200;
 pub fn register(registry: &mut ToolRegistry) {
     registry.register(position_report_tool());
     registry.register(reference_games_tool());
+    registry.register(list_databases_tool());
+    registry.register(list_games_tool());
+    registry.register(read_game_tool());
+}
+
+/// `list_databases`: the caller's databases plus the global ones, with game
+/// counts — so an agent can discover a `database_id` before building a study.
+fn list_databases_tool() -> Tool {
+    Tool::new(
+        "list_databases",
+        "List the databases (game collections) you can see — your own plus the \
+         global ones — each with its id, name, owner, `global` flag and game \
+         count. Use this to discover the `database_id` that `study_create`, \
+         `study_import_pgn`, `generate_study` and `db_list_games` need.",
+        json!({ "type": "object", "properties": {} }),
+        |app, user, _args| async move { list_databases(app, user).await },
+    )
+}
+
+async fn list_databases(app: AppState, user: CurrentUser) -> ToolOutcome {
+    let service = DatabaseService::new(app.db.clone());
+    match service.list_with_counts(&user).await {
+        Ok(rows) => {
+            let views: Vec<Value> = rows
+                .into_iter()
+                .map(|(d, game_count)| {
+                    json!({
+                        "id": d.id,
+                        "name": d.name,
+                        "owner_id": d.owner_id,
+                        "global": d.owner_id.is_none(),
+                        "game_count": game_count,
+                    })
+                })
+                .collect();
+            json_outcome(&views)
+        }
+        Err(e) => database_error(e),
+    }
+}
+
+/// `db_list_games`: one keyset page of the games in a database.
+fn list_games_tool() -> Tool {
+    Tool::new(
+        "db_list_games",
+        "List the games in a database (oldest-first, keyset-paginated). Returns \
+         game headers (players, date, result, ECO, Elo, ply count) plus a \
+         `next_cursor` to pass back as `after` for the next page. Scoped to your \
+         databases and the global ones. Discover the `database_id` via \
+         `list_databases`.",
+        json!({
+            "type": "object",
+            "properties": {
+                "database_id": { "type": "integer", "description": "Database to list games from." },
+                "after": {
+                    "type": "integer", "minimum": 1,
+                    "description": "Keyset cursor: the last game id of the previous page (optional)."
+                },
+                "limit": {
+                    "type": "integer", "minimum": 1, "maximum": MAX_GAME_LIMIT,
+                    "description": "Max games to return (default 50); capped server-side."
+                }
+            },
+            "required": ["database_id"]
+        }),
+        |app, user, args| async move { list_games(app, user, args).await },
+    )
+}
+
+async fn list_games(app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
+    let Some(database_id) = args.get("database_id").and_then(Value::as_i64) else {
+        return ToolOutcome::error("Invalid arguments: missing integer field `database_id`.");
+    };
+    let after = match opt_bounded_u64(&args, "after", i32::MAX as u64) {
+        Ok(value) => value.map(|n| n as i32),
+        Err(msg) => return ToolOutcome::error(msg),
+    };
+    let limit = match opt_bounded_u64(&args, "limit", MAX_GAME_LIMIT) {
+        Ok(limit) => limit,
+        Err(msg) => return ToolOutcome::error(msg),
+    };
+    let service = GameService::new(app.db.clone());
+    match service.list(&user, database_id as i32, after, limit).await {
+        Ok(page) => json_outcome(&page),
+        Err(e) => game_error(e),
+    }
+}
+
+/// `db_read_game`: a single game by id, with its PGN movetext.
+fn read_game_tool() -> Tool {
+    Tool::new(
+        "db_read_game",
+        "Fetch one game by id, with its full PGN movetext and header roster \
+         (players, result, ECO, variant, start FEN). Scoped to your databases and \
+         the global ones. Discover game ids via `db_list_games`.",
+        json!({
+            "type": "object",
+            "properties": {
+                "game_id": { "type": "integer", "description": "Game to fetch." }
+            },
+            "required": ["game_id"]
+        }),
+        |app, user, args| async move { read_game(app, user, args).await },
+    )
+}
+
+async fn read_game(app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
+    let Some(game_id) = args.get("game_id").and_then(Value::as_i64) else {
+        return ToolOutcome::error("Invalid arguments: missing integer field `game_id`.");
+    };
+    let service = GameService::new(app.db.clone());
+    match service.get(&user, game_id as i32).await {
+        Ok(game) => json_outcome(&game),
+        Err(e) => game_error(e),
+    }
+}
+
+/// Map a [`DatabaseError`] to a tool outcome without leaking DB internals.
+fn database_error(error: DatabaseError) -> ToolOutcome {
+    match error {
+        DatabaseError::Db(_) => ToolOutcome::error("database query failed"),
+        other => ToolOutcome::error(other.to_string()),
+    }
+}
+
+/// Map a [`GameError`] to a tool outcome without leaking DB internals.
+fn game_error(error: GameError) -> ToolOutcome {
+    match error {
+        GameError::NotFound => ToolOutcome::error("game not found"),
+        GameError::Db(_) => ToolOutcome::error("database query failed"),
+    }
 }
 
 /// `db_position_report`: ECO + per-move stats (with frequency/score) + transpositions.
