@@ -30,6 +30,7 @@ pub fn router(state: AppState) -> Router {
     // independently. Merge them all onto the base API router.
     api.merge(crate::auth::router(state.clone()))
         .merge(crate::databases::routes::router(state.clone()))
+        .merge(crate::folders::routes::router(state.clone()))
         .merge(crate::games::routes::router(state.clone()))
         .merge(crate::review::routes::router(state.clone()))
         .merge(crate::imports::routes::router(state.clone()))

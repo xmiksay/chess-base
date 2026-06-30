@@ -15,6 +15,7 @@ vi.mock('../api', () => ({
     health: vi.fn(),
     databases: { list: vi.fn() },
     studies: { list: vi.fn() },
+    folders: { list: vi.fn() },
   },
 }))
 
@@ -26,6 +27,8 @@ function study(): Study {
     name: 'Test study',
     global: false,
     owner_id: 'u1',
+    folder_id: null,
+    origin_game_id: null,
     tree: {
       root: 0,
       nodes: [
@@ -51,6 +54,7 @@ beforeEach(() => {
   vi.mocked(api.health).mockResolvedValue({ ok: true, llm: false } as never)
   vi.mocked(api.databases.list).mockResolvedValue([])
   vi.mocked(api.studies.list).mockResolvedValue([])
+  vi.mocked(api.folders.list).mockResolvedValue([])
 })
 
 async function mountWithStudy() {
@@ -59,7 +63,7 @@ async function mountWithStudy() {
   vi.spyOn(engine, 'connect').mockImplementation(() => {})
   vi.spyOn(engine, 'disconnect').mockImplementation(() => {})
 
-  const wrapper = mount(StudyView, { global: { stubs: { Board: true } } })
+  const wrapper = mount(StudyView, { global: { stubs: { Board: true, RouterLink: true } } })
   await flushPromises()
 
   // Open a study by populating the stores directly (no network round-trip).

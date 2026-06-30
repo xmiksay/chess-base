@@ -35,3 +35,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0027 | MCP tools are engine/DB data primitives; the LLM lives on the client side |
 | 0028 | Set-up position studies: `start_fen` on the move tree (no migration) |
 | 0029 | Plan & threat arrows baked into generated studies: one pass, opt-in, HTTP + `opening_tree` |
+| 0030 | Study folder hierarchy (adjacency-list) + game-linked analyses, app-enforced cascade |

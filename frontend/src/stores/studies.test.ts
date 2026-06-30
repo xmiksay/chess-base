@@ -29,7 +29,7 @@ describe('studies store', () => {
 
   it('refresh loads the list of summaries', async () => {
     vi.mocked(api.studies.list).mockResolvedValue([
-      { id: 1, database_id: 1, name: 'Sicilian', global: false, owner_id: null },
+      { id: 1, database_id: 1, name: 'Sicilian', global: false, owner_id: null, folder_id: null, origin_game_id: null },
     ])
     const store = useStudiesStore()
     await store.refresh()
@@ -45,6 +45,8 @@ describe('studies store', () => {
       name: 'Ruy',
       global: false,
       owner_id: null,
+      folder_id: null,
+      origin_game_id: null,
       tree: {
         root: 0,
         nodes: [{ id: 0, parent: null, san: null, comment: null, nags: [], children: [] }],
@@ -63,6 +65,8 @@ describe('studies store', () => {
       name: 'Imported',
       global: false,
       owner_id: null,
+      folder_id: null,
+      origin_game_id: null,
       tree: { root: 0, nodes: [] },
     }
     vi.mocked(api.studies.importPgn).mockResolvedValue(study)
@@ -85,7 +89,7 @@ describe('studies store', () => {
     }
     vi.mocked(api.studies.generate).mockResolvedValue(view)
     vi.mocked(api.studies.list).mockResolvedValue([
-      { id: 8, database_id: 2, name: 'Repertoire', global: false, owner_id: null },
+      { id: 8, database_id: 2, name: 'Repertoire', global: false, owner_id: null, folder_id: null, origin_game_id: null },
     ])
     const store = useStudiesStore()
     const body = { database_id: 2, name: 'Repertoire', engine_depth: 18 }
@@ -113,13 +117,15 @@ describe('studies store', () => {
 
   it('rename keeps current and the list summary in sync', async () => {
     const store = useStudiesStore()
-    store.list = [{ id: 4, database_id: 1, name: 'Old', global: false, owner_id: null }]
+    store.list = [{ id: 4, database_id: 1, name: 'Old', global: false, owner_id: null, folder_id: null, origin_game_id: null }]
     store.current = {
       id: 4,
       database_id: 1,
       name: 'Old',
       global: false,
       owner_id: null,
+      folder_id: null,
+      origin_game_id: null,
       tree: { root: 0, nodes: [] },
     }
     vi.mocked(api.studies.rename).mockResolvedValue({
@@ -128,6 +134,8 @@ describe('studies store', () => {
       name: 'New',
       global: false,
       owner_id: null,
+      folder_id: null,
+      origin_game_id: null,
       tree: { root: 0, nodes: [] },
     })
     await store.rename(4, 'New')
@@ -137,13 +145,15 @@ describe('studies store', () => {
 
   it('remove drops the study and clears current when it was open', async () => {
     const store = useStudiesStore()
-    store.list = [{ id: 5, database_id: 1, name: 'Gone', global: false, owner_id: null }]
+    store.list = [{ id: 5, database_id: 1, name: 'Gone', global: false, owner_id: null, folder_id: null, origin_game_id: null }]
     store.current = {
       id: 5,
       database_id: 1,
       name: 'Gone',
       global: false,
       owner_id: null,
+      folder_id: null,
+      origin_game_id: null,
       tree: { root: 0, nodes: [] },
     }
     vi.mocked(api.studies.remove).mockResolvedValue(null)

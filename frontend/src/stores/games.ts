@@ -13,7 +13,7 @@ import { useTreeBoard } from '../lib/useTreeBoard'
 import { mainlinePath as mainlinePathOf } from '../lib/moveTree'
 import { graftReviewVariations } from '../lib/reviewTree'
 import { STARTPOS_FEN } from '../lib/fen'
-import type { GameDetail, GameReview, GameRow } from '../types'
+import type { GameDetail, GameReview, GameRow, StudySummary } from '../types'
 
 /** Sort fields the list supports (mirrors the backend `GameSort`). */
 export type GameSortField = 'date' | 'result' | 'eco'
@@ -41,6 +41,8 @@ export const useGamesStore = defineStore('games', () => {
 
   // The opened game's headers; the board composable holds its move tree + cursor.
   const openGame = ref<GameDetail | null>(null)
+  // Studies saved as analyses of the open game (issue #164).
+  const linkedStudies = ref<StudySummary[]>([])
 
   /** Select a database and load its first page, replacing any prior list. */
   async function selectDatabase(id: number) {
@@ -108,11 +110,39 @@ export const useGamesStore = defineStore('games', () => {
       const [game, tree] = await Promise.all([api.games.get(id), api.games.tree(id)])
       openGame.value = game
       board.load(tree, STARTPOS_FEN)
+      await loadLinkedStudies(id)
     } catch (e) {
       error.value = (e as Error)?.message ?? String(e)
     } finally {
       loading.value = false
     }
+  }
+
+  /** Refresh the analyses (studies) linked to a game (issue #164). */
+  async function loadLinkedStudies(id: number) {
+    try {
+      linkedStudies.value = await api.games.linkedStudies(id)
+    } catch (e) {
+      error.value = (e as Error)?.message ?? String(e)
+    }
+  }
+
+  /**
+   * Save the open game as a study (issue #164), optionally filed under a folder
+   * and engine-analysed. Refreshes the linked-analyses list on success so the new
+   * study shows immediately. Throws on failure so the caller can surface the
+   * message (e.g. the 503 when `analyse` is requested without an engine).
+   */
+  async function saveAsStudy(body: {
+    name: string
+    folder_id?: number | null
+    analyse?: boolean
+    depth?: number
+  }): Promise<StudySummary | null> {
+    if (!openGame.value) return null
+    const study = await api.games.saveAsStudy(openGame.value.id, body)
+    await loadLinkedStudies(openGame.value.id)
+    return study
   }
 
   /** Node ids along the mainline; the array index is the ply (0 = start). */
@@ -175,6 +205,9 @@ export const useGamesStore = defineStore('games', () => {
     loading,
     error,
     openGame,
+    linkedStudies,
+    loadLinkedStudies,
+    saveAsStudy,
     selectDatabase,
     fetchPage,
     goToPage,

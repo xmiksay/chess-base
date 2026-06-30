@@ -10,7 +10,8 @@
 //! global study requires admin.
 
 use sea_orm::{
-    ActiveModelTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder,
+    Set,
 };
 
 pub mod analyse;
@@ -19,14 +20,18 @@ pub mod routes;
 
 use std::collections::BTreeMap;
 
-use crate::db::entities::studies;
+use crate::db::entities::{folders, studies};
 use crate::engine::{EngineService, Limits};
 use crate::features::features_of_fen;
+use crate::games::{export, GameError, GameService};
+use crate::ingest::parse_pgn;
 use crate::pgn_tree::pgn::{self, PgnError};
 use crate::pgn_tree::{lichess, MoveTree, Shape, TreeError};
 use crate::position::{
     apply_san, black_to_move, legal_sans, replay, uci_to_san, CastlingMode, PositionError,
+    STARTPOS_FEN,
 };
+use crate::review::{review_game, ReviewError};
 use crate::server::identity::{assert_admin, assert_can_write, scope, CurrentUser};
 
 /// Studies are standard chess; castling rights parse the normal way.
@@ -101,6 +106,28 @@ impl From<TreeError> for StudyError {
     }
 }
 
+/// A game lookup failing while building an analysis maps onto the study error:
+/// a hidden/absent game is `NotFound`, a storage failure stays internal.
+impl From<GameError> for StudyError {
+    fn from(err: GameError) -> Self {
+        match err {
+            GameError::NotFound => StudyError::NotFound,
+            GameError::Db(e) => StudyError::Db(e),
+        }
+    }
+}
+
+/// An engine review failing while building an analysis maps onto the study error:
+/// an unplayable game is a client-side `InvalidEdit`, an engine fault internal.
+impl From<ReviewError> for StudyError {
+    fn from(err: ReviewError) -> Self {
+        match err {
+            ReviewError::BadGame(msg) => StudyError::InvalidEdit(msg),
+            ReviewError::Engine(e) => StudyError::Engine(e),
+        }
+    }
+}
+
 /// Study CRUD + move-tree edits over the `studies` table. Holds a connection
 /// handle (cheap to clone — SeaORM wraps an `Arc`'d pool).
 #[derive(Clone)]
@@ -155,6 +182,113 @@ impl StudyService {
         tree: &MoveTree,
     ) -> Result<studies::Model, StudyError> {
         self.insert(user, database_id, name, global, tree).await
+    }
+
+    /// Build a new study (an "analysis") from a stored game's mainline and link it
+    /// back to that game via `origin_game_id` (issue #164). When `analyse` is set
+    /// the engine reviews the game and the tree carries `[%eval]` + move-quality
+    /// NAGs + why-notes (the same `review`/`annotated_tree` seam as #162/#120);
+    /// otherwise it is a plain linear tree. The study scopes to the game's database
+    /// (for position context) and lands in `folder_id` (validated visible+writable;
+    /// `None` ⇒ unfiled). Always owned by the caller.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_from_game(
+        &self,
+        engine: Option<&EngineService>,
+        user: &CurrentUser,
+        game_id: i32,
+        name: impl Into<String>,
+        folder_id: Option<i32>,
+        analyse: bool,
+        depth: u32,
+    ) -> Result<studies::Model, StudyError> {
+        let game = GameService::new(self.db.clone()).get(user, game_id).await?;
+        if let Some(folder_id) = folder_id {
+            self.assert_folder_writable(user, folder_id).await?;
+        }
+        let stored = game
+            .pgn
+            .as_deref()
+            .ok_or_else(|| StudyError::InvalidEdit("game has no moves".into()))?;
+        let parsed = parse_pgn(stored).map_err(|e| StudyError::InvalidEdit(e.to_string()))?;
+        let start_fen = game.start_fen.as_deref().unwrap_or(STARTPOS_FEN);
+
+        let mut tree = if analyse {
+            let engine = engine.ok_or_else(|| {
+                StudyError::Engine(anyhow::anyhow!("no engine configured for analysis"))
+            })?;
+            let review =
+                review_game(engine, start_fen, &game.variant, &parsed.mainline, depth).await?;
+            export::annotated_tree(&parsed.mainline, &review)
+        } else {
+            export::linear_tree(&parsed.mainline)
+        };
+        // Carry a set-up origin so a non-standard start round-trips on export.
+        if start_fen != STARTPOS_FEN {
+            tree.start_fen = Some(start_fen.to_string());
+        }
+
+        let model = studies::ActiveModel {
+            database_id: Set(game.database_id),
+            owner_id: Set(Some(user.id.clone())),
+            name: Set(name.into()),
+            tree_json: Set(serde_json::to_string(&tree)?),
+            folder_id: Set(folder_id),
+            origin_game_id: Set(Some(game_id)),
+            ..Default::default()
+        }
+        .insert(&self.db)
+        .await?;
+        Ok(model)
+    }
+
+    /// Move a study the caller may write into `folder_id` (`None` ⇒ unfiled/root).
+    /// The target folder must be visible and writable to the caller.
+    pub async fn set_folder(
+        &self,
+        user: &CurrentUser,
+        study_id: i32,
+        folder_id: Option<i32>,
+    ) -> Result<studies::Model, StudyError> {
+        let study = self.load_writable(user, study_id).await?;
+        if let Some(folder_id) = folder_id {
+            self.assert_folder_writable(user, folder_id).await?;
+        }
+        let mut active: studies::ActiveModel = study.into();
+        active.folder_id = Set(folder_id);
+        Ok(active.update(&self.db).await?)
+    }
+
+    /// Analyses linked to `game_id` and visible to the caller (own ∪ global),
+    /// oldest first.
+    pub async fn studies_for_game(
+        &self,
+        user: &CurrentUser,
+        game_id: i32,
+    ) -> Result<Vec<studies::Model>, StudyError> {
+        let rows = studies::Entity::find()
+            .filter(scope(studies::Column::OwnerId, user))
+            .filter(studies::Column::OriginGameId.eq(game_id))
+            .order_by_asc(studies::Column::Id)
+            .all(&self.db)
+            .await?;
+        Ok(rows)
+    }
+
+    /// Ensure `folder_id` names a folder the caller may file a study into: it must
+    /// be visible (own ∪ global) and writable (own, or admin for a global one).
+    async fn assert_folder_writable(
+        &self,
+        user: &CurrentUser,
+        folder_id: i32,
+    ) -> Result<(), StudyError> {
+        let folder = folders::Entity::find_by_id(folder_id)
+            .filter(scope(folders::Column::OwnerId, user))
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| StudyError::InvalidEdit("target folder not found".into()))?;
+        assert_can_write(folder.owner_id.as_deref(), user).map_err(|_| StudyError::Forbidden)?;
+        Ok(())
     }
 
     /// Export a study the caller may read as standard PGN movetext (no headers).

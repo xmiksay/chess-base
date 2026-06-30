@@ -30,6 +30,8 @@ function sampleStudy(): Study {
     name: 'Open Games',
     global: false,
     owner_id: null,
+    folder_id: null,
+    origin_game_id: null,
     tree: {
       root: 0,
       nodes: [
@@ -152,6 +154,8 @@ describe('studyEditor store', () => {
       name: 'Catalan',
       global: false,
       owner_id: null,
+      folder_id: null,
+      origin_game_id: null,
       tree: {
         root: 0,
         start_fen: fen,

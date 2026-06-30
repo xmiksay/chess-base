@@ -89,6 +89,14 @@ export const useStudiesStore = defineStore('studies', () => {
     return study
   }
 
+  /** File a study under a folder (issue #164); refresh so `folder_id` updates. */
+  async function setFolder(id: number, folderId: number | null) {
+    const study = await _run(() => api.studies.setFolder(id, folderId))
+    if (current.value?.id === id) current.value = study
+    await refresh()
+    return study
+  }
+
   /** Delete a study; clears `current` if it was the open one. */
   async function remove(id: number) {
     await _run(() => api.studies.remove(id))
@@ -109,6 +117,7 @@ export const useStudiesStore = defineStore('studies', () => {
     importPgn,
     exportPgn,
     rename,
+    setFolder,
     remove,
   }
 })

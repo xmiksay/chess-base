@@ -566,3 +566,115 @@ async fn analyse_study_fills_evals_and_keeps_annotations() {
     assert_eq!(tree.nodes[e4].nags, vec![1]);
     assert_eq!(tree.nodes[e4].shapes, vec![shape]);
 }
+
+/// Fresh DB with one owned games database holding a single short game; returns
+/// the service, the database id and the game id. Used by the #164 analysis tests.
+async fn setup_with_game() -> (StudyService, i32, i32) {
+    use crate::db::entities::games;
+    let conn = connect(&DbConfig::in_memory()).await.unwrap();
+    let db = databases::ActiveModel {
+        owner_id: Set(Some("alice".to_string())),
+        name: Set("Alice's games".to_string()),
+        kind: Set("own".to_string()),
+        ..Default::default()
+    }
+    .insert(&conn)
+    .await
+    .unwrap();
+    let game = games::ActiveModel {
+        database_id: Set(db.id),
+        variant: Set("standard".to_string()),
+        result: Set(Some("1-0".to_string())),
+        pgn: Set(Some("1. e4 e5 2. Nf3 Nc6 *".to_string())),
+        ..Default::default()
+    }
+    .insert(&conn)
+    .await
+    .unwrap();
+    (StudyService::new(conn), db.id, game.id)
+}
+
+#[tokio::test]
+async fn create_from_game_links_origin_and_builds_mainline() {
+    let (svc, db_id, game_id) = setup_with_game().await;
+    let alice = user("alice");
+
+    let study = svc
+        .create_from_game(None, &alice, game_id, "My analysis", None, false, 8)
+        .await
+        .unwrap();
+    // Scopes to the game's database, links the origin, owned by the caller.
+    assert_eq!(study.database_id, db_id);
+    assert_eq!(study.origin_game_id, Some(game_id));
+    assert_eq!(study.folder_id, None);
+    assert_eq!(study.owner_id.as_deref(), Some("alice"));
+
+    // The mainline came straight from the game's PGN.
+    let tree = tree_of(&svc, &alice, study.id).await;
+    assert_eq!(tree.mainline(), vec!["e4", "e5", "Nf3", "Nc6"]);
+
+    // It surfaces as a linked analysis for that game…
+    let linked = svc.studies_for_game(&alice, game_id).await.unwrap();
+    assert_eq!(linked.len(), 1);
+    assert_eq!(linked[0].id, study.id);
+    // …but not for an unrelated game id.
+    assert!(svc
+        .studies_for_game(&alice, game_id + 999)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn create_from_game_files_into_a_visible_folder() {
+    let (svc, _db_id, game_id) = setup_with_game().await;
+    let folders = crate::folders::FolderService::new(svc.db.clone());
+    let alice = user("alice");
+    let bob = user("bob");
+
+    let folder = folders
+        .create(&alice, None, "Analyses", false)
+        .await
+        .unwrap();
+    let study = svc
+        .create_from_game(None, &alice, game_id, "Filed", Some(folder.id), false, 8)
+        .await
+        .unwrap();
+    assert_eq!(study.folder_id, Some(folder.id));
+
+    // Bob can't see the game (different owner) → NotFound, never a leak.
+    assert!(matches!(
+        svc.create_from_game(None, &bob, game_id, "X", None, false, 8)
+            .await
+            .unwrap_err(),
+        StudyError::NotFound
+    ));
+}
+
+#[tokio::test]
+async fn set_folder_moves_and_unfiles_a_study() {
+    let (svc, db_id, _game_id) = setup_with_game().await;
+    let folders = crate::folders::FolderService::new(svc.db.clone());
+    let alice = user("alice");
+
+    let study = svc.create(&alice, db_id, "Line", false).await.unwrap();
+    let folder = folders.create(&alice, None, "Box", false).await.unwrap();
+
+    let moved = svc
+        .set_folder(&alice, study.id, Some(folder.id))
+        .await
+        .unwrap();
+    assert_eq!(moved.folder_id, Some(folder.id));
+
+    // Unfile back to the root.
+    let unfiled = svc.set_folder(&alice, study.id, None).await.unwrap();
+    assert_eq!(unfiled.folder_id, None);
+
+    // A non-existent folder is rejected.
+    assert!(matches!(
+        svc.set_folder(&alice, study.id, Some(9999))
+            .await
+            .unwrap_err(),
+        StudyError::InvalidEdit(_)
+    ));
+}

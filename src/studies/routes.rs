@@ -51,6 +51,7 @@ pub fn router(state: AppState) -> Router {
             "/api/studies/{id}",
             get(get_one).patch(rename).delete(delete),
         )
+        .route("/api/studies/{id}/folder", put(set_folder))
         .route("/api/studies/{id}/export", get(export))
         .route("/api/studies/{id}/export/lichess", get(export_lichess))
         .route("/api/studies/{id}/analyse", post(analyse))
@@ -75,6 +76,10 @@ struct StudySummary {
     name: String,
     /// Convenience flag for the SPA: `owner_id IS NULL`.
     global: bool,
+    /// Which folder the study is filed in (issue #164); `None` ⇒ unfiled/root.
+    folder_id: Option<i32>,
+    /// The game an analysis was built from (issue #164); `None` ⇒ standalone.
+    origin_game_id: Option<i32>,
 }
 
 impl From<studies::Model> for StudySummary {
@@ -85,6 +90,8 @@ impl From<studies::Model> for StudySummary {
             database_id: m.database_id,
             owner_id: m.owner_id,
             name: m.name,
+            folder_id: m.folder_id,
+            origin_game_id: m.origin_game_id,
         }
     }
 }
@@ -408,6 +415,28 @@ async fn rename(
     Json(body): Json<RenameBody>,
 ) -> Result<Response, StudyError> {
     let model = service(&state).rename(&user, id, body.name).await?;
+    Ok((StatusCode::OK, Json(StudyView::try_from(model)?)).into_response())
+}
+
+/// Body for `PUT /api/studies/{id}/folder`: the target folder, or `null` to unfile
+/// the study (move it to the root).
+#[derive(Deserialize)]
+struct FolderBody {
+    #[serde(default)]
+    folder_id: Option<i32>,
+}
+
+/// Move a study into a folder (`PUT /api/studies/{id}/folder`). Returns the
+/// refreshed view so the editor and sidebar re-render from one response.
+async fn set_folder(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+    Json(body): Json<FolderBody>,
+) -> Result<Response, StudyError> {
+    let model = service(&state)
+        .set_folder(&user, id, body.folder_id)
+        .await?;
     Ok((StatusCode::OK, Json(StudyView::try_from(model)?)).into_response())
 }
 

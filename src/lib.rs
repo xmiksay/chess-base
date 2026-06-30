@@ -12,6 +12,7 @@ pub mod databases;
 pub mod db;
 pub mod engine;
 pub mod features;
+pub mod folders;
 pub mod games;
 pub mod imports;
 pub mod ingest;

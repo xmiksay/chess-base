@@ -6,6 +6,7 @@
 // engine's better lines onto the board tree (#136), and the eval graph navigates
 // the board by mapping a clicked ply back to its mainline node.
 import EvalGraph from './EvalGraph.vue'
+import SaveAsAnalysisForm from './SaveAsAnalysisForm.vue'
 import { useGamesStore } from '../stores/games'
 import { useReviewStore } from '../stores/review'
 import { downloadText } from '../lib/download'
@@ -48,7 +49,7 @@ function onGraphSelect(ply: number) {
 
 <template>
   <div>
-    <div class="flex items-center gap-2">
+    <div class="relative flex flex-wrap items-center gap-2">
       <button
         type="button"
         data-test="analyse"
@@ -77,6 +78,7 @@ function onGraphSelect(ply: number) {
       >
         Export with analysis
       </button>
+      <SaveAsAnalysisForm :engine-enabled="engineEnabled" />
       <span
         v-if="engineEnabled === false"
         class="text-xs text-neutral-500"
@@ -144,6 +146,31 @@ function onGraphSelect(ply: number) {
           {{ review.currentMove.explanation }}
         </p>
       </div>
+    </div>
+
+    <!-- Analyses saved from this game (issue #164). -->
+    <div
+      v-if="games.linkedStudies.length"
+      class="mt-4"
+      data-test="linked-analyses"
+    >
+      <p class="mb-1 text-xs font-medium text-neutral-500">
+        Saved analyses
+      </p>
+      <ul class="flex flex-col gap-0.5 text-sm">
+        <li
+          v-for="s in games.linkedStudies"
+          :key="s.id"
+        >
+          <RouterLink
+            :to="{ name: 'studies' }"
+            data-test="linked-analysis"
+            class="text-neutral-700 hover:underline"
+          >
+            {{ s.name }}
+          </RouterLink>
+        </li>
+      </ul>
     </div>
   </div>
 </template>
