@@ -13,7 +13,9 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::games::{export, GameError, GameService};
+use crate::games::{
+    export, GameError, GameListParams, GameService, GameSort, SortDir, DEFAULT_LIMIT,
+};
 use crate::ingest::parse_pgn;
 use crate::position::STARTPOS_FEN;
 use crate::review::{review_game, ReviewError};
@@ -35,26 +37,37 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// `?database_id=<id>&after=<id>&limit=<n>` for the list endpoint. `after` is the
-/// keyset cursor (last id of the previous page); `limit` is clamped by the service.
+/// `?database_id=<id>&page=<n>&limit=<n>&sort=<field>&dir=<asc|desc>` for the list
+/// endpoint. `page` is 0-based; `sort`/`dir` default to date, newest-first; both
+/// `limit` and unknown sort/dir values are normalised by the service.
 #[derive(Deserialize)]
 struct ListQuery {
     database_id: i32,
     #[serde(default)]
-    after: Option<i32>,
+    page: Option<u64>,
     #[serde(default)]
     limit: Option<u64>,
+    #[serde(default)]
+    sort: Option<String>,
+    #[serde(default)]
+    dir: Option<String>,
 }
 
-/// `GET /api/games?database_id=…&after=…&limit=…` — one keyset page of games.
+/// `GET /api/games?database_id=…&page=…&limit=…&sort=…&dir=…` — one sorted,
+/// offset-paginated page of games (with the total count).
 async fn list(
     State(state): State<AppState>,
     user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> Result<Response, GameError> {
-    let page = service(&state)
-        .list(&user, q.database_id, q.after, q.limit)
-        .await?;
+    let params = GameListParams {
+        database_id: q.database_id,
+        page: q.page.unwrap_or(0),
+        limit: q.limit.unwrap_or(DEFAULT_LIMIT),
+        sort: GameSort::parse(q.sort.as_deref()),
+        dir: SortDir::parse(q.dir.as_deref()),
+    };
+    let page = service(&state).list(&user, &params).await?;
     Ok((StatusCode::OK, Json(page)).into_response())
 }
 

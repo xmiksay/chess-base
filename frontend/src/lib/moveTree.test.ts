@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import type { MoveToken } from '../types'
 import {
+  appendChild,
   childWithSan,
+  deleteSubtree,
+  emptyTree,
   firstChild,
   getNode,
   lastMainlineId,
@@ -56,6 +59,67 @@ describe('moveTree navigation', () => {
     expect(nagGlyph(1)).toBe('!')
     expect(nagGlyph(6)).toBe('?!')
     expect(nagGlyph(42)).toBe('$42')
+  })
+})
+
+describe('tree mutators', () => {
+  it('emptyTree holds just the root sentinel', () => {
+    const t = emptyTree()
+    expect(t.root).toBe(0)
+    expect(t.nodes).toHaveLength(1)
+    expect(t.nodes[0]).toMatchObject({ id: 0, parent: null, san: null, children: [] })
+  })
+
+  it('appendChild adds a mainline child, then a variation sibling', () => {
+    let t = emptyTree()
+    const a = appendChild(t, 0, 'e4')!
+    t = a.tree
+    expect(getNode(t, a.id)).toMatchObject({ san: 'e4', parent: 0 })
+    expect(getNode(t, 0)!.children).toEqual([a.id])
+
+    const main = appendChild(t, a.id, 'e5')!
+    t = main.tree
+    const variation = appendChild(t, a.id, 'c5')!
+    t = variation.tree
+    // children[0] stays the mainline; the later append is a variation.
+    expect(getNode(t, a.id)!.children).toEqual([main.id, variation.id])
+    expect(firstChild(t, a.id)).toBe(main.id)
+  })
+
+  it('appendChild returns null for a missing parent and never mutates input', () => {
+    const t = emptyTree()
+    expect(appendChild(t, 42, 'e4')).toBeNull()
+    expect(t.nodes).toHaveLength(1) // input untouched
+  })
+
+  it('appendChild never collides with a live node id', () => {
+    let t = emptyTree()
+    t = appendChild(t, 0, 'e4')!.tree // id 1
+    const second = appendChild(t, 1, 'e5')! // id 2
+    t = deleteSubtree(second.tree, second.id).tree // remove id 2 (now free)
+    const added = appendChild(t, 1, 'c5')!
+    t = added.tree
+    // The freed id may be reclaimed, but it must be unique among the live nodes.
+    const ids = t.nodes.map((n) => n.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(getNode(t, added.id)!.san).toBe('c5')
+  })
+
+  it('deleteSubtree removes a node with its descendants and returns the parent', () => {
+    const { tree, parentId } = deleteSubtree(sampleTree(), 4) // the c5 variation
+    expect(parentId).toBe(1)
+    expect(getNode(tree, 4)).toBeNull()
+    expect(getNode(tree, 5)).toBeNull() // descendant gone too
+    expect(getNode(tree, 1)!.children).toEqual([2]) // unlinked from parent
+    expect(getNode(tree, 2)!.san).toBe('e5') // siblings survive
+  })
+
+  it('deleteSubtree refuses to remove the root and no-ops on a missing id', () => {
+    const a = deleteSubtree(sampleTree(), 0)
+    expect(a.parentId).toBe(0)
+    expect(a.tree.nodes).toHaveLength(6)
+    const b = deleteSubtree(sampleTree(), 99)
+    expect(b.tree.nodes).toHaveLength(6)
   })
 })
 

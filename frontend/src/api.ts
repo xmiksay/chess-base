@@ -190,14 +190,20 @@ export const api = {
     remove: (id: number) => send<null>('DELETE', `/api/databases/${id}`),
   },
 
-  // Game list + single-game fetch (issue #68). `list` is keyset-paginated:
-  // pass `{ after }` (the previous page's `next_cursor`) to fetch the next page.
-  // `get` returns the full game including PGN movetext for board playback.
+  // Game list + single-game fetch (issue #68). `list` is offset-paginated and
+  // sortable: pass `{ page }` (0-based), `{ limit }`, and `{ sort, dir }`
+  // (default date / desc = newest-first). The page carries `total` for the
+  // paginator. `get` returns the full game including PGN for board playback.
   games: {
-    list: (databaseId: number, { after, limit }: { after?: number; limit?: number } = {}) => {
+    list: (
+      databaseId: number,
+      { page, limit, sort, dir }: { page?: number; limit?: number; sort?: string; dir?: string } = {},
+    ) => {
       const params = new URLSearchParams({ database_id: String(databaseId) })
-      if (after != null) params.set('after', String(after))
+      if (page != null) params.set('page', String(page))
       if (limit != null) params.set('limit', String(limit))
+      if (sort) params.set('sort', sort)
+      if (dir) params.set('dir', dir)
       return getJson<GamesPage>(`/api/games?${params}`)
     },
     get: (id: number) => getJson<GameDetail>(`/api/games/${id}`),

@@ -65,7 +65,7 @@ describe('game store', () => {
     expect(game.setFen('not-a-fen')).toBe(false)
   })
 
-  describe('ply cursor', () => {
+  describe('tree cursor', () => {
     function withMoves() {
       const game = useGameStore()
       game.playMove({ from: 'e2', to: 'e4' })
@@ -74,9 +74,21 @@ describe('game store', () => {
       return game
     }
 
+    /** Node id reached after replaying `sans` from the start (via first()/next-ish). */
+    function nodeAfter(game: ReturnType<typeof useGameStore>, sans: string[]): number {
+      game.first()
+      for (const san of sans) {
+        const before = game.currentId
+        game.next() // walk the mainline one step
+        expect(game.history.at(-1)).toBe(san)
+        expect(game.currentId).not.toBe(before)
+      }
+      return game.currentId
+    }
+
     it('advances the cursor to the tip as moves are played', () => {
       const game = withMoves()
-      expect(game.ply).toBe(3)
+      expect(game.history).toEqual(['e4', 'e5', 'Nf3'])
       expect(game.atEnd).toBe(true)
       expect(game.atStart).toBe(false)
     })
@@ -85,31 +97,31 @@ describe('game store', () => {
       const game = withMoves()
       const tip = game.fen
       game.prev()
-      expect(game.ply).toBe(2)
+      expect(game.history).toEqual(['e4', 'e5'])
       expect(game.fen).not.toBe(tip)
       expect(game.turnColor).toBe('white') // after 1.e4 e5, White to move
       game.next()
-      expect(game.ply).toBe(3)
+      expect(game.history).toEqual(['e4', 'e5', 'Nf3'])
       expect(game.fen).toBe(tip)
     })
 
-    it('first/last jump to the bounds and clamp goto', () => {
+    it('first/last jump to the bounds; goto ignores unknown ids', () => {
       const game = withMoves()
+      const tip = game.currentId
       game.first()
-      expect(game.ply).toBe(0)
       expect(game.atStart).toBe(true)
       expect(game.fen).toBe(STARTPOS_FEN)
-      game.goto(-5)
-      expect(game.ply).toBe(0)
-      game.goto(99)
-      expect(game.ply).toBe(3)
+      game.goto(99999) // no such node — stays put
+      expect(game.atStart).toBe(true)
       game.last()
-      expect(game.ply).toBe(3)
+      expect(game.currentId).toBe(tip)
+      expect(game.atEnd).toBe(true)
     })
 
-    it('reports the fen and last move at the selected ply', () => {
+    it('reports the fen and last move at the selected node', () => {
       const game = withMoves()
-      game.goto(1) // after 1.e4
+      const afterE4 = nodeAfter(game, ['e4'])
+      game.goto(afterE4)
       expect(game.fen.startsWith('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR')).toBe(true)
       expect(game.turnColor).toBe('black')
       expect(game.lastMove).toEqual(['e2', 'e4'])
@@ -124,21 +136,37 @@ describe('game store', () => {
       expect(game.legalDests.get('g1')).toContain('f3')
     })
 
-    it('playing a move at a non-tip ply truncates the future line', () => {
+    it('playing a move off the line branches a variation instead of truncating', () => {
       const game = withMoves()
-      game.goto(1) // back to after 1.e4
-      game.playMove({ from: 'c7', to: 'c5' }) // Sicilian instead of 1...e5
+      const afterE4 = nodeAfter(game, ['e4'])
+      game.goto(afterE4)
+      game.playMove({ from: 'c7', to: 'c5' }) // Sicilian alongside 1...e5
       expect(game.history).toEqual(['e4', 'c5'])
-      expect(game.ply).toBe(2)
       expect(game.atEnd).toBe(true)
+      // The original 1...e5 mainline is preserved as a sibling, not overwritten.
+      const e4Node = game.tree.nodes.find((n) => n.id === afterE4)
+      expect(e4Node?.children).toHaveLength(2)
+      game.goto(afterE4)
+      game.next() // children[0] is still the mainline e5
+      expect(game.history).toEqual(['e4', 'e5'])
     })
 
-    it('undo removes the last move and follows the cursor back', () => {
+    it('replaying an existing move follows it rather than duplicating', () => {
+      const game = withMoves()
+      const afterE4 = nodeAfter(game, ['e4'])
+      const before = game.tree.nodes.length
+      game.goto(afterE4)
+      game.playMove({ from: 'e7', to: 'e5' }) // the move already on the line
+      expect(game.history).toEqual(['e4', 'e5'])
+      expect(game.tree.nodes).toHaveLength(before) // no new node created
+    })
+
+    it('undo deletes the current node and follows the cursor to its parent', () => {
       const game = withMoves()
       game.undo()
       expect(game.history).toEqual(['e4', 'e5'])
-      expect(game.ply).toBe(2)
       expect(game.atEnd).toBe(true)
+      expect(game.tree.nodes).toHaveLength(3) // root + e4 + e5
     })
   })
 })

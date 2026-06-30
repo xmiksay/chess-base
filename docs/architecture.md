@@ -27,7 +27,7 @@ commented PGN studies, and integrates UCI engines.
 | `auth` | Server-mode auth (ADR 0015): `users`/`sessions` tables, Argon2 hashing, transport-agnostic `AuthService` (register/login/logout/authenticate), `/api/auth/*` routes. Inert in local mode | DB |
 | `ingest` | Shared game-ingest path (`ingest_pgn`): parses a PGN, dedups players/event, stores the game, replays the mainline via `position::replay`, and bulk-inserts the `position_index` rows (one per ply, capped by the database's `index_depth`; ADR-0003). One transaction per game; every collector funnels through it. A game carrying a provider permalink (`source_ref`) already present in the target database is skipped (returns `Ok(None)`), so a re-sync never doubles games (issue #95). `ingest_pgn_all` ingests every game in a multi-game blob (splitting on `[Event ` — the helper shared with the streaming collectors), returning only the newly-stored games; used by PGN upload. The store path is factored into reusable seams — `parse_pgn`, `prepare_game` (validate/replay), `load_index_depth` and `store_prepared` (write one game + its index rows in a caller-supplied transaction) — so the bulk importer can batch many games per transaction. `ParsedGame::content_hash` is a SHA-256 dedup key (stored as `source_ref`) for permalink-less master games | DB |
 | `search` | Transport-agnostic search services. `PositionSearchService` (ADR-0003): "find games reaching this position" (`games_with_position`) and the opening tree of aggregated per-continuation stats (`opening_tree`: count + W/D/L), both keyed on the Zobrist `position_index`. `HeaderSearchService` (issue #6, `search/headers.rs`): query games by player/color/event/ECO-prefix/date-range/result, keyset-paginated on a stable `(sort, id)` cursor. Both scope to own ∪ global databases via `databases.owner_id`. The `report` submodule (`PositionReportService`, #28) layers the **pre-chewed** query surface on top of position search — reusing `opening_tree`/`games_with_position` and adding ECO (`openings`), per-move frequency/score and transpositions (distinct move orders reaching a Zobrist) — exposed as internal batch functions and the MCP DB tools. HTTP routes (`search/routes.rs`): `GET /api/search/{tree,games}` stream NDJSON, `GET /api/search/headers` returns a `{ games, next_cursor }` JSON page; thin callers of the services. The SPA's search surface is `SearchView` (issue #69, see "Search UI") | DB |
-| `games` | Transport-agnostic `GameService` (issue #68): keyset-paginated `list` of the games in a database (`GameSummary` rows, ordered by id; cursor + clamped `limit`) and single-game `get` (`GameDetail` with PGN movetext + `variant`/`start_fen` for board playback). Visibility follows ownership (own ∪ global). The pure `export` submodule (issue #120) turns a game's mainline — optionally with the #119 review — into a `MoveTree` the shared `pgn_tree::pgn` serializer renders (`linear_tree`/`annotated_tree`: `[%eval]` on every ply, a move-quality NAG + the rule-based why-note on the faults; `to_annotated_pgn` adds header tags). HTTP routes (`games/routes.rs`, `GET /api/games?database_id=…&after=…&limit=…`, `GET /api/games/{id}`, and `GET /api/games/{id}/export?annotated=&depth=` — a real `.pgn` download, verbatim or engine-annotated) are thin callers | DB |
+| `games` | Transport-agnostic `GameService` (issue #68): offset-paginated, sortable `list` of the games in a database (`GameSummary` rows; `GameListParams` = page/clamped-`limit`/`GameSort`/`SortDir`, default date-desc = newest-first, `id` tiebreaker; `GamePage` carries `total` for a real paginator) and single-game `get` (`GameDetail` with PGN movetext + `variant`/`start_fen` for board playback). Visibility follows ownership (own ∪ global). The pure `export` submodule (issue #120) turns a game's mainline — optionally with the #119 review — into a `MoveTree` the shared `pgn_tree::pgn` serializer renders (`linear_tree`/`annotated_tree`: `[%eval]` on every ply, a move-quality NAG + the rule-based why-note on the faults; `to_annotated_pgn` adds header tags). HTTP routes (`games/routes.rs`, `GET /api/games?database_id=…&page=…&limit=…&sort=…&dir=…`, `GET /api/games/{id}`, and `GET /api/games/{id}/export?annotated=&depth=` — a real `.pgn` download, verbatim or engine-annotated) are thin callers | DB |
 | `collectors` | `GameSource` trait + Lichess / Chess.com adapters and the shared `SyncCursor`/`SyncOutcome`. Each adapter's `sync()` streams the provider export and funnels every game through `ingest`: Lichess exports user games as one PGN stream (incremental via `since`, resumed *at* the last game's second); Chess.com lists monthly archives then fetches each month's PGN (incremental via the month cursor, re-syncing the cursor month). Both resume from the boundary and rely on `ingest`'s `source_ref` dedup to avoid doubling (issue #95). The `bulk` submodule (`BulkImporter`, issue #4) streams a (optionally `.zst`-compressed) master PGN file in bounded memory — chunked reads, drained game-by-game on `[Event ` boundaries — committing in batched transactions (`store_prepared`) with SQLite bulk PRAGMAs (WAL, `synchronous=NORMAL`, …) applied first. Games are deduped by `ParsedGame::content_hash` (stored as `source_ref`, unique per database), so a re-run skips everything already imported (restartable); `find_or_create_master` resolves the target global `master` database. Driven by the `chess-base import-pgn <FILE>` CLI subcommand. All boundary/back-off/cursor decisions are pure, unit-tested helpers | HTTP / CLI |
 | `imports` | Transport-agnostic `ImportService` (issue #70): trigger a provider `sync` (Lichess/Chess.com) or ingest an uploaded PGN (`import_pgn` → `ingest_pgn_all`) into a target database, behind the same write guard as `databases` (ADR 0007/0011). A `sync` loads the cursor persisted per `(database, source)` (`imports/cursor.rs` ⇄ `sync_cursors`), runs the collector from it and saves the advanced cursor, so re-syncs fetch only new games (issue #95). HTTP routes (`imports/routes.rs`): `POST /api/import/sync` and `POST /api/import/pgn`, both returning `{ imported }`; thin callers. The SPA surface is `ImportView` (`/import`) | DB / HTTP |
 | `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis), the pooled `service::EngineService` facade — one-shot `analyse` plus `analyse_multi` (top-N MultiPV lines for the game-review pass, #119) for batch + MCP (ADR 0014) — and the `download` auto-download manager (platform catalog → fetch + checksum + register, #11) (Stockfish, Lc0/Maia) | process / HTTP |
@@ -58,9 +58,10 @@ and the SFCs; see ADR 0021.
 
 `App.vue` is a thin nav/layout shell around a `<router-view>`; **vue-router**
 (`router/index.ts`, HTML5 history) maps each top-level surface to a lazily-loaded
-view in `views/`: `AnalysisView` (`/`, the board + analysis panel + a flat
-move-list/notation panel with ply-cursor navigation — `components/MoveList.vue`,
-click or ←/→/Home/End to jump the board & engine to a ply, issue #121), `GamesView`
+view in `views/`: `AnalysisView` (`/`, the board + analysis panel + a
+variation-tree notation panel — `components/MoveTree.vue`, click a move or
+←/→/Home/End to jump the board & engine across the tree; playing off the line
+branches a variation, issue #121), `GamesView`
 (`/games`, the game browser), `StudyView` (`/studies`, the variation-tree editor,
 see "Study editor" below), `ImportView` (`/import`, the game-import UI — see
 "Game import" below), `SearchView` (`/search`, see "Search UI" below) and
@@ -71,11 +72,12 @@ databases via `/api/databases`, store `stores/collections.ts`). Deep links work 
 (`src/server/routes/mod.rs`).
 
 State lives in Pinia stores: `stores/game.ts` (chess.js-backed position,
-legal-move `dests`, play-vs-engine moves, plus a flat game line with a `ply`
-cursor — `goto`/`next`/`prev`/`first`/`last` move the board & engine without
-mutating the line; playing at a non-tip ply truncates the future, issue #121),
+legal-move `dests`, play-vs-engine moves, plus a client-side `MoveTree` with a
+`currentId` cursor — `goto`/`next`/`prev`/`first`/`last` move the board & engine
+without mutating the tree; replaying a known move follows it while a new move
+branches a variation, and `undo` prunes the current node's subtree, issue #121),
 `stores/games.ts` (the game browser —
-keyset-paginated list for a selected database plus the opened game's replay state;
+offset-paginated, sortable list for a selected database plus the opened game's replay state;
 backed by `/api/games`), `stores/review.ts` (the engine-only full-game review,
 Mode A #119 — one `POST /api/games/{id}/analyse` result with a `byPly` index for
 the move list; `GamesView` renders an **"Analyze game"** button (gated on the
@@ -140,10 +142,12 @@ line's plan trajectories (`lib/plansToShapes.ts`) into stored `Shape`s. The pure
 (path/line to a node, child lookup, and flattening the tree into renderable
 move/variation tokens with move numbers + NAG glyphs) is the unit-tested
 `lib/moveTree.ts`. `components/MoveTree.vue` renders those tokens (click to
-navigate, variations dimmed by depth); `components/AnnotationEditor.vue` edits the
-selected node's comment/NAG and promotes/deletes variations. The analysis board's
-flat, variation-free notation is the separate `components/MoveList.vue` (numbered
-pairs over `game.history`, click a move to `goto` its ply, issue #121).
+navigate, variations dimmed by depth) and drives **both** the study editor and the
+analysis board; `components/AnnotationEditor.vue` edits the selected node's
+comment/NAG and promotes/deletes variations (study editor only). The analysis
+board feeds `MoveTree.vue` from the `game` store's client-side tree — the pure
+mutators (`emptyTree`/`appendChild`/`deleteSubtree`) live alongside the read
+helpers in `lib/moveTree.ts`.
 
 In dev, Vite serves the SPA and proxies `/api` (with `ws: true` for the engine
 WebSocket) to the backend on `:3030`.
@@ -223,7 +227,7 @@ disambiguation — returning `{node_id, fen, san}` and accepting an inline
 `db_reference_games` (scoped reference games), thin callers of
 `search::PositionReportService`; plus `list_databases` (the caller's + global
 collections with game counts — how an agent discovers a `database_id`),
-`db_list_games` (keyset page of a database's games) and `db_read_game` (one game
+`db_list_games` (sortable offset page of a database's games) and `db_read_game` (one game
 with its PGN), thin callers of `DatabaseService` / `GameService`, all returning
 synthesized JSON the LLM consumes but never recomputes (ADR-0009). The
 **interactive analysis tools** live in `server/routes/mcp/analysis.rs` (#33):

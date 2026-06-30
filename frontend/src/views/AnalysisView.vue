@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Board from '../components/Board.vue'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
-import MoveList from '../components/MoveList.vue'
+import MoveTree from '../components/MoveTree.vue'
 import { useGameStore } from '../stores/game'
 import { useSettingsStore } from '../stores/settings'
 import { useEngineStore } from '../stores/engine'
@@ -191,10 +191,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         </button>
       </div>
 
-      <MoveList
+      <MoveTree
         class="mt-3"
-        :history="game.history"
-        :current-ply="game.ply"
+        :tree="game.tree"
+        :current-id="game.currentId"
         @select="game.goto($event)"
       />
     </section>

@@ -10,7 +10,10 @@ use serde_json::{json, Value};
 use super::{Tool, ToolOutcome, ToolRegistry};
 use crate::databases::{DatabaseError, DatabaseService};
 use crate::engine::{Limits, MAX_DEPTH, MAX_MOVETIME_MS};
-use crate::games::{GameError, GameService, MAX_LIMIT as MAX_GAME_LIMIT};
+use crate::games::{
+    GameError, GameListParams, GameService, GameSort, SortDir, DEFAULT_LIMIT as DEFAULT_GAME_LIMIT,
+    MAX_LIMIT as MAX_GAME_LIMIT,
+};
 use crate::search::report::PositionReportService;
 use crate::search::SearchError;
 use crate::server::identity::CurrentUser;
@@ -68,26 +71,35 @@ async fn list_databases(app: AppState, user: CurrentUser) -> ToolOutcome {
     }
 }
 
-/// `db_list_games`: one keyset page of the games in a database.
+/// `db_list_games`: one offset page of the games in a database.
 fn list_games_tool() -> Tool {
     Tool::new(
         "db_list_games",
-        "List the games in a database (oldest-first, keyset-paginated). Returns \
-         game headers (players, date, result, ECO, Elo, ply count) plus a \
-         `next_cursor` to pass back as `after` for the next page. Scoped to your \
+        "List the games in a database (newest-first by default, offset-paginated). \
+         Returns game headers (players, date, result, ECO, Elo, ply count) plus \
+         `total`, `page` and `limit`. Pass `page` (0-based) to advance; sort with \
+         `sort` (date|result|eco|added) and `dir` (asc|desc). Scoped to your \
          databases and the global ones. Discover the `database_id` via \
          `list_databases`.",
         json!({
             "type": "object",
             "properties": {
                 "database_id": { "type": "integer", "description": "Database to list games from." },
-                "after": {
-                    "type": "integer", "minimum": 1,
-                    "description": "Keyset cursor: the last game id of the previous page (optional)."
+                "page": {
+                    "type": "integer", "minimum": 0,
+                    "description": "0-based page index (default 0)."
                 },
                 "limit": {
                     "type": "integer", "minimum": 1, "maximum": MAX_GAME_LIMIT,
-                    "description": "Max games to return (default 50); capped server-side."
+                    "description": "Max games per page (default 50); capped server-side."
+                },
+                "sort": {
+                    "type": "string", "enum": ["date", "result", "eco", "added"],
+                    "description": "Sort field (default date)."
+                },
+                "dir": {
+                    "type": "string", "enum": ["asc", "desc"],
+                    "description": "Sort direction (default desc)."
                 }
             },
             "required": ["database_id"]
@@ -100,16 +112,20 @@ async fn list_games(app: AppState, user: CurrentUser, args: Value) -> ToolOutcom
     let Some(database_id) = args.get("database_id").and_then(Value::as_i64) else {
         return ToolOutcome::error("Invalid arguments: missing integer field `database_id`.");
     };
-    let after = match opt_bounded_u64(&args, "after", i32::MAX as u64) {
-        Ok(value) => value.map(|n| n as i32),
+    let page = args.get("page").and_then(Value::as_u64).unwrap_or(0);
+    let limit = match opt_bounded_u64(&args, "limit", MAX_GAME_LIMIT) {
+        Ok(limit) => limit.unwrap_or(DEFAULT_GAME_LIMIT),
         Err(msg) => return ToolOutcome::error(msg),
     };
-    let limit = match opt_bounded_u64(&args, "limit", MAX_GAME_LIMIT) {
-        Ok(limit) => limit,
-        Err(msg) => return ToolOutcome::error(msg),
+    let params = GameListParams {
+        database_id: database_id as i32,
+        page,
+        limit,
+        sort: GameSort::parse(args.get("sort").and_then(Value::as_str)),
+        dir: SortDir::parse(args.get("dir").and_then(Value::as_str)),
     };
     let service = GameService::new(app.db.clone());
-    match service.list(&user, database_id as i32, after, limit).await {
+    match service.list(&user, &params).await {
         Ok(page) => json_outcome(&page),
         Err(e) => game_error(e),
     }
