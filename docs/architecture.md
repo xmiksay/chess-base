@@ -71,11 +71,22 @@ databases via `/api/databases`, store `stores/collections.ts`). Deep links work 
 `static_handler` falls back to `index.html` for unknown paths
 (`src/server/routes/mod.rs`).
 
-State lives in Pinia stores: `stores/game.ts` (chess.js-backed position,
-legal-move `dests`, play-vs-engine moves, plus a client-side `MoveTree` with a
-`currentId` cursor — `goto`/`next`/`prev`/`first`/`last` move the board & engine
-without mutating the tree; replaying a known move follows it while a new move
-branches a variation, and `undo` prunes the current node's subtree, issue #121),
+**Shared board building blocks** (issue #134) keep the three board pages —
+Analyse, Study, Game review — on the same tooling: `lib/useTreeBoard.ts` is the
+chess.js-backed tree/cursor state machine (`tree`/`currentId`/`fen`/`legalDests`
++ `seek`/`playMove`/`goto`/`undo`/`load`…); `lib/useBoardOverlays.ts` drives the
+position-derived overlay layers off a `() => fen` getter and composes them via
+`lib/boardShapes.ts`; `components/BoardControls.vue` is the nav row + overlay
+toggles; `components/EnginePanel.vue` is the shared eval/PV display (eval bar +
+PV lines + analyse toggle) driven by a `:fen` prop, with `#controls`/`#line-action`
+slots for per-page extras.
+
+State lives in Pinia stores: `stores/game.ts` (the Analyse board — wraps
+`useTreeBoard` for the chess.js-backed position, legal-move `dests`, client-side
+`MoveTree` cursor where `goto`/`next`/`prev`/`first`/`last` move the board &
+engine without mutating the tree, replaying a known move follows it while a new
+move branches a variation, and `undo` prunes the current node's subtree (#121);
+adds the play-vs-engine `mode`/`playColor`),
 `stores/games.ts` (the game browser —
 offset-paginated, sortable list for a selected database plus the opened game's replay state;
 backed by `/api/games`), `stores/review.ts` (the engine-only full-game review,
@@ -105,16 +116,18 @@ adds the red `threat` + violet `master` brushes): the engine **Plans** layer
 (`stores/engine.ts` `shapes`), the **Threats** layer (`/api/threats` →
 `stores/overlays.ts`, mapped via `shapesToDrawShapes`) and the **Database
 master-moves** layer (`/api/search/tree` → `lib/masterShapes.ts`, arrows sized +
-labelled by frequency). `AnalysisView` watches the position + each layer's
-persisted toggle (`stores/settings.ts` `showPlans`/`showThreats`/`showMasterMoves`),
-re-loads the position-derived layers and clears a layer the moment it is switched
-off; a **Clear arrows** control clears the user's hand-drawn shapes
-(`Board.clearUserShapes`). Replaying a stored game's
+labelled by frequency). `lib/useBoardOverlays.ts` (used by `AnalysisView`) watches
+the position + each layer's persisted toggle (`stores/settings.ts`
+`showPlans`/`showThreats`/`showMasterMoves`), re-loads the position-derived layers
+and clears a layer the moment it is switched off; the toggle row + a **Clear
+arrows** control (clears the user's hand-drawn shapes, `Board.clearUserShapes`)
+live in `components/BoardControls.vue`. Replaying a stored game's
 PGN into one board position per ply, plus the pure ply-navigation logic, lives in
-the unit-tested `lib/pgnViewer.ts`. `components/AnalysisPanel.vue`
-(+ `EvalBar.vue`) renders the eval bar, MultiPV lines, depth/nps, engine options
-and play-vs-engine controls — hovering a PV row sets the store's active line so
-its plan highlights and the others dim. `Board.vue` is presentational (it also
+the unit-tested `lib/pgnViewer.ts`. `components/AnalysisPanel.vue` embeds the
+shared `components/EnginePanel.vue` (+ `EvalBar.vue`) — eval bar, MultiPV lines,
+depth/nps and the analyse toggle — and adds the engine options + play-vs-engine
+controls + the per-line **Pin** seam via slots; hovering a PV row sets the store's
+active line so its plan highlights and the others dim. `Board.vue` is presentational (it also
 drives the read-only game viewer in `GamesView`), emits user moves, and renders
 the plan overlay via `setAutoShapes` (auto-shapes, so a user's right-click
 drawings survive), cleared on every position change — unless `persist-shapes` is
