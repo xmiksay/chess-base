@@ -213,6 +213,7 @@ pub(crate) async fn player_names(
         .collect())
 }
 
+pub mod export;
 pub mod routes;
 
 #[cfg(test)]

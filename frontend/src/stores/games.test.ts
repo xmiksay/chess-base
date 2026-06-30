@@ -7,6 +7,7 @@ vi.mock('../api', () => ({
     games: {
       list: vi.fn(),
       get: vi.fn(),
+      exportPgn: vi.fn(),
     },
   },
 }))
@@ -155,5 +156,51 @@ describe('games store — move navigation', () => {
 
     store.go(3)
     expect(store.ply).toBe(3)
+  })
+})
+
+describe('games store — PGN export', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  async function openGame(store: ReturnType<typeof useGamesStore>) {
+    vi.mocked(api.games.get).mockResolvedValue({
+      id: 5,
+      white: null,
+      black: null,
+      result: null,
+      date: null,
+      eco: null,
+      white_elo: null,
+      black_elo: null,
+      pgn: SCHOLARS_MATE,
+    })
+    await store.open(5)
+  }
+
+  it('exportPgn returns the open game PGN and passes the annotated flag', async () => {
+    vi.mocked(api.games.exportPgn).mockResolvedValue('1. e4 e5 *')
+    const store = useGamesStore()
+    await openGame(store)
+
+    await expect(store.exportPgn(true)).resolves.toBe('1. e4 e5 *')
+    expect(api.games.exportPgn).toHaveBeenCalledWith(5, { annotated: true })
+  })
+
+  it('exportPgn returns null and records the error on failure', async () => {
+    vi.mocked(api.games.exportPgn).mockRejectedValue(new Error('no engine'))
+    const store = useGamesStore()
+    await openGame(store)
+
+    await expect(store.exportPgn(true)).resolves.toBeNull()
+    expect(store.error).toBe('no engine')
+  })
+
+  it('exportPgn is a no-op with no open game', async () => {
+    const store = useGamesStore()
+    await expect(store.exportPgn()).resolves.toBeNull()
+    expect(api.games.exportPgn).not.toHaveBeenCalled()
   })
 })

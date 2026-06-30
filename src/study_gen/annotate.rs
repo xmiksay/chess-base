@@ -422,6 +422,7 @@ fn move_tree_from(tree: &VariationTree) -> MoveTree {
             comment: None,
             nags: Vec::new(),
             shapes: Vec::new(),
+            eval: None,
             children: v.children.clone(),
         })
         .collect();

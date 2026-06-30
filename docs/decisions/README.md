@@ -28,3 +28,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0020 | Incremental sync: persisted cursor + per-game `source_ref` dedup |
 | 0021 | Frontend in TypeScript: strict `vue-tsc`, shared `src/types.ts` |
 | 0022 | Bulk master-DB PGN import: streaming `.zst`, content-hash dedup, batched txns |
+| 0023 | Extended PGN export: `[%eval]` node annotation, one serializer, real `.pgn` downloads |

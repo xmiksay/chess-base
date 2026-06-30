@@ -64,9 +64,13 @@ export const useStudiesStore = defineStore('studies', () => {
     return view
   }
 
-  /** Export a study to PGN movetext. */
-  function exportPgn(id: number) {
-    return _run(() => api.studies.exportPgn(id))
+  /**
+   * Fetch a study's PGN for download (issue #120). `withEval` (default true)
+   * keeps the per-move `[%eval]` annotations; `false` exports plain movetext.
+   * Returns the text; the view triggers the file download.
+   */
+  function exportPgn(id: number, withEval = true) {
+    return _run(() => api.studies.exportPgn(id, { eval: withEval }))
   }
 
   /** Rename a study; keeps `current` and the list in sync. */

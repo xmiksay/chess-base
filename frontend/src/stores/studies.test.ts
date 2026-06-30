@@ -97,10 +97,18 @@ describe('studies store', () => {
     expect(store.list[0].id).toBe(8)
   })
 
-  it('exportPgn returns the PGN string', async () => {
+  it('exportPgn returns the PGN string and defaults to keeping evals', async () => {
     vi.mocked(api.studies.exportPgn).mockResolvedValue('1. e4 e5 *')
     const store = useStudiesStore()
     await expect(store.exportPgn(3)).resolves.toBe('1. e4 e5 *')
+    expect(api.studies.exportPgn).toHaveBeenCalledWith(3, { eval: true })
+  })
+
+  it('exportPgn forwards eval=false for a plain export', async () => {
+    vi.mocked(api.studies.exportPgn).mockResolvedValue('1. e4 e5 *')
+    const store = useStudiesStore()
+    await store.exportPgn(3, false)
+    expect(api.studies.exportPgn).toHaveBeenCalledWith(3, { eval: false })
   })
 
   it('rename keeps current and the list summary in sync', async () => {

@@ -14,21 +14,15 @@ use super::MoveTree;
 /// the annotated movetext. `study_name` becomes the `Event` (and chapter) name.
 pub fn to_lichess_study(study_name: &str, tree: &MoveTree) -> Result<String, PgnError> {
     let mut out = String::new();
-    push_tag(&mut out, "Event", study_name);
-    push_tag(&mut out, "Result", "*");
-    push_tag(&mut out, "Variant", "Standard");
-    push_tag(&mut out, "ECO", "?");
-    push_tag(&mut out, "Annotator", "chess-base");
+    pgn::push_header_tag(&mut out, "Event", study_name);
+    pgn::push_header_tag(&mut out, "Result", "*");
+    pgn::push_header_tag(&mut out, "Variant", "Standard");
+    pgn::push_header_tag(&mut out, "ECO", "?");
+    pgn::push_header_tag(&mut out, "Annotator", "chess-base");
     out.push('\n');
     out.push_str(&pgn::to_pgn(tree)?);
     out.push('\n');
     Ok(out)
-}
-
-/// Append a single `[Key "Value"]` PGN header tag (value escaped) plus newline.
-fn push_tag(out: &mut String, key: &str, value: &str) {
-    let value = value.replace('\\', "\\\\").replace('"', "\\\"");
-    out.push_str(&format!("[{key} \"{value}\"]\n"));
 }
 
 #[cfg(test)]

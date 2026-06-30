@@ -6,7 +6,7 @@
 //! pass reuses the same code, per ADR-0009).
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -21,6 +21,7 @@ use crate::pgn_tree::pgn::PgnError;
 use crate::pgn_tree::{MoveTree, Shape};
 use crate::position::STARTPOS_FEN;
 use crate::search::report::PositionReportService;
+use crate::server::download::pgn_attachment;
 use crate::server::error::error_response;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
@@ -305,25 +306,41 @@ async fn get_one(
     Ok((StatusCode::OK, Json(StudyView::try_from(model)?)).into_response())
 }
 
-/// Export a study as PGN movetext (`GET /api/studies/{id}/export`).
+/// `?eval=<bool>` for the study export: `eval=true` (the default) keeps the
+/// per-move `[%eval]` annotations (the extended export, issue #120); `eval=false`
+/// strips them for a plain export. Comments / NAGs / shapes are always kept.
+#[derive(Deserialize)]
+struct ExportQuery {
+    #[serde(default = "default_true")]
+    eval: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Export a study as a downloadable `.pgn` movetext file
+/// (`GET /api/studies/{id}/export?eval=<bool>`).
 async fn export(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(id): Path<i32>,
+    Query(q): Query<ExportQuery>,
 ) -> Result<Response, StudyError> {
-    let pgn = service(&state).export_pgn(&user, id).await?;
-    Ok((StatusCode::OK, Json(json!({ "pgn": pgn }))).into_response())
+    let pgn = service(&state).export_pgn(&user, id, q.eval).await?;
+    Ok(pgn_attachment(&format!("study-{id}.pgn"), pgn))
 }
 
-/// Export a study as a Lichess-study chapter — PGN with header tags
-/// (`GET /api/studies/{id}/export/lichess`).
+/// Export a study as a downloadable Lichess-study chapter — PGN with header tags
+/// (`GET /api/studies/{id}/export/lichess`). Always carries the extended
+/// annotations (`[%eval]`/NAGs/comments/shapes).
 async fn export_lichess(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(id): Path<i32>,
 ) -> Result<Response, StudyError> {
     let pgn = service(&state).export_lichess(&user, id).await?;
-    Ok((StatusCode::OK, Json(json!({ "pgn": pgn }))).into_response())
+    Ok(pgn_attachment(&format!("study-{id}-lichess.pgn"), pgn))
 }
 
 async fn rename(

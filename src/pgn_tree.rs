@@ -5,9 +5,24 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod eval;
 pub mod lichess;
 pub mod pgn;
 pub mod shapes;
+
+/// An engine evaluation pinned to a node, serialized as a `[%eval …]` command in
+/// the PGN comment (issue #120). Always from **White's** perspective, the PGN
+/// `[%eval]` convention, so a re-import (here or into Lichess/ChessBase) reads
+/// the same number back.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Eval {
+    /// Centipawns from White's perspective (`[%eval 0.27]`).
+    Cp(i32),
+    /// Forced mate in this many moves; sign is White's perspective (`+` White
+    /// mates, `−` Black mates — `[%eval #3]` / `[%eval #-2]`).
+    Mate(i32),
+}
 
 /// A board annotation pinned to a node: an arrow or square highlight mirroring
 /// the chessground shape model (`{ orig, dest?, brush }`) so it round-trips
@@ -44,6 +59,11 @@ pub struct Node {
     /// deserializing — the tree is a JSON blob, so there is no DB migration.
     #[serde(default)]
     pub shapes: Vec<Shape>,
+    /// Engine evaluation after this move (issue #120), emitted as `[%eval …]`.
+    /// `serde(default)`/`skip` keeps pre-#120 `tree_json` rows loading and omits
+    /// the key entirely for the (common) unevaluated node — no DB migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval: Option<Eval>,
     /// Child node ids; `children[0]` is the mainline continuation.
     pub children: Vec<usize>,
 }
@@ -83,6 +103,7 @@ impl MoveTree {
             comment: None,
             nags: Vec::new(),
             shapes: Vec::new(),
+            eval: None,
             children: Vec::new(),
         };
         MoveTree {
@@ -104,6 +125,7 @@ impl MoveTree {
             comment: None,
             nags: Vec::new(),
             shapes: Vec::new(),
+            eval: None,
             children: Vec::new(),
         });
         self.nodes[parent].children.push(id);
@@ -118,6 +140,12 @@ impl MoveTree {
     /// Replace the pinned board shapes on a node (an empty vec clears them).
     pub fn set_shapes(&mut self, id: usize, shapes: Vec<Shape>) {
         self.nodes[id].shapes = shapes;
+    }
+
+    /// Attach an engine evaluation (White's perspective) to a node, emitted as
+    /// `[%eval …]` on export (issue #120).
+    pub fn set_eval(&mut self, id: usize, eval: Eval) {
+        self.nodes[id].eval = Some(eval);
     }
 
     /// Append a Numeric Annotation Glyph to a node (used when building a tree).
@@ -232,6 +260,7 @@ impl MoveTree {
                 comment: src.comment.clone(),
                 nags: src.nags.clone(),
                 shapes: src.shapes.clone(),
+                eval: src.eval,
                 children: Vec::with_capacity(src.children.len()),
             });
             for &child in &src.children {

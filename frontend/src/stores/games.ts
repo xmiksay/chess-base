@@ -75,6 +75,23 @@ export const useGamesStore = defineStore('games', () => {
     ply.value = navigate(ply.value, action, positions.value.length)
   }
 
+  /**
+   * Fetch the open game's PGN for download (issue #120): verbatim, or — with
+   * `annotated` — with the engine analysis (`[%eval]` + NAGs + why-notes)
+   * embedded. Returns the PGN text (the view triggers the file download), or
+   * `null` if no game is open or the request failed (surfaced on `error`).
+   */
+  async function exportPgn(annotated = false): Promise<string | null> {
+    if (!openGame.value) return null
+    error.value = null
+    try {
+      return await api.games.exportPgn(openGame.value.id, { annotated })
+    } catch (e) {
+      error.value = (e as Error)?.message ?? String(e)
+      return null
+    }
+  }
+
   return {
     databaseId,
     games,
@@ -93,5 +110,6 @@ export const useGamesStore = defineStore('games', () => {
     loadMore,
     open,
     go,
+    exportPgn,
   }
 })

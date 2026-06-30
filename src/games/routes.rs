@@ -1,5 +1,7 @@
 //! HTTP surface for game listing (issue #68): a keyset-paginated list of the
 //! games in a database, and a single-game fetch (with PGN) for board playback.
+//! Plus extended-PGN export (issue #120): a real `.pgn` download, verbatim or
+//! with the #119 engine analysis embedded as `[%eval]` + NAGs + why-notes.
 //! Thin callers of [`GameService`]; all scoping lives in the service.
 
 use axum::{
@@ -11,16 +13,25 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::games::{GameError, GameService};
+use crate::games::{export, GameError, GameService};
+use crate::ingest::parse_pgn;
+use crate::position::STARTPOS_FEN;
+use crate::review::{review_game, ReviewError};
+use crate::server::download::pgn_attachment;
 use crate::server::error::error_response;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
+
+/// Default per-ply search depth for an annotated export, mirroring the review
+/// route (issue #119). Clamped server-side by [`review_game`].
+const DEFAULT_EXPORT_DEPTH: u32 = 16;
 
 /// Game routes, mounted under the main API router.
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/games", get(list))
         .route("/api/games/{id}", get(get_one))
+        .route("/api/games/{id}/export", get(export_pgn))
         .with_state(state)
 }
 
@@ -55,6 +66,82 @@ async fn get_one(
 ) -> Result<Response, GameError> {
     let game = service(&state).get(&user, id).await?;
     Ok((StatusCode::OK, Json(game)).into_response())
+}
+
+/// `?annotated=<bool>&depth=<n>` for the export endpoint. `annotated=false` (the
+/// default) downloads the stored PGN verbatim; `annotated=true` runs the #119
+/// review and embeds `[%eval]` + NAGs + why-notes (engine required).
+#[derive(Deserialize)]
+struct ExportQuery {
+    #[serde(default)]
+    annotated: bool,
+    #[serde(default)]
+    depth: Option<u32>,
+}
+
+/// `GET /api/games/{id}/export` — download a game as a real `.pgn` file. Returns
+/// an `Err(Response)` for engine/analysis failures (mirrors the review route) so
+/// a missing engine surfaces its operator guidance verbatim.
+async fn export_pgn(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+    Query(q): Query<ExportQuery>,
+) -> Result<Response, Response> {
+    let game = service(&state)
+        .get(&user, id)
+        .await
+        .map_err(game_error_response)?;
+
+    let pgn = if q.annotated {
+        let engine = state.engine_service.as_ref().ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "No engine configured: start chess-base with --engine / CHESS_BASE_ENGINE.",
+            )
+                .into_response()
+        })?;
+        let stored = game.pgn.as_deref().ok_or_else(|| {
+            review_error_response(ReviewError::BadGame("game has no moves".into()))
+        })?;
+        let parsed = parse_pgn(stored)
+            .map_err(|e| review_error_response(ReviewError::BadGame(e.to_string())))?;
+        let start_fen = game.start_fen.as_deref().unwrap_or(STARTPOS_FEN);
+        let depth = q.depth.unwrap_or(DEFAULT_EXPORT_DEPTH);
+        let review = review_game(engine, start_fen, &game.variant, &parsed.mainline, depth)
+            .await
+            .map_err(review_error_response)?;
+        let tree = export::annotated_tree(&parsed.mainline, &review);
+        export::to_annotated_pgn(&game, &tree)
+            .map_err(|e| review_error_response(ReviewError::BadGame(e.to_string())))?
+    } else {
+        // Verbatim download of the stored game (no engine needed).
+        game.pgn.clone().unwrap_or_default()
+    };
+
+    Ok(pgn_attachment(&format!("game-{id}.pgn"), pgn))
+}
+
+/// Map a game-lookup failure onto a response (not-found hides ids the caller
+/// can't see; storage errors stay generic).
+fn game_error_response(err: GameError) -> Response {
+    let status = match err {
+        GameError::NotFound => StatusCode::NOT_FOUND,
+        GameError::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    error_response(status, err.to_string())
+}
+
+/// Map a review failure onto a response: a bad game is a client error with a
+/// safe message; an engine failure is masked as a generic 5xx.
+fn review_error_response(err: ReviewError) -> Response {
+    match err {
+        ReviewError::BadGame(msg) => error_response(StatusCode::UNPROCESSABLE_ENTITY, msg),
+        ReviewError::Engine(_) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "engine analysis failed".to_string(),
+        ),
+    }
 }
 
 fn service(state: &AppState) -> GameService {

@@ -127,9 +127,21 @@ impl StudyService {
     }
 
     /// Export a study the caller may read as standard PGN movetext (no headers).
-    /// NAGs, comments and pinned board shapes (`[%csl]`/`[%cal]`) are preserved.
-    pub async fn export_pgn(&self, user: &CurrentUser, id: i32) -> Result<String, StudyError> {
-        let tree = self.load_tree(user, id).await?;
+    /// NAGs, comments and pinned board shapes (`[%csl]`/`[%cal]`) are always
+    /// preserved; `include_eval` keeps the per-move `[%eval]` annotations (the
+    /// extended export, issue #120) or strips them for a plain export.
+    pub async fn export_pgn(
+        &self,
+        user: &CurrentUser,
+        id: i32,
+        include_eval: bool,
+    ) -> Result<String, StudyError> {
+        let mut tree = self.load_tree(user, id).await?;
+        if !include_eval {
+            for node in &mut tree.nodes {
+                node.eval = None;
+            }
+        }
         Ok(pgn::to_pgn(&tree)?)
     }
 

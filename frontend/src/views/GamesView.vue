@@ -5,6 +5,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Board from '../components/Board.vue'
 import EvalGraph from '../components/EvalGraph.vue'
 import { api } from '../api'
+import { downloadText } from '../lib/download'
 import { useGamesStore } from '../stores/games'
 import { useReviewStore } from '../stores/review'
 import { useSettingsStore } from '../stores/settings'
@@ -44,6 +45,15 @@ function pct(n: number): string {
 async function onAnalyse() {
   if (!games.openGame) return
   await review.analyse(games.openGame.id)
+}
+
+// Export the open game as a `.pgn` download (issue #120): verbatim, or — with
+// `annotated` — carrying the engine analysis (`[%eval]` + NAGs + why-notes).
+async function onExport(annotated: boolean) {
+  const game = games.openGame
+  if (!game) return
+  const pgn = await games.exportPgn(annotated)
+  if (pgn != null) downloadText(`game-${game.id}.pgn`, pgn)
 }
 
 // Clear the review when a different game is opened so stale data never shows.
@@ -201,6 +211,24 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             @click="onAnalyse"
           >
             {{ review.loading ? 'Analyzing…' : 'Analyze game' }}
+          </button>
+          <button
+            type="button"
+            data-test="export"
+            class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+            @click="onExport(false)"
+          >
+            Export PGN
+          </button>
+          <button
+            type="button"
+            data-test="export-annotated"
+            class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-50"
+            :disabled="engineEnabled === false"
+            :title="engineEnabled === false ? 'No engine configured on the server.' : ''"
+            @click="onExport(true)"
+          >
+            Export with analysis
           </button>
           <span
             v-if="engineEnabled === false"
