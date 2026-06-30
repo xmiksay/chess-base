@@ -50,7 +50,10 @@ impl Lichess {
     pub fn games_url(&self, since: Option<i64>) -> String {
         // Lichess's game-export endpoint is `/api/games/user/{username}` — NOT
         // `/api/user/{username}/games`, which 404s (issue: lichess sync failed).
-        let mut url = format!("{API_BASE}/api/games/user/{}?pgnInJson=false", self.username);
+        let mut url = format!(
+            "{API_BASE}/api/games/user/{}?pgnInJson=false",
+            self.username
+        );
         if let Some(ms) = since {
             url.push_str(&format!("&since={ms}"));
         }
