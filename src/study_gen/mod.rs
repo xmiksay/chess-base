@@ -13,6 +13,7 @@ pub mod danger;
 pub mod danger_generate;
 pub mod features;
 pub mod generate;
+pub mod plan_shapes;
 pub mod seed;
 pub mod spine;
 pub mod tree;
@@ -42,6 +43,7 @@ pub use features::{concepts_of_fen, concepts_of_fen_with, Concepts, KeySquare};
 pub use generate::{
     generate_study, generate_study_live, GenerateError, GenerateOutcome, GenerateParams,
 };
+pub use plan_shapes::{apply_shapes, ShapeConfig, MAX_PLAN_LINES};
 pub use seed::{seed_study_from_danger, seed_study_from_tree, SeedOutcome, SeedParams};
 pub use spine::{
     walk_danger_spine, DangerKind, DangerNode, DangerRole, DangerTag, DangerTree, MultiAnalyzer,
@@ -148,6 +150,37 @@ impl<'a> EngineMultiAnalyzer<'a> {
 
 #[async_trait]
 impl MultiAnalyzer for EngineMultiAnalyzer<'_> {
+    async fn analyse_multi(&self, fen: &str) -> Result<Vec<Analysis>> {
+        self.engine
+            .analyse_multi(fen, &self.limits, self.multipv)
+            .await
+    }
+}
+
+/// [`MultiAnalyzer`] for the study **plan-shapes** pass: top-`multipv` PV lines
+/// per position under the same **depth** budget the generator already uses for
+/// node evals (unlike [`EngineMultiAnalyzer`], which is movetime-based and floors
+/// `multipv` at 2 for the danger-map gap). Used to source [`plan_shapes`] arrows.
+pub struct EnginePlanAnalyzer<'a> {
+    engine: &'a EngineService,
+    limits: Limits,
+    multipv: u16,
+}
+
+impl<'a> EnginePlanAnalyzer<'a> {
+    /// Reuse the generator's per-position search `limits`, returning up to
+    /// `multipv` principal variations for the plan arrows.
+    pub fn new(engine: &'a EngineService, limits: Limits, multipv: u16) -> Self {
+        Self {
+            engine,
+            limits,
+            multipv,
+        }
+    }
+}
+
+#[async_trait]
+impl MultiAnalyzer for EnginePlanAnalyzer<'_> {
     async fn analyse_multi(&self, fen: &str) -> Result<Vec<Analysis>> {
         self.engine
             .analyse_multi(fen, &self.limits, self.multipv)

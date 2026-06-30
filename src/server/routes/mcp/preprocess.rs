@@ -33,8 +33,9 @@ use crate::study_gen::features::concepts_of_fen_with;
 use crate::study_gen::spine::{SpineConfig, SpineError};
 use crate::study_gen::tree::{TreeConfig, TreeError};
 use crate::study_gen::{
-    build_variation_tree, seed_study_from_danger, seed_study_from_tree, walk_danger_spine_live,
-    SeedOutcome, SeedParams,
+    apply_shapes, build_variation_tree, seed_study_from_danger, seed_study_from_tree,
+    walk_danger_spine_live, EnginePlanAnalyzer, SeedOutcome, SeedParams, ShapeConfig,
+    MAX_PLAN_LINES,
 };
 
 /// Studies are standard chess (mirrors [`crate::studies`]); every FEN here parses
@@ -78,7 +79,9 @@ fn opening_tree_tool() -> Tool {
          teachable size. Every node carries the SAN, FEN, Zobrist key, engine \
          evaluation, database win/draw/loss + frequency stats, ECO name and \
          strategic concepts. Returns structured data only — no prose: annotate it \
-         yourself and persist with the `study_*` tools. Pass `save_as` to persist \
+         yourself and persist with the `study_*` tools. Optionally pins per-node \
+         plan/threat board arrows (`shapes`: engine PV trajectories + hanging-piece \
+         threats) you can carry straight into a study. Pass `save_as` to persist \
          the tree straight into a study server-side and get back just an id (no \
          tree JSON, no client-side PGN assembly) — then layer prose with \
          `study_annotate`. Scoped to your databases and the global ones. Requires \
@@ -96,6 +99,16 @@ fn opening_tree_tool() -> Tool {
                 "tree": {
                     "type": "object",
                     "description": "Optional tree pruning thresholds (max_depth, max_children, max_nodes, min_frequency, eval_margin_cp); partial overrides over the defaults. Set max_children_by_depth (e.g. [3,3,2,1]) to taper branching with depth — broad near the root, narrowing on deep main lines; the last entry repeats past its length and it overrides max_children."
+                },
+                "plan_lines": {
+                    "type": "integer", "minimum": 0, "maximum": MAX_PLAN_LINES,
+                    "description": format!(
+                        "Pin the top-N engine PV lines as `plan1`..`plan{MAX_PLAN_LINES}` arrows on every node (0/omitted = off; capped at {MAX_PLAN_LINES})."
+                    )
+                },
+                "threats": {
+                    "type": "boolean",
+                    "description": "Pin the static hanging-piece `threat` arrows on every node (default false)."
                 },
                 "save_as": save_as_schema()
             }
@@ -131,16 +144,48 @@ async fn opening_tree(app: AppState, user: CurrentUser, args: Value) -> ToolOutc
         Err(msg) => return ToolOutcome::error(msg),
     };
     let limits = Limits::depth(depth).clamped();
+    let plan_lines = match opt_bounded_u64(&args, "plan_lines", MAX_PLAN_LINES as u64) {
+        Ok(lines) => lines.unwrap_or(0) as u8,
+        Err(msg) => return ToolOutcome::error(msg),
+    };
+    let want_threats = args
+        .get("threats")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let reports = PositionReportService::new(app.db.clone());
 
-    let tree =
-        match build_variation_tree(&engine, &reports, &user, &start_fen, &config, limits, MODE)
-            .await
-        {
-            Ok(tree) => tree,
-            Err(e) => return tree_error(e),
-        };
+    let mut tree = match build_variation_tree(
+        &engine,
+        &reports,
+        &user,
+        &start_fen,
+        &config,
+        limits.clone(),
+        MODE,
+    )
+    .await
+    {
+        Ok(tree) => tree,
+        Err(e) => return tree_error(e),
+    };
 
+    // Optionally pin engine "plan" + static "threat" arrows onto each node — pure
+    // engine/DB data (ADR-0027), so the client can carry them into a study.
+    let shapes = ShapeConfig {
+        plan_lines,
+        threats: want_threats,
+    };
+    if !shapes.is_off() {
+        let analyzer =
+            (plan_lines > 0).then(|| EnginePlanAnalyzer::new(&engine, limits, plan_lines as u16));
+        let plans = analyzer
+            .as_ref()
+            .map(|a| a as &(dyn crate::study_gen::spine::MultiAnalyzer + Sync));
+        apply_shapes(plans, &mut tree, &shapes, MODE).await;
+    }
+
+    // Persist straight into a study when asked (#158); otherwise return the tree
+    // (now carrying any plan/threat shapes) as data.
     match save_as {
         None => json_outcome(&tree),
         Some(params) => {
@@ -435,6 +480,20 @@ mod tests {
             .find(|t| t["name"] == "opening_tree")
             .expect("opening_tree tool");
         assert!(tree["inputSchema"].get("required").is_none());
+    }
+
+    #[test]
+    fn opening_tree_advertises_plan_and_threat_args() {
+        let list = registry().list();
+        let tools = list["tools"].as_array().unwrap();
+        let props = tools
+            .iter()
+            .find(|t| t["name"] == "opening_tree")
+            .map(|t| &t["inputSchema"]["properties"])
+            .expect("opening_tree tool");
+        assert_eq!(props["plan_lines"]["type"], "integer");
+        assert_eq!(props["plan_lines"]["maximum"], MAX_PLAN_LINES);
+        assert_eq!(props["threats"]["type"], "boolean");
     }
 
     #[test]

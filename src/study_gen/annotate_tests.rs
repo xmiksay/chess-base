@@ -29,6 +29,7 @@ fn node(id: usize, parent: Option<usize>, san: Option<&str>, fen: &str) -> Varia
         stats: None,
         eco: None,
         concepts: Concepts::default(),
+        shapes: Vec::new(),
         children: Vec::new(),
     }
 }

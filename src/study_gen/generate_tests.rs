@@ -43,6 +43,26 @@ impl ContinuationSource for FakeStats {
     }
 }
 
+/// Fake multi-PV analyser for the plan-shapes path: a fixed pair of one-ply PVs
+/// for every position, so each node gets `plan1` + `plan2` arrows.
+struct FakePlans;
+
+#[async_trait]
+impl crate::study_gen::spine::MultiAnalyzer for FakePlans {
+    async fn analyse_multi(&self, _fen: &str) -> Result<Vec<crate::engine::Analysis>> {
+        Ok(["e2e4", "d2d4"]
+            .iter()
+            .map(|uci| crate::engine::Analysis {
+                bestmove: uci.to_string(),
+                ponder: None,
+                score: None,
+                depth: None,
+                pv: vec![uci.to_string()],
+            })
+            .collect())
+    }
+}
+
 /// Stub LLM provider: either returns a fixed reply (recording the request it
 /// received) or fails with a provider error, so failure paths are exercised too.
 struct StubProvider {
@@ -166,6 +186,8 @@ fn params(database_id: i32, start_fen: &str) -> GenerateParams {
             ..TreeConfig::default()
         },
         model: None,
+        plan_lines: 0,
+        threats: false,
     }
 }
 
@@ -192,6 +214,7 @@ async fn generates_persists_and_annotates_a_study() {
         &svc,
         &alice(),
         &params(db_id, STARTPOS_FEN),
+        None,
     )
     .await
     .expect("generation succeeds");
@@ -234,6 +257,7 @@ async fn batch_invariant_keeps_engine_eval_out_of_the_model_context() {
         &svc,
         &alice(),
         &params(db_id, STARTPOS_FEN),
+        None,
     )
     .await
     .unwrap();
@@ -265,6 +289,7 @@ async fn invalid_start_fen_surfaces_a_clean_client_error() {
         &svc,
         &alice(),
         &params(db_id, "not a fen"),
+        None,
     )
     .await
     .unwrap_err();
@@ -287,6 +312,7 @@ async fn llm_failure_surfaces_without_leaking_internals() {
         &svc,
         &alice(),
         &params(db_id, STARTPOS_FEN),
+        None,
     )
     .await
     .unwrap_err();
@@ -313,6 +339,7 @@ async fn empty_db_position_yields_a_trivial_single_node_study() {
         &svc,
         &alice(),
         &params(db_id, STARTPOS_FEN),
+        None,
     )
     .await
     .expect("a bare position still yields a (single-node) study");
@@ -321,4 +348,68 @@ async fn empty_db_position_yields_a_trivial_single_node_study() {
     let saved = svc.get(&alice(), outcome.study.id).await.unwrap();
     let tree: MoveTree = serde_json::from_str(&saved.tree_json).unwrap();
     assert_eq!(tree.nodes.len(), 1);
+}
+
+#[tokio::test]
+async fn plan_lines_pin_arrows_onto_the_persisted_study() {
+    let (svc, db_id) = setup().await;
+    let (eval, stats) = fixture();
+    let provider = StubProvider::replying(r#"{"annotations":[]}"#);
+
+    let mut p = params(db_id, STARTPOS_FEN);
+    p.plan_lines = 2;
+    let outcome = generate_study(
+        &eval,
+        &stats,
+        &provider,
+        &svc,
+        &alice(),
+        &p,
+        Some(&FakePlans),
+    )
+    .await
+    .expect("generation succeeds");
+
+    // The plan-shapes pass ran before commit, so the saved tree carries the
+    // `plan1`/`plan2`-brushed arrows on at least one node (the root, White to
+    // move, where both fake PVs are legal).
+    let saved = svc.get(&alice(), outcome.study.id).await.unwrap();
+    let tree: MoveTree = serde_json::from_str(&saved.tree_json).unwrap();
+    let brushes: std::collections::BTreeSet<_> = tree
+        .nodes
+        .iter()
+        .flat_map(|n| n.shapes.iter().map(|s| s.brush.clone()))
+        .collect();
+    assert!(
+        brushes.contains("plan1"),
+        "expected plan1 arrows, got {brushes:?}"
+    );
+    assert!(
+        brushes.contains("plan2"),
+        "expected plan2 arrows, got {brushes:?}"
+    );
+}
+
+#[tokio::test]
+async fn plans_off_persists_no_shapes() {
+    let (svc, db_id) = setup().await;
+    let (eval, stats) = fixture();
+    let provider = StubProvider::replying(r#"{"annotations":[]}"#);
+
+    // Default params (plan_lines 0, threats false) + no analyzer ⇒ no shapes.
+    let outcome = generate_study(
+        &eval,
+        &stats,
+        &provider,
+        &svc,
+        &alice(),
+        &params(db_id, STARTPOS_FEN),
+        None,
+    )
+    .await
+    .expect("generation succeeds");
+
+    let saved = svc.get(&alice(), outcome.study.id).await.unwrap();
+    let tree: MoveTree = serde_json::from_str(&saved.tree_json).unwrap();
+    assert!(tree.nodes.iter().all(|n| n.shapes.is_empty()));
 }

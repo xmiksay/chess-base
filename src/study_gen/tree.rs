@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::Score;
 use crate::openings::opening_of_zobrist;
+use crate::pgn_tree::Shape;
 use crate::position::{apply_san, zobrist_of_fen, CastlingMode};
 use crate::search::report::{EcoInfo, MoveReport};
 use crate::study_gen::features::{concepts_of_fen_with, Concepts};
@@ -143,6 +144,12 @@ pub struct VariationNode {
     /// material imbalance) for this position — the issue #30 feature layer.
     #[serde(default, skip_serializing_if = "Concepts::is_empty")]
     pub concepts: Concepts,
+    /// Pre-computed board arrows (engine "plans" PV trajectories + "threats")
+    /// pinned to this position, populated on demand by the
+    /// [`plan_shapes`](super::plan_shapes) pass. Empty unless requested, so the
+    /// builder output is unchanged when shapes are off.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shapes: Vec<Shape>,
     pub children: Vec<usize>,
 }
 
@@ -285,6 +292,7 @@ where
         stats: None,
         eco: eco_for(root_zobrist),
         concepts: concepts_of_fen_with(start_fen, castling).unwrap_or_default(),
+        shapes: Vec::new(),
         children: Vec::new(),
     }];
 
@@ -354,6 +362,7 @@ where
                 stats: Some(mv.clone()),
                 eco: eco_for(*child_zobrist),
                 concepts: concepts_of_fen_with(child_fen, castling).unwrap_or_default(),
+                shapes: Vec::new(),
                 children: Vec::new(),
             });
             nodes[idx].children.push(child_id);

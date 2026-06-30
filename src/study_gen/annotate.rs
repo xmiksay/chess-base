@@ -422,7 +422,7 @@ pub fn move_tree_from(tree: &VariationTree) -> MoveTree {
             san: v.san.clone(),
             comment: None,
             nags: Vec::new(),
-            shapes: Vec::new(),
+            shapes: v.shapes.clone(),
             eval: None,
             children: v.children.clone(),
         })

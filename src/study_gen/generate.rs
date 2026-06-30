@@ -24,10 +24,15 @@ use crate::search::report::PositionReportService;
 use crate::server::identity::CurrentUser;
 use crate::studies::{StudyError, StudyService};
 
+use super::plan_shapes::{apply_shapes, ShapeConfig};
+use super::spine::MultiAnalyzer;
 use super::tree::{
     build_tree, ContinuationSource, Evaluator, TreeConfig, TreeError, VariationTree,
 };
-use super::{annotate_tree, AnnotateError, EngineEvaluator, Rejection, ReportContinuations};
+use super::{
+    annotate_tree, AnnotateError, EngineEvaluator, EnginePlanAnalyzer, Rejection,
+    ReportContinuations, MAX_PLAN_LINES,
+};
 
 /// Studies are standard chess (mirrors [`crate::studies`]); the generated tree
 /// parses castling rights the normal way.
@@ -50,6 +55,11 @@ pub struct GenerateParams {
     pub tree: TreeConfig,
     /// LLM model id; `None` ⇒ the provider's default model.
     pub model: Option<String>,
+    /// Number of engine PV lines to pin as "plan" arrows on every node (0 = off,
+    /// capped at [`MAX_PLAN_LINES`]). See [`super::plan_shapes`].
+    pub plan_lines: u8,
+    /// Pin the static "threats" (hanging-piece) arrows on every node.
+    pub threats: bool,
 }
 
 /// The persisted study plus a summary of what the verification loop dropped.
@@ -130,13 +140,25 @@ pub async fn generate_study<E, S>(
     studies: &StudyService,
     user: &CurrentUser,
     params: &GenerateParams,
+    plans: Option<&(dyn MultiAnalyzer + Sync)>,
 ) -> Result<GenerateOutcome, GenerateError>
 where
     E: Evaluator + Sync,
     S: ContinuationSource + Sync,
 {
-    let tree: VariationTree =
+    let mut tree: VariationTree =
         build_tree(eval, stats, &params.start_fen, &params.tree, MODE).await?;
+
+    // Pin plan/threat arrows onto each node before annotation. These are
+    // engine/DB-grounded data, not prose, so they never enter the LLM prompt
+    // (ADR-0009); `move_tree_from` carries them into the persisted study.
+    let shapes = ShapeConfig {
+        plan_lines: params.plan_lines,
+        threats: params.threats,
+    };
+    if !shapes.is_off() {
+        apply_shapes(plans, &mut tree, &shapes, MODE).await;
+    }
 
     let model = params
         .model
@@ -174,9 +196,32 @@ pub async fn generate_study_live(
     params: &GenerateParams,
     engine_limits: Limits,
 ) -> Result<GenerateOutcome, GenerateError> {
-    let evaluator = EngineEvaluator::new(engine, engine_limits);
+    let evaluator = EngineEvaluator::new(engine, engine_limits.clone());
     let continuations = ReportContinuations::new(reports, user);
-    generate_study(&evaluator, &continuations, provider, studies, user, params).await
+
+    // A separate depth-bounded multi-PV analyser sources the plan arrows; built
+    // only when plan lines are requested (threats need no engine).
+    let plan_analyzer = (params.plan_lines > 0).then(|| {
+        EnginePlanAnalyzer::new(
+            engine,
+            engine_limits,
+            params.plan_lines.min(MAX_PLAN_LINES) as u16,
+        )
+    });
+    let plans = plan_analyzer
+        .as_ref()
+        .map(|a| a as &(dyn MultiAnalyzer + Sync));
+
+    generate_study(
+        &evaluator,
+        &continuations,
+        provider,
+        studies,
+        user,
+        params,
+        plans,
+    )
+    .await
 }
 
 #[cfg(test)]
