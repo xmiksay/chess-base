@@ -29,6 +29,7 @@ use crate::engine::Analysis;
 use crate::pgn_tree::MoveTree;
 use crate::position::{apply_san, black_to_move, uci_to_san, CastlingMode};
 
+use super::attack::{pawn_storm, AttackConfig, AttackSignal};
 use super::danger::{is_only_move, only_move_gap, trap_verdict, DangerConfig, TrapVerdict};
 use super::tree::{score_to_cp, ContinuationSource};
 
@@ -69,6 +70,8 @@ pub struct SpineConfig {
     pub min_miss_rate: f64,
     /// Phase-1 classifier thresholds (trap floors, only-move gap).
     pub danger: DangerConfig,
+    /// Phase-5 pawn-storm thresholds (issue #142).
+    pub attack: AttackConfig,
 }
 
 impl Default for SpineConfig {
@@ -80,6 +83,7 @@ impl Default for SpineConfig {
             max_replies: 4,
             min_miss_rate: 0.3,
             danger: DangerConfig::default(),
+            attack: AttackConfig::default(),
         }
     }
 }
@@ -92,6 +96,8 @@ pub enum DangerKind {
     Trap,
     /// Wide MultiPV gap the opponent frequently misses.
     OnlyMove,
+    /// A pawn storm toward our king in the opponent's best line (issue #142).
+    Attack,
     /// A human reply with no answer in the spine (reachability break).
     OffBook,
 }
@@ -111,7 +117,7 @@ pub enum DangerRole {
 
 /// The danger signal attached to one node, with the raw figures behind the
 /// verdict so a later annotation pass can quote them.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DangerTag {
     pub kind: DangerKind,
     pub role: DangerRole,
@@ -126,6 +132,9 @@ pub struct DangerTag {
     /// (`0..=1`), if the position was searched.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub miss_rate: Option<f64>,
+    /// Pawn storm toward our king found in the opponent's best line (issue #142).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attack: Option<AttackSignal>,
 }
 
 /// One node of the tagged danger tree. Arena-allocated (`id` indexes
@@ -342,6 +351,7 @@ where
                     trap: None,
                     only_move_gap: None,
                     miss_rate: None,
+                    attack: None,
                 });
                 push_node(
                     nodes,
@@ -364,7 +374,10 @@ where
 /// on *our* prior move, so its evals are negated to our perspective: bounded
 /// downside is `−PV1` (opponent's best reply), baited upside `−PV2` (opponent's
 /// tempting second line). Only-move reads the same gap, weighted by how often the
-/// DB shows humans missing the engine's best reply.
+/// DB shows humans missing the engine's best reply. Attack (issue #142) scans the
+/// opponent's best line for a pawn storm marching toward our king — a practical
+/// danger this move concedes — and is the lowest-priority signal, surfaced as a
+/// **Caution** only when no trap or narrow path already fired.
 fn classify(
     lines: &[Analysis],
     replies: &[crate::search::report::MoveReport],
@@ -385,10 +398,16 @@ fn classify(
 
     let only = is_only_move(s1, s2, &config.danger) && miss.unwrap_or(0.0) >= config.min_miss_rate;
 
+    // A bad PV simply yields no storm — the search already validated this FEN.
+    let attack = pawn_storm(fen, &best.pv, mode, &config.attack)
+        .ok()
+        .flatten();
+
     let (kind, role) = match trap {
         Some(TrapVerdict::Weapon) => (DangerKind::Trap, DangerRole::Weapon),
         Some(TrapVerdict::HopeChess) => (DangerKind::Trap, DangerRole::Caution),
         _ if only => (DangerKind::OnlyMove, DangerRole::Weapon),
+        _ if attack.is_some() => (DangerKind::Attack, DangerRole::Caution),
         _ => return None,
     };
 
@@ -398,6 +417,7 @@ fn classify(
         trap,
         only_move_gap: gap,
         miss_rate: miss,
+        attack,
     })
 }
 

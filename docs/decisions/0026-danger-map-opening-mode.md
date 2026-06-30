@@ -39,7 +39,13 @@ the lines; it vetoes and grades human-surfaced ones. Concretely:
      `PV1 − PV2 >= only_move_gap_cp`), weighted by how often humans miss the
      unique move in `position_index`.
   4. **Attack** — recurring threat-generating plans (`threats/` #123 +
-     `plans.rs` ADR-0017). **Deferred** past v1 (highest engineering risk).
+     `plans.rs` ADR-0017). Shipped in #142: `study_gen/attack.rs` reuses the
+     `plans.rs` PV tracer to detect a pawn storm (same-colour pawn pushed
+     `>= min_advances` times, finishing within `king_zone_files` of the enemy
+     king). The spine walk runs it on the opponent's best line at each searched
+     position; a storm toward *our* king is the lowest-priority signal and tags
+     the move that conceded it as **Caution**. The heuristic for the opponent's
+     *tempting* reply stays open (surfaced via chat, below).
 
 - **Roles.** Each kept line is tagged **Weapon** (recommend — must pass the
   bounded-downside test), **Caution** (warn — included *because* its eval is
@@ -68,7 +74,7 @@ trap line needs.
 used where it is strong (refuting candidate moves) instead of where it is
 redundant (re-stating its own top line). The danger map is a metric the engine
 can *compute* but would never *optimise for* — which is precisely why a study
-built on it is worth more than the best-line tree. Attack detection and a
-heuristic for "tempting" remain open follow-ups (issue #131). v1 ships the pure
-classifier (`danger.rs`) with the spine driver, annotation wiring, and transport
-layered on in later increments.
+built on it is worth more than the best-line tree. Attack detection landed in
+#142; a heuristic for "tempting" replies remains the open follow-up (issue #131).
+v1 ships the pure classifier (`danger.rs`) with the spine driver, annotation
+wiring, and transport layered on in later increments.
