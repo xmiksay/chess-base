@@ -28,6 +28,10 @@ const startFen = ref(props.startFen || STARTPOS_FEN)
 const engineDepth = ref(18)
 const maxDepth = ref(6)
 const maxChildren = ref(3)
+// Board-arrow annotation: pin engine "plan" trajectories (0–3 lines) and/or the
+// static hanging-piece "threats" onto every node (#123/#60). Off by default.
+const planLines = ref(0)
+const threats = ref(false)
 
 const running = ref(false)
 const error = ref<string | null>(null)
@@ -48,6 +52,8 @@ async function onSubmit() {
     start_fen: startFen.value.trim() || STARTPOS_FEN,
     engine_depth: engineDepth.value,
     tree: { max_depth: maxDepth.value, max_children: maxChildren.value },
+    plan_lines: planLines.value,
+    threats: threats.value,
   }
   try {
     result.value = await studies.generate(body)
@@ -193,6 +199,30 @@ onMounted(async () => {
               min="1"
               class="rounded border border-neutral-300 px-2 py-1"
             >
+          </label>
+        </div>
+
+        <!-- Board-arrow annotations baked onto every node. -->
+        <div class="flex items-end gap-4 text-sm">
+          <label class="flex flex-col gap-1">
+            Plan lines
+            <input
+              v-model.number="planLines"
+              data-test="plan-lines"
+              type="number"
+              min="0"
+              max="3"
+              class="w-20 rounded border border-neutral-300 px-2 py-1"
+            >
+          </label>
+          <label class="flex items-center gap-2 pb-1.5">
+            <input
+              v-model="threats"
+              data-test="threats"
+              type="checkbox"
+              class="rounded border-neutral-300"
+            >
+            Threat arrows
           </label>
         </div>
 

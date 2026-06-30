@@ -27,7 +27,9 @@ use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 use crate::studies::{StudyError, StudyService};
 use crate::study_gen::tree::TreeConfig;
-use crate::study_gen::{generate_study_live, GenerateError, GenerateOutcome, GenerateParams};
+use crate::study_gen::{
+    generate_study_live, GenerateError, GenerateOutcome, GenerateParams, MAX_PLAN_LINES,
+};
 
 /// Per-position engine search depth used by `POST /api/studies/generate` when the
 /// request doesn't override it. Moderate so a generated tree's ground-truth evals
@@ -155,6 +157,13 @@ struct GenerateBody {
     /// Per-position engine search depth (plies); capped server-side.
     #[serde(default)]
     engine_depth: Option<u32>,
+    /// Pin engine "plan" arrows (top-N PV trajectories) on every node; 0/omitted
+    /// = off, capped at [`MAX_PLAN_LINES`]. See [`crate::study_gen::plan_shapes`].
+    #[serde(default)]
+    plan_lines: Option<u8>,
+    /// Pin the static "threats" (hanging-piece) arrows on every node.
+    #[serde(default)]
+    threats: Option<bool>,
 }
 
 /// Summary returned by `generate`: the created study plus what the verification
@@ -276,6 +285,8 @@ async fn generate(
         start_fen: body.start_fen.unwrap_or_else(|| STARTPOS_FEN.to_string()),
         tree: body.tree.unwrap_or_default(),
         model: body.model,
+        plan_lines: body.plan_lines.unwrap_or(0).min(MAX_PLAN_LINES),
+        threats: body.threats.unwrap_or(false),
     };
     let limits = Limits::depth(body.engine_depth.unwrap_or(DEFAULT_GENERATE_DEPTH)).clamped();
     let reports = PositionReportService::new(state.db.clone());

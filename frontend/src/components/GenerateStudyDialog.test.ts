@@ -52,9 +52,31 @@ describe('GenerateStudyDialog', () => {
       start_fen: STARTPOS_FEN,
       engine_depth: 20,
       tree: { max_depth: 8, max_children: 4 },
+      plan_lines: 0,
+      threats: false,
     })
     // Result panel offers to open the generated study.
     expect(wrapper.find('[data-test="open-result"]').exists()).toBe(true)
+  })
+
+  it('submits the plan-lines count and threats toggle', async () => {
+    const studies = useStudiesStore()
+    const generate = vi
+      .spyOn(studies, 'generate')
+      .mockResolvedValue({ id: 9, database_id: 2, name: 'Najdorf', global: false, node_count: 12, rejected: 0 })
+
+    const wrapper = mount(GenerateStudyDialog, { props: { llmEnabled: true } })
+    await flushPromises()
+
+    await wrapper.find('[data-test="name"]').setValue('Najdorf')
+    await wrapper.find('[data-test="plan-lines"]').setValue(2)
+    await wrapper.find('[data-test="threats"]').setValue(true)
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({ plan_lines: 2, threats: true }),
+    )
   })
 
   it('emits open with the generated study id', async () => {

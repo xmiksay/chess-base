@@ -53,8 +53,13 @@ src/
                    features.rs (#30) pure pawn-structure & key-square concepts;
                    annotate.rs (#31) batch LLM annotation pass + verification loop
                    (tool-free prompt, claims checked vs engine/DB before commit);
-                   generate.rs (#115) orchestrator: tree → annotate/verify → persist a
-                   study; exposed via POST /api/studies/generate (NOT MCP, ADR-0027);
+                   generate.rs (#115) orchestrator: tree → (optional plan/threat
+                   shapes) → annotate/verify → persist a study; exposed via POST
+                   /api/studies/generate (NOT MCP, ADR-0027);
+                   plan_shapes.rs (ADR-0028→0029) pure pass: pin engine "plan" PV
+                   trajectories (plan1..plan3) + static "threat" arrows onto every
+                   node as shapes; opt-in via generate `plan_lines`/`threats` and
+                   the MCP `opening_tree` tool;
                    danger.rs (#131, ADR-0026) pure "danger-map" classifier — trap
                    weapon/hope-chess + only-move gap (engine as adjudicator);
                    spine.rs (#139) PGN-repertoire walk: per opponent position runs

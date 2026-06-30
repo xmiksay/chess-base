@@ -271,6 +271,7 @@ pub fn to_variation_tree(danger: &DangerTree) -> VariationTree {
                 stats: None,
                 eco: zob.and_then(eco_for),
                 concepts,
+                shapes: Vec::new(),
                 children: n.children.clone(),
             }
         })

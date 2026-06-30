@@ -347,6 +347,8 @@ export interface GenerateBody {
   model?: string
   engine_depth?: number // per-position search depth, capped server-side
   tree?: TreeConfig
+  plan_lines?: number // pin top-N engine "plan" arrows per node (0–3, 0 = off)
+  threats?: boolean // pin static hanging-piece "threat" arrows per node
 }
 
 /** Result of a generation run. */
