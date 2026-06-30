@@ -11,7 +11,10 @@ vi.mock('../api', () => ({
       get: vi.fn(),
       tree: vi.fn(),
       list: vi.fn(),
+      saveAsStudy: vi.fn(),
+      linkedStudies: vi.fn(),
     },
+    folders: { list: vi.fn() },
   },
 }))
 
@@ -53,6 +56,8 @@ describe('GameReviewPanel — EvalGraph wiring', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    vi.mocked(api.folders.list).mockResolvedValue([])
+    vi.mocked(api.games.linkedStudies).mockResolvedValue([])
   })
 
   async function setup() {
@@ -61,7 +66,10 @@ describe('GameReviewPanel — EvalGraph wiring', () => {
     const review = useReviewStore()
     vi.mocked(api.games.analyse).mockResolvedValue(sampleReview())
     await review.analyse(5)
-    const wrapper = mount(GameReviewPanel, { props: { engineEnabled: true } })
+    const wrapper = mount(GameReviewPanel, {
+      props: { engineEnabled: true },
+      global: { stubs: { RouterLink: true } },
+    })
     return { games, review, wrapper }
   }
 

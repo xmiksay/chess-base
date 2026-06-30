@@ -9,6 +9,8 @@ vi.mock('../api', () => ({
       get: vi.fn(),
       tree: vi.fn(),
       exportPgn: vi.fn(),
+      saveAsStudy: vi.fn(),
+      linkedStudies: vi.fn(),
     },
   },
 }))
@@ -47,6 +49,7 @@ describe('games store — list pagination', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    vi.mocked(api.games.linkedStudies).mockResolvedValue([])
   })
 
   it('selectDatabase loads the first page with the default sort', async () => {
@@ -128,6 +131,7 @@ describe('games store — tree board', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    vi.mocked(api.games.linkedStudies).mockResolvedValue([])
   })
 
   async function openLine(store: ReturnType<typeof useGamesStore>, sans: string[]) {
@@ -224,6 +228,7 @@ describe('games store — PGN export', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    vi.mocked(api.games.linkedStudies).mockResolvedValue([])
   })
 
   async function openGame(store: ReturnType<typeof useGamesStore>) {

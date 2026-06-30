@@ -35,12 +35,23 @@ src/
                    Mode B), service.review_game, POST /api/games/{id}/analyse   ← unit-tested
   games/export.rs  pure: mainline → MoveTree (+#119 review: [%eval]/NAGs/why) for
                    GET /api/games/{id}/export?annotated= — extended-PGN download (#120) ← unit-tested
+  folders/         FolderService (#164, ADR-0030): study folder tree —
+                   adjacency-list `folders` table (m0007), account-level, own ∪
+                   global via scope(); create/rename/reparent (rejects cycles)/
+                   delete (cascades child folders + UNFILES contained studies,
+                   enforced in-app since SQLite FK cascade is inert); GET/POST
+                   /api/folders, PATCH (rename/move), DELETE ← unit-tested
   studies/         StudyService: study CRUD + PGN import/export + MoveTree edits;
                    analyse.rs (#162) pure node_fens + white_eval seam for the
                    non-destructive "Analyse study" pass — StudyService::analyse_study
                    engine-fills White-perspective [%eval] on every non-terminal node
                    (eval-only, never clobbers comments/NAGs/shapes), so an export
-                   carries the evals Lichess renders; POST /api/studies/{id}/analyse ← unit-tested
+                   carries the evals Lichess renders; POST /api/studies/{id}/analyse;
+                   folders (#164, ADR-0030): studies carry folder_id (organize) +
+                   origin_game_id (analysis↔game); set_folder, studies_for_game, and
+                   create_from_game (mainline → MoveTree, optional engine review via
+                   the #120/#162 annotated_tree seam) back PUT /api/studies/{id}/folder,
+                   POST /api/games/{id}/save-as-study, GET /api/games/{id}/studies ← unit-tested
   ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
   ai/providers.rs  ProviderService over llm_providers table (#20): admin-managed providers
                    (key server-side); default row builds the provider at startup, else env
@@ -132,6 +143,13 @@ A **database** (`databases` table) is a first-class, ownable collection of games
 `owner_id` NULL ⇒ a **global** (admin-managed) database searchable by every user;
 otherwise it belongs to that user. Search scope = caller's databases ∪ global ones.
 **Position search** keys on the 64-bit Zobrist hash from `position.rs`.
+
+**Folders** (`folders` table, #164/ADR-0030) are an account-level adjacency-list
+tree (`owner_id` NULL ⇒ global, `parent_id` NULL ⇒ root) organizing **studies**,
+independent of game databases. A study carries `folder_id` (which folder; NULL =
+unfiled) and `origin_game_id` (the game an analysis was built from; NULL =
+standalone). Folder cascade-delete + sibling-uniqueness are enforced in
+`FolderService` (SQLite FKs are off and can't be `ALTER`-added).
 
 ## Roadmap (epics → GitHub milestones)
 

@@ -12,9 +12,11 @@ import StudyAnalysis from '../components/StudyAnalysis.vue'
 import GenerateStudyDialog from '../components/GenerateStudyDialog.vue'
 import GenerateDangerMapDialog from '../components/GenerateDangerMapDialog.vue'
 import DangerMapPanel from '../components/DangerMapPanel.vue'
+import StudyFolderSidebar from '../components/StudyFolderSidebar.vue'
 import { api } from '../api'
 import { downloadText } from '../lib/download'
 import { useStudiesStore } from '../stores/studies'
+import { useFoldersStore } from '../stores/folders'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { useSettingsStore } from '../stores/settings'
 import { useDangerStore } from '../stores/danger'
@@ -24,6 +26,7 @@ import type { DrawShape } from 'chessground/draw'
 import type { BoardMove, Database, Shape } from '../types'
 
 const studies = useStudiesStore()
+const folders = useFoldersStore()
 const editor = useStudyEditorStore()
 const settings = useSettingsStore()
 const danger = useDangerStore()
@@ -49,9 +52,17 @@ function clearArrows() {
 }
 
 const databases = ref<Database[]>([])
-const newName = ref('')
-const newDb = ref<number | null>(null)
 const loadError = ref<string | null>(null)
+
+// Open a study in the editor (delegated from the folder sidebar, #164). Selecting
+// the root node mirrors the create flow so the board starts at the start position.
+async function onOpenStudy(id: number) {
+  try {
+    await editor.open(id)
+  } catch (e) {
+    loadError.value = String((e as Error)?.message ?? e)
+  }
+}
 // Capability flags from `/api/health`: LLM gates the generate dialogs; the engine
 // alone gates the engine-only danger overlay (#156). Plus the generate-dialog toggle.
 const llmEnabled = ref(false)
@@ -107,14 +118,6 @@ async function onShapesDrawn(shapes: Shape[]) {
   }
 }
 
-async function onCreate() {
-  if (!newName.value.trim() || newDb.value == null) return
-  await studies.create(newDb.value, newName.value.trim())
-  editor.select(studies.current?.tree?.root ?? 0)
-  newName.value = ''
-  await studies.refresh()
-}
-
 function onKey(e: KeyboardEvent) {
   if (!hasStudy.value) return
   const target = e.target as HTMLElement | null
@@ -144,12 +147,8 @@ onMounted(async () => {
     })
     .catch(() => {})
   try {
-    await studies.refresh()
+    await Promise.all([studies.refresh(), folders.refresh()])
     databases.value = await api.databases.list()
-    newDb.value =
-      databases.value.find((d) => d.id === settings.defaultDatabaseId)?.id ??
-      databases.value[0]?.id ??
-      null
   } catch (e) {
     loadError.value = String((e as Error)?.message ?? e)
   }
@@ -224,57 +223,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     </p>
 
     <div class="flex flex-col gap-6 lg:flex-row">
-      <!-- Study list + create -->
-      <section class="lg:w-1/4">
-        <ul class="mb-4 flex flex-col gap-1">
-          <li
-            v-for="s in studies.list"
-            :key="s.id"
-          >
-            <button
-              type="button"
-              data-test="study-row"
-              class="w-full rounded px-2 py-1 text-left text-sm hover:bg-neutral-100"
-              :class="{ 'bg-neutral-100 font-medium': studies.current?.id === s.id }"
-              @click="editor.open(s.id)"
-            >
-              {{ s.name }}{{ s.global ? ' (global)' : '' }}
-            </button>
-          </li>
-        </ul>
-
-        <form
-          data-test="create-form"
-          class="flex flex-col gap-2"
-          @submit.prevent="onCreate"
-        >
-          <input
-            v-model="newName"
-            placeholder="New study name"
-            class="rounded border border-neutral-300 px-2 py-1 text-sm"
-          >
-          <select
-            v-model="newDb"
-            aria-label="Database"
-            class="rounded border border-neutral-300 px-2 py-1 text-sm"
-          >
-            <option
-              v-for="d in databases"
-              :key="d.id"
-              :value="d.id"
-            >
-              {{ d.name }}{{ d.global ? ' (global)' : '' }}
-            </option>
-          </select>
-          <button
-            type="submit"
-            class="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700 disabled:opacity-50"
-            :disabled="!newName.trim() || newDb == null"
-          >
-            Create study
-          </button>
-        </form>
-      </section>
+      <!-- Folder tree + studies in the selected folder + create (#164) -->
+      <StudyFolderSidebar
+        :databases="databases"
+        :current-id="studies.current?.id ?? null"
+        :default-db-id="settings.defaultDatabaseId ?? null"
+        @open="onOpenStudy"
+        @error="loadError = $event"
+      />
 
       <!-- Board -->
       <section
@@ -342,8 +298,16 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         v-if="hasStudy"
         class="lg:w-1/3"
       >
-        <p class="mb-2 text-sm font-medium">
-          {{ studies.current?.name }}
+        <p class="mb-2 flex items-center gap-2 text-sm font-medium">
+          <span>{{ studies.current?.name }}</span>
+          <RouterLink
+            v-if="studies.current?.origin_game_id != null"
+            :to="{ name: 'games' }"
+            data-test="origin-game-link"
+            class="rounded bg-neutral-100 px-2 py-0.5 text-xs font-normal text-neutral-600 hover:bg-neutral-200"
+          >
+            From game #{{ studies.current.origin_game_id }}
+          </RouterLink>
         </p>
         <MoveTree
           :tree="editor.tree"

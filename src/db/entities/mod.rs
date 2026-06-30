@@ -8,6 +8,7 @@ pub mod assistant_messages;
 pub mod assistant_sessions;
 pub mod databases;
 pub mod events;
+pub mod folders;
 pub mod games;
 pub mod llm_providers;
 pub mod oauth_clients;

@@ -8,11 +8,12 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+use crate::db::entities::studies;
 use crate::games::{
     export, GameError, GameListParams, GameService, GameSort, SortDir, DEFAULT_LIMIT,
 };
@@ -24,10 +25,15 @@ use crate::server::download::pgn_attachment;
 use crate::server::error::error_response;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
+use crate::studies::{StudyError, StudyService};
 
 /// Default per-ply search depth for an annotated export, mirroring the review
 /// route (issue #119). Clamped server-side by [`review_game`].
 const DEFAULT_EXPORT_DEPTH: u32 = 16;
+
+/// Default per-position search depth for "save as analysis" with `analyse=true`
+/// (issue #164), mirroring the study analyse route (#162). Clamped server-side.
+const DEFAULT_SAVE_ANALYSE_DEPTH: u32 = 18;
 
 /// Game routes, mounted under the main API router.
 pub fn router(state: AppState) -> Router {
@@ -36,6 +42,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/games/{id}", get(get_one))
         .route("/api/games/{id}/tree", get(get_tree))
         .route("/api/games/{id}/export", get(export_pgn))
+        .route("/api/games/{id}/save-as-study", post(save_as_study))
+        .route("/api/games/{id}/studies", get(linked_studies))
         .with_state(state)
 }
 
@@ -156,6 +164,98 @@ async fn export_pgn(
     };
 
     Ok(pgn_attachment(&format!("game-{id}.pgn"), pgn))
+}
+
+/// Study metadata returned by the game↔analysis endpoints — the same shape the
+/// studies list uses, so the SPA can reuse its `StudySummary` type.
+#[derive(Serialize)]
+struct StudyLink {
+    id: i32,
+    database_id: i32,
+    owner_id: Option<String>,
+    name: String,
+    global: bool,
+    folder_id: Option<i32>,
+    origin_game_id: Option<i32>,
+}
+
+impl From<studies::Model> for StudyLink {
+    fn from(m: studies::Model) -> Self {
+        Self {
+            global: m.owner_id.is_none(),
+            id: m.id,
+            database_id: m.database_id,
+            owner_id: m.owner_id,
+            name: m.name,
+            folder_id: m.folder_id,
+            origin_game_id: m.origin_game_id,
+        }
+    }
+}
+
+/// Body for `POST /api/games/{id}/save-as-study`: persist the game as an analysis
+/// (a study linked via `origin_game_id`), optionally running the engine review.
+#[derive(Deserialize)]
+struct SaveAsStudyBody {
+    name: String,
+    #[serde(default)]
+    folder_id: Option<i32>,
+    /// Run the #119 engine review and embed `[%eval]`/NAGs/why-notes. Defaults off.
+    #[serde(default)]
+    analyse: bool,
+    /// Per-position engine search depth when `analyse` is set; capped server-side.
+    #[serde(default)]
+    depth: Option<u32>,
+}
+
+/// `POST /api/games/{id}/save-as-study` — create an analysis from a game. Returns
+/// `Err(Response)` so a missing-engine config (with `analyse=true`) surfaces its
+/// operator guidance verbatim, mirroring the study analyse route.
+async fn save_as_study(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+    Json(body): Json<SaveAsStudyBody>,
+) -> Result<Response, Response> {
+    let engine = if body.analyse {
+        let engine = state.engine_service.as_ref().ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "No engine configured: start chess-base with --engine / CHESS_BASE_ENGINE.",
+            )
+                .into_response()
+        })?;
+        Some(engine.as_ref())
+    } else {
+        None
+    };
+    let depth = body.depth.unwrap_or(DEFAULT_SAVE_ANALYSE_DEPTH);
+    let model = StudyService::new(state.db.clone())
+        .create_from_game(
+            engine,
+            &user,
+            id,
+            body.name,
+            body.folder_id,
+            body.analyse,
+            depth,
+        )
+        .await
+        .map_err(IntoResponse::into_response)?;
+    Ok((StatusCode::CREATED, Json(StudyLink::from(model))).into_response())
+}
+
+/// `GET /api/games/{id}/studies` — the analyses linked to this game.
+async fn linked_studies(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+) -> Result<Response, StudyError> {
+    let rows = StudyService::new(state.db.clone())
+        .studies_for_game(&user, id)
+        .await?;
+    let views: Vec<StudyLink> = rows.into_iter().map(StudyLink::from).collect();
+    Ok((StatusCode::OK, Json(views)).into_response())
 }
 
 /// Map a game-lookup failure onto a response (not-found hides ids the caller

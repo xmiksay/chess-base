@@ -15,6 +15,12 @@ pub struct Model {
     /// The `pgn_tree::MoveTree` serialized as JSON.
     pub tree_json: String,
     pub created_at: DateTime,
+    /// Which folder this study lives in (issue #164). `None` ⇒ unfiled (root).
+    /// No DB-level FK (SQLite can't ALTER-add one): `FolderService::delete`
+    /// nulls this when the containing folder is removed.
+    pub folder_id: Option<i32>,
+    /// The game an analysis was built from (issue #164). `None` ⇒ standalone.
+    pub origin_game_id: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

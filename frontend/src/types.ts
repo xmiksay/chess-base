@@ -156,6 +156,19 @@ export interface StudySummary {
   name: string
   global: boolean
   owner_id: string | null
+  /** Folder the study is filed under (issue #164); null ⇒ unfiled (root). */
+  folder_id: number | null
+  /** Game this study was saved as an analysis of (issue #164); null otherwise. */
+  origin_game_id: number | null
+}
+
+/** A study folder in the hierarchy (issue #164). */
+export interface FolderSummary {
+  id: number
+  owner_id: string | null
+  parent_id: number | null
+  name: string
+  global: boolean
 }
 
 export interface Study extends StudySummary {

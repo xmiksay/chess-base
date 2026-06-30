@@ -11,6 +11,7 @@ import type {
   DatabaseKind,
   EngineConfig,
   EngineDefault,
+  FolderSummary,
   GameDetail,
   GameReview,
   GamesPage,
@@ -169,6 +170,9 @@ export const api = {
       send<Study>('POST', `/api/studies/${id}/analyse`, depth == null ? {} : { depth }),
     rename: (id: number, name: string) => send<Study>('PATCH', `/api/studies/${id}`, { name }),
     remove: (id: number) => send<null>('DELETE', `/api/studies/${id}`),
+    // File a study under a folder (issue #164); `folderId` null ⇒ unfile to root.
+    setFolder: (id: number, folderId: number | null) =>
+      send<Study>('PUT', `/api/studies/${id}/folder`, { folder_id: folderId }),
     // Append a SAN move under `fromNodeId` (a variation when it already has kids).
     addMove: (id: number, fromNodeId: number, san: string) =>
       send<AddMoveResult>('POST', `/api/studies/${id}/moves`, { from_node_id: fromNodeId, san }),
@@ -243,6 +247,27 @@ export const api = {
       const qs = params.toString()
       return getText(`/api/games/${id}/export${qs ? `?${qs}` : ''}`)
     },
+    // Persist a game as a study (issue #164): optionally filed under a folder and
+    // optionally engine-analysed (503 when `analyse` is set but no engine).
+    saveAsStudy: (
+      id: number,
+      body: { name: string; folder_id?: number | null; analyse?: boolean; depth?: number },
+    ) => send<StudySummary>('POST', `/api/games/${id}/save-as-study`, body),
+    // The analyses (studies) linked to a game (issue #164).
+    linkedStudies: (id: number) => getJson<StudySummary[]>(`/api/games/${id}/studies`),
+  },
+
+  // Study folders (issue #164): a hierarchy to file studies under. `list` returns
+  // the caller's folders plus global ones; `move` reparents (parentId null ⇒ root)
+  // and requires the explicit `reparent` flag server-side so it isn't a rename.
+  folders: {
+    list: () => getJson<FolderSummary[]>('/api/folders'),
+    create: (name: string, parentId: number | null = null, global = false) =>
+      send<FolderSummary>('POST', '/api/folders', { name, parent_id: parentId, global }),
+    rename: (id: number, name: string) => send<FolderSummary>('PATCH', `/api/folders/${id}`, { name }),
+    move: (id: number, parentId: number | null) =>
+      send<FolderSummary>('PATCH', `/api/folders/${id}`, { reparent: true, parent_id: parentId }),
+    remove: (id: number) => send<null>('DELETE', `/api/folders/${id}`),
   },
 
   // Game search (issues #6/#7). Header/metadata search (`headers`) is keyset-
