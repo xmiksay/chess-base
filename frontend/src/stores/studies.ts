@@ -7,7 +7,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api } from '../api'
-import type { GenerateBody, Study, StudySummary } from '../types'
+import type { DangerMapBody, GenerateBody, Study, StudySummary } from '../types'
 
 export const useStudiesStore = defineStore('studies', () => {
   const list = ref<StudySummary[]>([])
@@ -64,6 +64,13 @@ export const useStudiesStore = defineStore('studies', () => {
     return view
   }
 
+  /** Generate a danger-map study (issue #131); refresh the list on success. */
+  async function generateDangerMap(body: DangerMapBody) {
+    const view = await _run(() => api.studies.generateDangerMap(body))
+    await refresh()
+    return view
+  }
+
   /**
    * Fetch a study's PGN for download (issue #120). `withEval` (default true)
    * keeps the per-move `[%eval]` annotations; `false` exports plain movetext.
@@ -98,6 +105,7 @@ export const useStudiesStore = defineStore('studies', () => {
     open,
     create,
     generate,
+    generateDangerMap,
     importPgn,
     exportPgn,
     rename,
