@@ -80,6 +80,34 @@ describe('settings store', () => {
     expect(s.error).toContain('not available')
   })
 
+  it('defaults the overlay layers to plans-on, threats/master-off', () => {
+    const s = useSettingsStore()
+    expect(s.showPlans).toBe(true)
+    expect(s.showThreats).toBe(false)
+    expect(s.showMasterMoves).toBe(false)
+  })
+
+  it('maps overlay flags from the server and persists them snake_case', async () => {
+    vi.mocked(api.settings.set).mockResolvedValue({
+      show_plans: false,
+      show_threats: true,
+      show_master_moves: true,
+    })
+    const s = useSettingsStore()
+    await s.update({ showPlans: false, showThreats: true, showMasterMoves: true })
+
+    expect(api.settings.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        show_plans: false,
+        show_threats: true,
+        show_master_moves: true,
+      }),
+    )
+    expect(s.showPlans).toBe(false)
+    expect(s.showThreats).toBe(true)
+    expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY)!).showThreats).toBe(true)
+  })
+
   it('applyTheme() toggles the document dark class', () => {
     const s = useSettingsStore()
     s.theme = 'dark'

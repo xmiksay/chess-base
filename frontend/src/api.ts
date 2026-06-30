@@ -223,6 +223,8 @@ export const api = {
     headers: (params: Record<string, string> = {}) =>
       getJson<HeaderPage>(`/api/search/headers?${new URLSearchParams(params).toString()}`),
     tree: (fen: string) => getNdjson<MoveStat>(`/api/search/tree?fen=${encodeURIComponent(fen)}`),
+    // Threatened-piece arrows for the side to move (issue #123, Threats overlay).
+    threats: (fen: string) => getJson<Shape[]>(`/api/threats?fen=${encodeURIComponent(fen)}`),
     games: (fen: string, limit?: number) =>
       getNdjson<GameRow>(
         `/api/search/games?fen=${encodeURIComponent(fen)}` + (limit ? `&limit=${limit}` : ''),

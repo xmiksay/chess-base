@@ -20,6 +20,10 @@ interface SettingsState {
   boardTheme: string
   pieceSet: string
   defaultDatabaseId: number | null
+  // Board-overlay layer toggles (issue #123): plans on, threats/master off.
+  showPlans: boolean
+  showThreats: boolean
+  showMasterMoves: boolean
 }
 
 const DEFAULTS: SettingsState = {
@@ -27,6 +31,9 @@ const DEFAULTS: SettingsState = {
   boardTheme: 'brown',
   pieceSet: 'cburnett',
   defaultDatabaseId: null,
+  showPlans: true,
+  showThreats: false,
+  showMasterMoves: false,
 }
 
 /** Map the backend's snake_case payload into the store's camelCase shape. */
@@ -36,6 +43,9 @@ function fromApi(s: ApiSettings): SettingsState {
     boardTheme: s.board_theme ?? DEFAULTS.boardTheme,
     pieceSet: s.piece_set ?? DEFAULTS.pieceSet,
     defaultDatabaseId: s.default_database_id ?? DEFAULTS.defaultDatabaseId,
+    showPlans: s.show_plans ?? DEFAULTS.showPlans,
+    showThreats: s.show_threats ?? DEFAULTS.showThreats,
+    showMasterMoves: s.show_master_moves ?? DEFAULTS.showMasterMoves,
   }
 }
 
@@ -46,6 +56,10 @@ function toApi(s: SettingsState): ApiSettings {
   if (s.boardTheme) out.board_theme = s.boardTheme
   if (s.pieceSet) out.piece_set = s.pieceSet
   if (s.defaultDatabaseId != null) out.default_database_id = s.defaultDatabaseId
+  // Booleans always travel so a non-default (e.g. plans off) round-trips.
+  out.show_plans = s.showPlans
+  out.show_threats = s.showThreats
+  out.show_master_moves = s.showMasterMoves
   return out
 }
 
@@ -65,6 +79,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const boardTheme = ref(mirror.boardTheme)
   const pieceSet = ref(mirror.pieceSet)
   const defaultDatabaseId = ref(mirror.defaultDatabaseId)
+  const showPlans = ref(mirror.showPlans)
+  const showThreats = ref(mirror.showThreats)
+  const showMasterMoves = ref(mirror.showMasterMoves)
   const error = ref<string | null>(null)
 
   function snapshot(): SettingsState {
@@ -73,6 +90,9 @@ export const useSettingsStore = defineStore('settings', () => {
       boardTheme: boardTheme.value,
       pieceSet: pieceSet.value,
       defaultDatabaseId: defaultDatabaseId.value,
+      showPlans: showPlans.value,
+      showThreats: showThreats.value,
+      showMasterMoves: showMasterMoves.value,
     }
   }
 
@@ -81,6 +101,9 @@ export const useSettingsStore = defineStore('settings', () => {
     boardTheme.value = s.boardTheme
     pieceSet.value = s.pieceSet
     defaultDatabaseId.value = s.defaultDatabaseId
+    showPlans.value = s.showPlans
+    showThreats.value = s.showThreats
+    showMasterMoves.value = s.showMasterMoves
     persistMirror()
     applyTheme()
   }
@@ -136,6 +159,9 @@ export const useSettingsStore = defineStore('settings', () => {
     boardTheme,
     pieceSet,
     defaultDatabaseId,
+    showPlans,
+    showThreats,
+    showMasterMoves,
     error,
     snapshot,
     load,

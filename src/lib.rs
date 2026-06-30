@@ -25,6 +25,7 @@ pub mod server;
 pub mod settings;
 pub mod studies;
 pub mod study_gen;
+pub mod threats;
 
 pub use ingest::{ingest_pgn, ingest_pgn_all, Ingested};
 pub use openings::{classify_mainline, eco_of_position, opening_of_zobrist, Opening};
