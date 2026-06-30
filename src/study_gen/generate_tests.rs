@@ -163,6 +163,7 @@ fn params(database_id: i32, start_fen: &str) -> GenerateParams {
             max_nodes: 100,
             min_frequency: 0.0,
             eval_margin_cp: 10_000,
+            ..TreeConfig::default()
         },
         model: None,
     }

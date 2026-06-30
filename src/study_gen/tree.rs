@@ -53,8 +53,18 @@ pub trait ContinuationSource {
 pub struct TreeConfig {
     /// Maximum plies from the root (root is ply 0). Caps tree depth.
     pub max_depth: usize,
-    /// Maximum continuations kept at any node. Caps tree breadth.
+    /// Maximum continuations kept at any node. Caps tree breadth. Overridden
+    /// per-depth by [`max_children_by_depth`](Self::max_children_by_depth) when
+    /// that is set.
     pub max_children: usize,
+    /// Per-depth override for [`max_children`](Self::max_children): the child cap
+    /// for a node at ply *i* is `max_children_by_depth[i]`, with the **last entry
+    /// repeating** for any deeper ply. Lets branching **taper with depth** — broad
+    /// near the root (cover the opponent's main tries), narrowing to the principal
+    /// line deep (issue #160), e.g. `[3,3,2,2,1,1,1,1,1,1]`. `None` ⇒ every depth
+    /// uses the scalar `max_children` (uniform branching; backward compatible).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_children_by_depth: Option<Vec<usize>>,
     /// Global cap on total nodes (root included). A safety bound: breadth-first
     /// expansion keeps the shallowest, most frequent lines when it bites.
     pub max_nodes: usize,
@@ -70,9 +80,25 @@ impl Default for TreeConfig {
         Self {
             max_depth: 6,
             max_children: 3,
+            max_children_by_depth: None,
             max_nodes: 64,
             min_frequency: 0.05,
             eval_margin_cp: 100,
+        }
+    }
+}
+
+impl TreeConfig {
+    /// Effective per-node child cap for a node at `ply` (the depth of the node
+    /// whose children are being selected; root = 0). With
+    /// [`max_children_by_depth`](Self::max_children_by_depth) set and non-empty,
+    /// indexes that vector — the last entry repeats for any deeper ply — so
+    /// branching tapers with depth. Otherwise every depth uses the scalar
+    /// [`max_children`](Self::max_children).
+    pub fn max_children_at(&self, ply: usize) -> usize {
+        match &self.max_children_by_depth {
+            Some(caps) if !caps.is_empty() => caps[ply.min(caps.len() - 1)],
+            _ => self.max_children,
         }
     }
 }
@@ -162,6 +188,18 @@ pub fn score_to_cp(score: Option<Score>) -> i32 {
 /// frequent `max_children`. Returns kept indices in output order — frequency
 /// desc, then eval desc, then SAN asc — so the result is fully deterministic.
 pub fn select_continuations(candidates: &[Candidate], config: &TreeConfig) -> Vec<usize> {
+    select_continuations_capped(candidates, config, config.max_children)
+}
+
+/// As [`select_continuations`] but with an explicit breadth cap, so the builder
+/// can taper width per depth ([`TreeConfig::max_children_at`]) while reusing the
+/// same frequency + eval-margin pruning. The frequency floor and eval margin
+/// come from `config`; only the final breadth truncation uses `max_children`.
+fn select_continuations_capped(
+    candidates: &[Candidate],
+    config: &TreeConfig,
+    max_children: usize,
+) -> Vec<usize> {
     let mut kept: Vec<usize> = candidates
         .iter()
         .enumerate()
@@ -184,7 +222,7 @@ pub fn select_continuations(candidates: &[Candidate], config: &TreeConfig) -> Ve
             .then(cb.eval_cp.cmp(&ca.eval_cp))
             .then(ca.san.cmp(&cb.san))
     });
-    kept.truncate(config.max_children);
+    kept.truncate(max_children);
     kept
 }
 
@@ -202,8 +240,11 @@ pub(super) fn eco_for(zobrist: u64) -> Option<EcoInfo> {
 ///
 /// Breadth-first: each visited position's DB continuations are filtered by
 /// frequency, the survivors evaluated, then [`select_continuations`] picks the
-/// kept moves. Expansion stops at `max_depth`, `max_children` per node, and the
-/// global `max_nodes` budget. Deterministic for deterministic seams.
+/// kept moves. Expansion stops at `max_depth`, the per-node breadth cap, and the
+/// global `max_nodes` budget. The breadth cap is [`TreeConfig::max_children_at`]
+/// at the node's ply, so `max_children_by_depth` can taper width with depth
+/// (broad near the root, narrow on deep main lines, #160); unset it is the
+/// uniform `max_children`. Deterministic for deterministic seams.
 ///
 /// `castling` is the variant's castling mode (e.g. [`CastlingMode::Chess960`]
 /// for a Fischer-Random start): it drives the root Zobrist and every `apply_san`
@@ -293,7 +334,10 @@ where
             })
             .collect();
 
-        for k in select_continuations(&candidates, config) {
+        // Tapering: this node's ply sets how many children survive, so the tree
+        // can fan out near the root and narrow on deep main lines (issue #160).
+        let cap = config.max_children_at(ply);
+        for k in select_continuations_capped(&candidates, config, cap) {
             if nodes.len() >= config.max_nodes {
                 break;
             }

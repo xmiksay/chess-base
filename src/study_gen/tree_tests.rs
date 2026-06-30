@@ -2,7 +2,7 @@
 //! module under the project's 500-line file cap.
 
 use super::*;
-use crate::position::{replay, zobrist_of_fen, STARTPOS_FEN};
+use crate::position::{legal_sans, replay, zobrist_of_fen, STARTPOS_FEN};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -23,6 +23,7 @@ fn config(min_frequency: f64, eval_margin_cp: i32, max_children: usize) -> TreeC
         max_nodes: 1000,
         min_frequency,
         eval_margin_cp,
+        ..TreeConfig::default()
     }
 }
 
@@ -170,6 +171,7 @@ async fn builds_a_tagged_tree_with_eval_and_stats() {
         max_nodes: 1000,
         min_frequency: 0.05,
         eval_margin_cp: 1000, // wide ⇒ eval doesn't prune here
+        ..TreeConfig::default()
     };
     let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg, STD)
         .await
@@ -227,6 +229,7 @@ async fn eval_margin_prunes_the_weaker_first_move() {
         max_nodes: 1000,
         min_frequency: 0.05,
         eval_margin_cp: 50,
+        ..TreeConfig::default()
     };
     let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg, STD)
         .await
@@ -249,6 +252,7 @@ async fn respects_global_node_budget() {
         max_nodes: 2, // root + one child only
         min_frequency: 0.05,
         eval_margin_cp: 1000,
+        ..TreeConfig::default()
     };
     let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg, STD)
         .await
@@ -353,6 +357,7 @@ async fn transposition_is_not_expanded_twice() {
         max_nodes: 1000,
         min_frequency: 0.05,
         eval_margin_cp: 10_000, // wide ⇒ eval never prunes; frequency decides
+        ..TreeConfig::default()
     };
     let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg, STD)
         .await
@@ -414,4 +419,168 @@ async fn builds_under_chess960_castling_mode() {
         .await
         .unwrap_err();
     assert!(matches!(err, TreeError::InvalidFen(_)));
+}
+
+// --- depth-tapering branching (issue #160) ------------------------------
+
+#[test]
+fn max_children_at_falls_back_to_scalar_when_unset() {
+    let cfg = config(0.0, 1000, 4); // max_children_by_depth: None
+    for ply in 0..12 {
+        assert_eq!(cfg.max_children_at(ply), 4);
+    }
+}
+
+#[test]
+fn max_children_at_indexes_per_depth_and_repeats_the_last() {
+    let cfg = TreeConfig {
+        max_children: 9, // ignored while the per-depth vector is set
+        max_children_by_depth: Some(vec![4, 3, 2, 1]),
+        ..TreeConfig::default()
+    };
+    assert_eq!(cfg.max_children_at(0), 4);
+    assert_eq!(cfg.max_children_at(1), 3);
+    assert_eq!(cfg.max_children_at(2), 2);
+    assert_eq!(cfg.max_children_at(3), 1);
+    // Past the vector's length the last entry repeats — the deep spine stays 1.
+    assert_eq!(cfg.max_children_at(4), 1);
+    assert_eq!(cfg.max_children_at(50), 1);
+}
+
+#[test]
+fn max_children_at_ignores_an_empty_vector() {
+    let cfg = TreeConfig {
+        max_children: 5,
+        max_children_by_depth: Some(vec![]),
+        ..TreeConfig::default()
+    };
+    assert_eq!(cfg.max_children_at(0), 5);
+}
+
+/// Continuations from real legal move generation, restricted to **pawn pushes**
+/// (no captures): the first `width` sorted pushes of a position, each given a
+/// descending frequency so selection is deterministic. Pawn pushes only advance,
+/// so the alphabetically-minimal line — the mainline build_tree keeps as
+/// `children[0]` — never transposes and reaches the configured depth. Gives the
+/// builder a genuinely broad-and-deep position graph with no hand-authored FENs.
+struct PawnPushStats {
+    width: usize,
+}
+
+#[async_trait]
+impl ContinuationSource for PawnPushStats {
+    async fn continuations(&self, fen: &str) -> Result<Vec<MoveReport>> {
+        let mut sans: Vec<String> = legal_sans(fen, STD)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| {
+                s.as_bytes().first().is_some_and(|c| c.is_ascii_lowercase()) && !s.contains('x')
+            })
+            .collect();
+        sans.sort();
+        sans.truncate(self.width);
+        Ok(sans
+            .iter()
+            .enumerate()
+            .map(|(i, san)| report(san, 1.0 - i as f64 * 0.01))
+            .collect())
+    }
+}
+
+fn ply_count(tree: &VariationTree, ply: usize) -> usize {
+    tree.nodes.iter().filter(|n| n.ply == ply).count()
+}
+
+fn deepest_ply(tree: &VariationTree) -> usize {
+    tree.nodes.iter().map(|n| n.ply).max().unwrap_or(0)
+}
+
+/// The spine: `children[0]` from the root down. Its length is the mainline depth.
+fn mainline_depth(tree: &VariationTree) -> usize {
+    let mut ply = 0;
+    let mut node = &tree.nodes[tree.root];
+    while let Some(&first) = node.children.first() {
+        node = &tree.nodes[first];
+        ply += 1;
+    }
+    ply
+}
+
+#[tokio::test]
+async fn tapering_is_broad_at_the_root_and_deep_on_the_mainline() {
+    let eval = FakeEval(HashMap::new()); // flat: eval never prunes, frequency decides
+    let stats = PawnPushStats { width: 4 };
+    const DEPTH: usize = 8;
+    let cfg = TreeConfig {
+        max_depth: DEPTH,
+        max_children: 4,
+        // Broad near the root (4 then 3), narrowing to a single deep spine.
+        max_children_by_depth: Some(vec![4, 3, 1]),
+        max_nodes: 1000, // generous: the tapered tree fits comfortably
+        min_frequency: 0.0,
+        eval_margin_cp: 10_000,
+    };
+    let tree = build_tree(&eval, &stats, STARTPOS_FEN, &cfg, STD)
+        .await
+        .unwrap();
+
+    // Broad near the root: the root fans out to 4, ply 2 holds many nodes.
+    assert_eq!(
+        ply_count(&tree, 1),
+        4,
+        "root fans out to max_children_at(0)"
+    );
+    assert!(
+        ply_count(&tree, 2) >= 8,
+        "ply 2 stays broad (got {})",
+        ply_count(&tree, 2)
+    );
+    // Deep on the mainline: the spine reaches the configured depth.
+    assert_eq!(
+        mainline_depth(&tree),
+        DEPTH,
+        "the principal line reaches max_depth"
+    );
+}
+
+#[tokio::test]
+async fn tapering_reaches_deeper_than_uniform_under_the_same_budget() {
+    let eval = FakeEval(HashMap::new());
+    let stats = PawnPushStats { width: 4 };
+    const DEPTH: usize = 8;
+    const BUDGET: usize = 40;
+
+    // Uniform width 4: breadth-first expansion burns the budget on shallow
+    // siblings, so the mainline stalls well short of max_depth.
+    let uniform = TreeConfig {
+        max_depth: DEPTH,
+        max_children: 4,
+        max_nodes: BUDGET,
+        min_frequency: 0.0,
+        eval_margin_cp: 10_000,
+        ..TreeConfig::default()
+    };
+    let uniform_tree = build_tree(&eval, &stats, STARTPOS_FEN, &uniform, STD)
+        .await
+        .unwrap();
+
+    // Same budget, tapered to a single deep spine after ply 1: the mainline
+    // reaches the target depth the uniform shape could not.
+    let tapered = TreeConfig {
+        max_children_by_depth: Some(vec![3, 1]),
+        ..uniform.clone()
+    };
+    let tapered_tree = build_tree(&eval, &stats, STARTPOS_FEN, &tapered, STD)
+        .await
+        .unwrap();
+
+    assert!(uniform_tree.nodes.len() <= BUDGET);
+    assert!(tapered_tree.nodes.len() <= BUDGET);
+    assert!(
+        mainline_depth(&tapered_tree) > deepest_ply(&uniform_tree),
+        "tapering deepens the mainline (tapered {} vs uniform deepest {})",
+        mainline_depth(&tapered_tree),
+        deepest_ply(&uniform_tree)
+    );
+    assert_eq!(mainline_depth(&tapered_tree), DEPTH);
 }
