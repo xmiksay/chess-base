@@ -10,6 +10,7 @@
 
 mod analysis;
 mod db_tools;
+mod preprocess;
 mod study_tools;
 mod tools;
 
@@ -377,6 +378,13 @@ over JSON-RPC; the available tools depend on what is registered (call \
   game counts) and the `database_id`s the study tools need; `db_list_games` / \
   `db_read_game` page through and read individual games; `db_position_report` / \
   `db_reference_games` search by position (64-bit Zobrist hash).
+- **Study preprocessing** — engine + DB grounded *data* for study building, \
+  with no language model inside the tool (you are the model — annotate the \
+  output yourself, then persist with the study tools): `opening_tree` builds a \
+  pruned, eval- and stats-tagged variation tree (the opening skeleton); \
+  `danger_map` walks a repertoire spine PGN into an engine-adjudicated danger \
+  tree (Weapon / Caution / Off-book roles); `position_concepts` classifies a \
+  position's pawn structure and key squares.
 - **Studies** — create studies and edit their move-trees: `study_import_pgn` \
   builds a whole study from PGN in one call, or `study_create` + `study_add_move` \
   (SAN or UCI, with optional inline comment/NAG) build one move at a time; \

@@ -8,46 +8,24 @@ use std::collections::BTreeMap;
 use serde_json::{json, Value};
 
 use super::{Tool, ToolOutcome, ToolRegistry};
-use crate::engine::{Limits, DEFAULT_DEPTH, MAX_DEPTH, MAX_MOVETIME_MS};
-use crate::pgn_tree::pgn::from_pgn_with_start;
-use crate::position::STARTPOS_FEN;
-use crate::search::report::PositionReportService;
-use crate::server::identity::CurrentUser;
+use crate::engine::{DEFAULT_DEPTH, MAX_DEPTH, MAX_MOVETIME_MS};
 use crate::server::state::AppState;
-use crate::studies::StudyService;
-use crate::study_gen::spine::SpineConfig;
-use crate::study_gen::tree::TreeConfig;
-use crate::study_gen::{
-    generate_danger_study_live, generate_study_live, DangerStudyParams, GenerateError,
-    GenerateParams,
-};
-
-/// Per-variation engine movetime budget (ms) for `generate_danger_map` when
-/// unspecified; capped server-side by the engine facade (ADR-0026).
-const DEFAULT_DANGER_MOVETIME_MS: u64 = 500;
-
-/// MultiPV line count for `generate_danger_map` when unspecified; floored at 2
-/// server-side for the trap / only-move gap.
-const DEFAULT_DANGER_MULTIPV: u16 = 2;
-
-/// Per-position engine search depth for `generate_study` when unspecified; capped
-/// server-side via [`Limits::clamped`].
-const DEFAULT_GENERATE_DEPTH: u32 = 18;
 
 /// The default registry. An `echo` stub proves dispatch; the engine facade
 /// registers `engine_analyse`; the study tools (#17) mutate the caller's studies;
 /// the pre-chewed DB tools (#28) answer position/reference queries; the
 /// interactive `analyse_position` tool (#33) bundles engine + DB + features into
-/// one grounded snapshot.
+/// one grounded snapshot; the study-preprocessing tools (ADR-0027) expose the
+/// engine/DB tree + concept stages as plain data (no internal LLM — the model
+/// that annotates them is the MCP client, not a tool).
 pub fn default_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(echo_tool());
     registry.register(engine_analyse_tool());
-    registry.register(generate_study_tool());
-    registry.register(generate_danger_map_tool());
     super::study_tools::register(&mut registry);
     super::db_tools::register(&mut registry);
     super::analysis::register(&mut registry);
+    super::preprocess::register(&mut registry);
     registry
 }
 
@@ -142,276 +120,6 @@ async fn engine_analyse(app: AppState, args: Value) -> ToolOutcome {
     }
 }
 
-// --- Study generation orchestrator (scoped to the caller) ----------------
-
-/// Generate a fully annotated study from a start position — the AI-assisted
-/// study-generation orchestrator (#115). Ties the Epic 9 stages together end to
-/// end (tree builder → batch LLM annotation + verification → persist).
-fn generate_study_tool() -> Tool {
-    Tool::new(
-        "generate_study",
-        "Generate an annotated study for a position: build a variation tree from \
-         the master/reference games, annotate it with a language model, verify \
-         every concrete claim against the engine and database (ground truth), and \
-         save the result as a study you own. Requires both an engine and a \
-         language model configured. Returns the new study id and a summary.",
-        json!({
-            "type": "object",
-            "properties": {
-                "database_id": { "type": "integer", "description": "Database the new study belongs to." },
-                "name": { "type": "string", "description": "Name for the new study." },
-                "fen": { "type": "string", "description": "Start position in FEN; defaults to the standard opening." },
-                "global": { "type": "boolean", "description": "Make it a global (admin) study (requires admin)." },
-                "model": { "type": "string", "description": "Language model id; defaults to the provider's default." },
-                "engine_depth": {
-                    "type": "integer", "minimum": 1, "maximum": MAX_DEPTH,
-                    "description": "Per-position engine search depth in plies; capped server-side."
-                },
-                "tree": {
-                    "type": "object",
-                    "description": "Optional tree pruning thresholds (max_depth, max_children, max_nodes, min_frequency, eval_margin_cp)."
-                }
-            },
-            "required": ["database_id", "name"]
-        }),
-        |app, user, args| async move { generate_study(app, user, args).await },
-    )
-}
-
-async fn generate_study(app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
-    let Some(database_id) = args.get("database_id").and_then(Value::as_i64) else {
-        return ToolOutcome::error("Invalid arguments: missing integer field `database_id`.");
-    };
-    let Some(name) = args.get("name").and_then(Value::as_str) else {
-        return ToolOutcome::error("Invalid arguments: missing string field `name`.");
-    };
-
-    let engine = match &app.engine_service {
-        Some(engine) => engine.clone(),
-        None => {
-            return ToolOutcome::error(
-                "No engine configured: start chess-base with --engine / CHESS_BASE_ENGINE.",
-            )
-        }
-    };
-    let provider =
-        match &app.llm_provider {
-            Some(provider) => provider.clone(),
-            None => return ToolOutcome::error(
-                "No language model configured: set ANTHROPIC_API_KEY to enable study generation.",
-            ),
-        };
-
-    let tree = match args.get("tree") {
-        None | Some(Value::Null) => TreeConfig::default(),
-        Some(value) => match serde_json::from_value(value.clone()) {
-            Ok(config) => config,
-            Err(e) => return ToolOutcome::error(format!("Invalid arguments: bad `tree`: {e}")),
-        },
-    };
-    let params = GenerateParams {
-        database_id: database_id as i32,
-        name: name.to_string(),
-        global: args.get("global").and_then(Value::as_bool).unwrap_or(false),
-        start_fen: args
-            .get("fen")
-            .and_then(Value::as_str)
-            .filter(|fen| !fen.trim().is_empty())
-            .unwrap_or(STARTPOS_FEN)
-            .to_string(),
-        tree,
-        model: args
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    };
-    let depth = args
-        .get("engine_depth")
-        .and_then(Value::as_u64)
-        .map(|d| d as u32)
-        .unwrap_or(DEFAULT_GENERATE_DEPTH);
-    let limits = Limits::depth(depth).clamped();
-    let reports = PositionReportService::new(app.db.clone());
-    let studies = StudyService::new(app.db.clone());
-
-    match generate_study_live(
-        &engine,
-        &reports,
-        provider.as_ref(),
-        &studies,
-        &user,
-        &params,
-        limits,
-    )
-    .await
-    {
-        Ok(outcome) => ToolOutcome::ok(
-            json!({
-                "id": outcome.study.id,
-                "name": outcome.study.name,
-                "node_count": outcome.node_count,
-                "rejected": outcome.rejected.len(),
-            })
-            .to_string(),
-        ),
-        Err(e) => generate_error(e),
-    }
-}
-
-/// Map a [`GenerateError`] onto a tool `isError` outcome with a client-safe
-/// message — never leaks a raw DB error, engine output or provider detail.
-fn generate_error(error: GenerateError) -> ToolOutcome {
-    ToolOutcome::error(error.client_message())
-}
-
-// --- Danger-map study generator (issue #141, scoped to the caller) ---------
-
-/// Generate an annotated **danger-map** study from a repertoire spine — the
-/// phase-2/3 orchestrator (#140) end to end: walk the spine for dangerous
-/// opponent moves, fold the tagged tree, annotate + verify it, and persist a
-/// study. Mirrors [`generate_study_tool`] for the repertoire-danger angle.
-fn generate_danger_map_tool() -> Tool {
-    Tool::new(
-        "generate_danger_map",
-        "Generate a danger-map study from an opening repertoire: walk the supplied \
-         spine PGN for dangerous opponent replies (traps, only-move paths, pawn \
-         storms, off-book gaps adjudicated by the engine and database), annotate \
-         the tagged tree with a language model, verify every concrete claim \
-         against ground truth, and save the result as a study you own. Requires \
-         both an engine and a language model configured. Returns the new study id, \
-         a summary and the engine-adjudicated danger roles.",
-        json!({
-            "type": "object",
-            "properties": {
-                "database_id": { "type": "integer", "description": "Database the new study belongs to." },
-                "name": { "type": "string", "description": "Name for the new study." },
-                "spine_pgn": { "type": "string", "description": "Repertoire spine as PGN movetext to walk for danger." },
-                "fen": { "type": "string", "description": "Start position in FEN; defaults to the standard opening." },
-                "global": { "type": "boolean", "description": "Make it a global (admin) study (requires admin)." },
-                "model": { "type": "string", "description": "Language model id; defaults to the provider's default." },
-                "movetime_ms": {
-                    "type": "integer", "minimum": 1, "maximum": MAX_MOVETIME_MS,
-                    "description": "Per-variation engine movetime budget in ms; capped server-side."
-                },
-                "multipv": {
-                    "type": "integer", "minimum": 1,
-                    "description": "MultiPV line count; floored at 2 server-side for the trap / only-move gap."
-                },
-                "spine": {
-                    "type": "object",
-                    "description": "Optional walk shape + classifier thresholds (our_side, max_depth, min_frequency, max_replies, min_miss_rate, danger{…}, attack{…}); partial overrides over the defaults."
-                }
-            },
-            "required": ["database_id", "name", "spine_pgn"]
-        }),
-        |app, user, args| async move { generate_danger_map(app, user, args).await },
-    )
-}
-
-async fn generate_danger_map(app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
-    let Some(database_id) = args.get("database_id").and_then(Value::as_i64) else {
-        return ToolOutcome::error("Invalid arguments: missing integer field `database_id`.");
-    };
-    let Some(name) = args.get("name").and_then(Value::as_str) else {
-        return ToolOutcome::error("Invalid arguments: missing string field `name`.");
-    };
-    let Some(spine_pgn) = args.get("spine_pgn").and_then(Value::as_str) else {
-        return ToolOutcome::error("Invalid arguments: missing string field `spine_pgn`.");
-    };
-
-    let engine = match &app.engine_service {
-        Some(engine) => engine.clone(),
-        None => {
-            return ToolOutcome::error(
-                "No engine configured: start chess-base with --engine / CHESS_BASE_ENGINE.",
-            )
-        }
-    };
-    let provider =
-        match &app.llm_provider {
-            Some(provider) => provider.clone(),
-            None => return ToolOutcome::error(
-                "No language model configured: set ANTHROPIC_API_KEY to enable study generation.",
-            ),
-        };
-
-    let spine_config: SpineConfig = match args.get("spine") {
-        None | Some(Value::Null) => SpineConfig::default(),
-        Some(value) => match serde_json::from_value(value.clone()) {
-            Ok(config) => config,
-            Err(e) => return ToolOutcome::error(format!("Invalid arguments: bad `spine`: {e}")),
-        },
-    };
-    let start_fen = args
-        .get("fen")
-        .and_then(Value::as_str)
-        .filter(|fen| !fen.trim().is_empty())
-        .unwrap_or(STARTPOS_FEN)
-        .to_string();
-    let spine = match from_pgn_with_start(spine_pgn, &start_fen) {
-        Ok(tree) => tree,
-        Err(e) => return ToolOutcome::error(format!("Invalid arguments: bad `spine_pgn`: {e}")),
-    };
-
-    let params = DangerStudyParams {
-        database_id: database_id as i32,
-        name: name.to_string(),
-        global: args.get("global").and_then(Value::as_bool).unwrap_or(false),
-        start_fen,
-        spine,
-        spine_config,
-        model: args
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    };
-    let movetime_ms = args
-        .get("movetime_ms")
-        .and_then(Value::as_u64)
-        .unwrap_or(DEFAULT_DANGER_MOVETIME_MS);
-    let multipv = args
-        .get("multipv")
-        .and_then(Value::as_u64)
-        .map(|n| n as u16)
-        .unwrap_or(DEFAULT_DANGER_MULTIPV);
-    let reports = PositionReportService::new(app.db.clone());
-    let studies = StudyService::new(app.db.clone());
-
-    match generate_danger_study_live(
-        &engine,
-        &reports,
-        provider.as_ref(),
-        &studies,
-        &user,
-        &params,
-        movetime_ms,
-        multipv,
-    )
-    .await
-    {
-        Ok(outcome) => ToolOutcome::ok(
-            json!({
-                "id": outcome.study.id,
-                "name": outcome.study.name,
-                "node_count": outcome.node_count,
-                "rejected": outcome.rejected.len(),
-                "roles": outcome
-                    .roles
-                    .iter()
-                    .map(|r| json!({
-                        "node_id": r.node_id,
-                        "san": r.san,
-                        "kind": format!("{:?}", r.kind),
-                        "role": format!("{:?}", r.role),
-                    }))
-                    .collect::<Vec<_>>(),
-            })
-            .to_string(),
-        ),
-        Err(e) => ToolOutcome::error(e.client_message()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,8 +133,9 @@ mod tests {
         for expected in [
             "echo",
             "engine_analyse",
-            "generate_study",
-            "generate_danger_map",
+            "opening_tree",
+            "danger_map",
+            "position_concepts",
             "study_create",
             "study_get",
             "study_import_pgn",

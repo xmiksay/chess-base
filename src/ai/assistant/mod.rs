@@ -41,8 +41,6 @@ const GATED_TOOLS: &[&str] = &[
     "study_import_pgn",
     "study_add_move",
     "study_annotate",
-    "generate_study",
-    "generate_danger_map",
 ];
 
 /// Does running this tool need explicit user approval? (mutating tools do).
@@ -62,9 +60,12 @@ Work through the provided tools rather than from memory:
 - Ground every evaluation, best move and variation in `engine_analyse` / \
   `analyse_position` and the database tools — never assert an eval or line you \
   have not verified with a tool.
+- To build an opening study, scaffold it with the preprocessing tools — \
+  `opening_tree` for the pruned variation skeleton, `danger_map` for a \
+  repertoire's traps and only-moves, `position_concepts` for the pawn structure \
+  — then write the annotations yourself: those tools return data, not prose.
 - Build and edit studies with the study tools (`study_create`, `study_add_move`, \
-  `study_annotate`, `study_import_pgn`) or generate a whole annotated study at \
-  once with `generate_study`.
+  `study_annotate`, `study_import_pgn`).
 
 When you write study text, embed positions with `<fen>FEN</fen>` and games with \
 `<pgn move=\"N\">moves</pgn>`. The tools that change the user's data require their \
@@ -274,8 +275,12 @@ mod tests {
     #[test]
     fn gating_marks_only_mutating_tools() {
         assert!(requires_approval("study_create"));
-        assert!(requires_approval("generate_study"));
-        assert!(requires_approval("generate_danger_map"));
+        assert!(requires_approval("study_annotate"));
+        // The preprocessing tools return data, not mutations — they run without
+        // approval, like the engine/DB reads (ADR-0027).
+        assert!(!requires_approval("opening_tree"));
+        assert!(!requires_approval("danger_map"));
+        assert!(!requires_approval("position_concepts"));
         assert!(!requires_approval("engine_analyse"));
         assert!(!requires_approval("list_databases"));
         assert!(!requires_approval("study_get"));

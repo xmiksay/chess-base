@@ -83,3 +83,9 @@ the MCP `generate_danger_map` tool and `POST /api/studies/generate-danger-map`
 the request carries the spine as PGN, a per-variation `movetime_ms`/`multipv`
 budget, and partial `SpineConfig`/`DangerConfig`/`AttackConfig` overrides (all
 `serde(default)`).
+
+> **Update (ADR-0027).** The MCP `generate_danger_map` tool was removed: an MCP
+> tool must not run an LLM loop internally. The engine-adjudicated `DangerTree` is
+> now exposed as the data-only `danger_map` MCP tool, with annotation done by the
+> client; the `generate_danger_study_live` orchestrator stays behind
+> `POST /api/studies/generate-danger-map`.
