@@ -105,6 +105,22 @@ export function sanPath(tree: MoveTree, id: number): string[] {
   return sans.reverse()
 }
 
+/**
+ * Node ids along the mainline: the root, then `firstChild` repeatedly down to
+ * the leaf. The array index is the ply (index 0 = root = the start position),
+ * which is why grafting variations — appended as later children, never as
+ * `children[0]` — leaves this mapping stable.
+ */
+export function mainlinePath(tree: MoveTree): number[] {
+  const path: number[] = []
+  let cur: number | null = tree.root
+  while (cur != null) {
+    path.push(cur)
+    cur = firstChild(tree, cur)
+  }
+  return path
+}
+
 /** Follow the mainline from `id` to its leaf, returning the leaf node id. */
 export function lastMainlineId(tree: MoveTree, id: number): number {
   let cur = id

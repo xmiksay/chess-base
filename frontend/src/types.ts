@@ -126,6 +126,10 @@ export interface Shape {
 }
 
 /** One node of a study move tree (`src/pgn_tree.rs`). `children[0]` is mainline. */
+/** Engine evaluation pinned to a node (issue #120), always White's perspective.
+ *  Mirrors the backend `Eval` enum: centipawns or a signed mate distance. */
+export type Eval = { cp: number } | { mate: number }
+
 export interface MoveNode {
   id: number
   parent: number | null
@@ -134,6 +138,8 @@ export interface MoveNode {
   nags: number[]
   /** Pinned board shapes (issue #61); absent/empty for pre-#61 trees. */
   shapes?: Shape[]
+  /** Engine evaluation after this move (issue #120); absent when unevaluated. */
+  eval?: Eval
   children: number[]
 }
 
@@ -272,14 +278,6 @@ export interface ReplayPosition {
   turnColor: Color
   plies: number
   ok: boolean
-}
-
-/** One position in a replayed game (lib/pgnViewer). `ply` 0 is the start. */
-export interface ViewerPosition {
-  ply: number
-  san: string | null
-  fen: string | undefined
-  lastMove: [Square, Square] | null
 }
 
 // --- game review (issue #119, Mode A) ---------------------------------------

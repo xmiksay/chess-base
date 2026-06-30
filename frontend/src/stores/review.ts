@@ -5,6 +5,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '../api'
+import { useGamesStore } from './games'
 import type { GameReview, MoveReview } from '../types'
 
 export const useReviewStore = defineStore('review', () => {
@@ -18,6 +19,18 @@ export const useReviewStore = defineStore('review', () => {
     const map = new Map<number, MoveReview>()
     for (const m of review.value?.moves ?? []) map.set(m.ply, m)
     return map
+  })
+
+  /**
+   * The reviewed move at the board's current node (issue #136). The board cursor
+   * is a tree node, so we map it back to its mainline ply via the games store;
+   * off-mainline nodes (PGN/engine/user variations) have no review and yield
+   * null. The `byPly` index stays mainline-ply keyed.
+   */
+  const currentMove = computed<MoveReview | null>(() => {
+    const games = useGamesStore()
+    const ply = games.plyOf(games.currentId)
+    return ply == null ? null : (byPly.value.get(ply) ?? null)
   })
 
   /** Run the engine review for a game; surfaces failures on `error`. */
@@ -45,5 +58,5 @@ export const useReviewStore = defineStore('review', () => {
     error.value = null
   }
 
-  return { review, gameId, loading, error, byPly, analyse, clear }
+  return { review, gameId, loading, error, byPly, currentMove, analyse, clear }
 })

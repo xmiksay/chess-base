@@ -1,17 +1,26 @@
 // Pinia store for the game browser (issue #68): an offset-paginated, sortable
-// game list for a selected database plus the currently opened game's replayable
-// positions.
+// game list for a selected database plus the currently opened game on the shared
+// variation-tree board (issue #136). The board state machine lives in the
+// `useTreeBoard` composable (issue #134) so the Game-review board shares one
+// implementation with Analyse and Studies; `open(id)` seeds it from the game's
+// parsed tree (`GET /api/games/{id}/tree`, #135) so PGN variations are kept and
+// off-line moves branch rather than truncate.
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '../api'
-import { positionsFromPgn, navigate } from '../lib/pgnViewer'
-import type { GameDetail, GameRow, ViewerPosition } from '../types'
+import { useTreeBoard } from '../lib/useTreeBoard'
+import { mainlinePath as mainlinePathOf } from '../lib/moveTree'
+import { graftReviewVariations } from '../lib/reviewTree'
+import { STARTPOS_FEN } from '../lib/fen'
+import type { GameDetail, GameReview, GameRow } from '../types'
 
 /** Sort fields the list supports (mirrors the backend `GameSort`). */
 export type GameSortField = 'date' | 'result' | 'eco'
 
 export const useGamesStore = defineStore('games', () => {
+  const board = useTreeBoard()
+
   const databaseId = ref<number | null>(null)
   const games = ref<GameRow[]>([]) // the current page's rows
   const total = ref(0) // total games in the database (for the paginator)
@@ -30,16 +39,8 @@ export const useGamesStore = defineStore('games', () => {
   const rangeStart = computed(() => (total.value === 0 ? 0 : page.value * limit.value + 1))
   const rangeEnd = computed(() => Math.min(total.value, (page.value + 1) * limit.value))
 
-  // Opened game + its replay state.
+  // The opened game's headers; the board composable holds its move tree + cursor.
   const openGame = ref<GameDetail | null>(null)
-  const positions = ref<ViewerPosition[]>([{ ply: 0, san: null, fen: undefined, lastMove: null }])
-  const ply = ref(0)
-
-  const current = computed(() => positions.value[ply.value] ?? positions.value[0])
-  const fen = computed(() => current.value?.fen)
-  const lastMove = computed(() => current.value?.lastMove ?? null)
-  const atStart = computed(() => ply.value <= 0)
-  const atEnd = computed(() => ply.value >= positions.value.length - 1)
 
   /** Select a database and load its first page, replacing any prior list. */
   async function selectDatabase(id: number) {
@@ -95,15 +96,18 @@ export const useGamesStore = defineStore('games', () => {
     await fetchPage()
   }
 
-  /** Fetch a game by id and load it into the board viewer at the start position. */
+  /**
+   * Fetch a game by id (headers + parsed variation tree) and seed the board at
+   * the start position. The tree keeps `(…)` sub-variations the flat viewer
+   * dropped (#135), and the board lets the user branch their own lines (#134).
+   */
   async function open(id: number) {
     loading.value = true
     error.value = null
     try {
-      const game = await api.games.get(id)
+      const [game, tree] = await Promise.all([api.games.get(id), api.games.tree(id)])
       openGame.value = game
-      positions.value = positionsFromPgn(game.pgn)
-      ply.value = 0
+      board.load(tree, STARTPOS_FEN)
     } catch (e) {
       error.value = (e as Error)?.message ?? String(e)
     } finally {
@@ -111,9 +115,30 @@ export const useGamesStore = defineStore('games', () => {
     }
   }
 
-  /** Step the viewer: 'first' | 'prev' | 'next' | 'last', or a ply number. */
-  function go(action: string | number) {
-    ply.value = navigate(ply.value, action, positions.value.length)
+  /** Node ids along the mainline; the array index is the ply (0 = start). */
+  function mainlinePath(): number[] {
+    return mainlinePathOf(board.tree.value)
+  }
+
+  /** Mainline ply of `nodeId` (0 = root), or null for an off-mainline node. */
+  function plyOf(nodeId: number): number | null {
+    const i = mainlinePath().indexOf(nodeId)
+    return i < 0 ? null : i
+  }
+
+  /** The mainline node at `ply` (the inverse of `plyOf`), or null past the end. */
+  function nodeAtPly(ply: number): number | null {
+    return mainlinePath()[ply] ?? null
+  }
+
+  /**
+   * Graft the engine review's critical lines onto the live board tree (#136):
+   * each inaccuracy/mistake/blunder sprouts the engine's better line as a
+   * sibling variation. Idempotent, and the mainline is never reordered so the
+   * ply mapping above stays stable and the user's own branches survive.
+   */
+  function graftReview(review: GameReview) {
+    board.tree.value = graftReviewVariations(board.tree.value, review)
   }
 
   /**
@@ -134,6 +159,7 @@ export const useGamesStore = defineStore('games', () => {
   }
 
   return {
+    ...board,
     databaseId,
     games,
     total,
@@ -149,19 +175,15 @@ export const useGamesStore = defineStore('games', () => {
     loading,
     error,
     openGame,
-    positions,
-    ply,
-    current,
-    fen,
-    lastMove,
-    atStart,
-    atEnd,
     selectDatabase,
     fetchPage,
     goToPage,
     setSort,
     open,
-    go,
+    mainlinePath,
+    plyOf,
+    nodeAtPly,
+    graftReview,
     exportPgn,
   }
 })
