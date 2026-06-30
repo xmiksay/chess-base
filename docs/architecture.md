@@ -157,7 +157,12 @@ button opens `components/GenerateStudyDialog.vue` (Mode B #119): a start positio
 engine-depth / repertoire-framing (variation depth + breadth) form over
 `POST /api/studies/generate` (`stores/studies.ts::generate`), surfacing the
 verification summary (committed nodes, rejected claims) and gated on the
-`/api/health` `llm` flag (a hint to set `ANTHROPIC_API_KEY` when absent). Pinned shapes are drawn on
+`/api/health` `llm` flag (a hint to set `ANTHROPIC_API_KEY` when absent). The
+sibling **"Danger map"** button opens `components/GenerateDangerMapDialog.vue`
+(ADR-0026 #131): a repertoire-spine (PGN) / side / walk-depth / `movetime_ms` /
+`multipv` form over `POST /api/studies/generate-danger-map`
+(`stores/studies.ts::generateDangerMap`), surfacing the same committed/rejected
+counts plus the engine-tagged danger roles (Weapon / Caution / Off-book). Pinned shapes are drawn on
 `Board.vue` (chessground `autoShapes`, with `persist-shapes` so a node's plan
 survives navigation); `AnalysisPanel.vue`'s per-line **Pin** button converts that
 line's plan trajectories (`lib/plansToShapes.ts`) into stored `Shape`s. The pure tree walking

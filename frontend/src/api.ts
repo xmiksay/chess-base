@@ -15,6 +15,8 @@ import type {
   GameReview,
   GamesPage,
   GameRow,
+  DangerMapBody,
+  DangerMapView,
   GenerateBody,
   GenerateView,
   Health,
@@ -177,6 +179,11 @@ export const api = {
     // LLM study generation (issue #119): tree → annotate/verify → persisted study.
     // 503 when no LLM is configured.
     generate: (body: GenerateBody) => send<GenerateView>('POST', '/api/studies/generate', body),
+    // Danger-map generation (issue #131, ADR-0026): walk a repertoire spine and
+    // surface traps / only-move paths instead of an engine-best tree. 503 when no
+    // engine or LLM is configured.
+    generateDangerMap: (body: DangerMapBody) =>
+      send<DangerMapView>('POST', '/api/studies/generate-danger-map', body),
   },
 
   // Ownable databases (issue #6): collections to search/import into. `list`

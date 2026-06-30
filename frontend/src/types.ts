@@ -357,6 +357,52 @@ export interface GenerateView {
   rejected: number
 }
 
+// --- danger-map study generation (issue #131, ADR-0026) ---------------------
+
+/**
+ * Spine walk + classifier knobs for the danger-map generator; partial overrides
+ * over the server defaults. Mirrors `SpineConfig` in `src/study_gen/spine.rs`.
+ */
+export interface SpineConfig {
+  our_side?: 'White' | 'Black' // which side the repertoire plays (default White)
+  max_depth?: number // plies from the root (default 8)
+  min_frequency?: number // drop replies rarer than this share (default 0.02)
+  max_replies?: number // opponent replies expanded per position (default 4)
+  min_miss_rate?: number // humans must miss the only move this often (default 0.3)
+}
+
+/** Request body for `POST /api/studies/generate-danger-map`. */
+export interface DangerMapBody {
+  database_id: number
+  name: string
+  spine_pgn: string // the repertoire spine as PGN movetext to walk for danger
+  global?: boolean
+  start_fen?: string // defaults to startpos server-side
+  model?: string
+  spine?: SpineConfig
+  movetime_ms?: number // per-variation engine budget, capped server-side
+  multipv?: number // MultiPV line count, floored at 2 server-side
+}
+
+/** One engine-adjudicated danger role surfaced on a danger-map result. */
+export interface DangerMapRole {
+  node_id: number
+  san: string | null
+  kind: string // Trap | OnlyMove | Attack | OffBook
+  role: string // Weapon | Caution | OffBook
+}
+
+/** Result of a danger-map generation run. */
+export interface DangerMapView {
+  id: number
+  database_id: number
+  name: string
+  global: boolean
+  node_count: number
+  rejected: number
+  roles: DangerMapRole[]
+}
+
 // --- settings ---------------------------------------------------------------
 
 /** Backend settings payload (`/api/settings`). */
