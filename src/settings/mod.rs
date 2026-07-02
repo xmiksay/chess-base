@@ -52,6 +52,17 @@ pub struct UserSettings {
     pub show_threats: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_master_moves: Option<bool>,
+    /// Engine analysis preferences (issue: persistent engine settings). Each is
+    /// optional so an unset value defers to the engine/operator default; ranges
+    /// are validated in [`SettingsService::set`]. MultiPV = principal-variation
+    /// count (`1..=5`), threads = engine worker threads (`1..=64`), hash = the
+    /// transposition-table size in MB (`1..=4096`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_multipv: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_threads: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_hash_mb: Option<i32>,
 }
 
 /// Why a settings operation failed. Transport-agnostic — the HTTP / MCP layer
@@ -136,6 +147,9 @@ impl SettingsService {
                 )));
             }
         }
+        validate_range("engine_multipv", settings.engine_multipv, 1, 5)?;
+        validate_range("engine_threads", settings.engine_threads, 1, 64)?;
+        validate_range("engine_hash_mb", settings.engine_hash_mb, 1, 4096)?;
         Ok(())
     }
 
@@ -182,6 +196,25 @@ fn trim_to_none(field: &mut Option<String>) {
             *field = Some(trimmed.to_string());
         }
     }
+}
+
+/// Reject an out-of-range optional engine setting with a descriptive (but
+/// safe) message. `None` is always accepted — the field simply defers to the
+/// engine/operator default.
+fn validate_range(
+    field: &str,
+    value: Option<i32>,
+    min: i32,
+    max: i32,
+) -> Result<(), SettingsError> {
+    if let Some(v) = value {
+        if !(min..=max).contains(&v) {
+            return Err(SettingsError::InvalidInput(format!(
+                "{field} must be between {min} and {max}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// The `settings` key holding this user's preference blob.

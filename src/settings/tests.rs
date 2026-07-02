@@ -86,6 +86,70 @@ async fn overlay_layer_flags_round_trip() {
 }
 
 #[tokio::test]
+async fn engine_settings_round_trip_and_reject_out_of_range() {
+    let svc = SettingsService::new(conn().await);
+    let alice = user("alice");
+
+    // Unset by default — the engine/operator default applies.
+    let got = svc.get(&alice).await.unwrap();
+    assert_eq!(got.engine_multipv, None);
+    assert_eq!(got.engine_threads, None);
+    assert_eq!(got.engine_hash_mb, None);
+
+    // In-range values persist through set/get.
+    let saved = svc
+        .set(
+            &alice,
+            UserSettings {
+                engine_multipv: Some(3),
+                engine_threads: Some(8),
+                engine_hash_mb: Some(512),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved.engine_multipv, Some(3));
+    let got = svc.get(&alice).await.unwrap();
+    assert_eq!(got.engine_multipv, Some(3));
+    assert_eq!(got.engine_threads, Some(8));
+    assert_eq!(got.engine_hash_mb, Some(512));
+
+    // Each field rejects values outside its range.
+    for bad in [
+        UserSettings {
+            engine_multipv: Some(0),
+            ..Default::default()
+        },
+        UserSettings {
+            engine_multipv: Some(6),
+            ..Default::default()
+        },
+        UserSettings {
+            engine_threads: Some(0),
+            ..Default::default()
+        },
+        UserSettings {
+            engine_threads: Some(65),
+            ..Default::default()
+        },
+        UserSettings {
+            engine_hash_mb: Some(0),
+            ..Default::default()
+        },
+        UserSettings {
+            engine_hash_mb: Some(4097),
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            svc.set(&alice, bad).await.unwrap_err(),
+            SettingsError::InvalidInput(_)
+        ));
+    }
+}
+
+#[tokio::test]
 async fn settings_are_scoped_per_user() {
     let db = conn().await;
     let svc = SettingsService::new(db);

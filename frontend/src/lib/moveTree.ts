@@ -38,6 +38,38 @@ export function appendChild(
   return { tree: { root: tree.root, nodes }, id }
 }
 
+/** Index of `id` among its parent's children, or -1 (root / missing / detached). */
+export function siblingIndex(tree: MoveTree, id: number): number {
+  const node = getNode(tree, id)
+  if (!node || node.parent == null) return -1
+  const parent = getNode(tree, node.parent)
+  return parent ? parent.children.indexOf(id) : -1
+}
+
+/**
+ * Move `id` to position `index` among its siblings (clamped to the range).
+ * `index === 0` makes it the mainline continuation. Root/missing node → no-op.
+ * Used by the in-memory analysis tree; studies drive the backend reorder op.
+ */
+export function reorderChild(tree: MoveTree, id: number, index: number): MoveTree {
+  const node = getNode(tree, id)
+  if (!node || node.parent == null) return tree
+  const parentId = node.parent
+  const nodes = tree.nodes.map((n) => {
+    if (n.id !== parentId) return n
+    const children = n.children.filter((c) => c !== id)
+    const clamped = Math.max(0, Math.min(index, children.length))
+    children.splice(clamped, 0, id)
+    return { ...n, children }
+  })
+  return { root: tree.root, nodes }
+}
+
+/** Promote `id` to be its parent's mainline continuation (`children[0]`). */
+export function promote(tree: MoveTree, id: number): MoveTree {
+  return reorderChild(tree, id, 0)
+}
+
 /**
  * Remove `id` and its whole subtree, returning the new tree and the parent the
  * caller should select next. The root sentinel cannot be deleted (no-op).
@@ -80,6 +112,17 @@ export function getNode(tree: MoveTree, id: number): MoveNode | null {
 export function firstChild(tree: MoveTree, id: number): number | null {
   const node = getNode(tree, id)
   return node?.children?.[0] ?? null
+}
+
+/** Walk a SAN line from the root, returning the node it reaches, or null if the
+ *  line isn't present in the tree (used to jump to a danger line after grafting). */
+export function findNodeByPath(tree: MoveTree, sans: string[]): number | null {
+  let cur: number | null = tree.root
+  for (const san of sans) {
+    if (cur == null) return null
+    cur = childWithSan(tree, cur, san)
+  }
+  return cur
 }
 
 /** A child of `id` whose move equals `san`, or null — used to dedupe replays. */
@@ -139,6 +182,22 @@ export function nagGlyph(n: number): string {
 }
 
 /**
+ * Move-quality accent class for a NAG glyph: good (`!`,`!!`) → green, dubious /
+ * mistake (`?`,`?!`) → orange, blunder (`??`) → red, interesting (`!?`) → accent.
+ */
+const NAG_CLASSES: Record<number, string> = {
+  1: 'text-good',
+  3: 'text-good',
+  5: 'text-accent',
+  6: 'text-warn',
+  2: 'text-warn',
+  4: 'text-bad',
+}
+export function nagClass(n: number): string {
+  return NAG_CLASSES[n] ?? 'text-muted'
+}
+
+/**
  * Flatten the tree into a linear token stream for rendering: `move` tokens
  * interleaved with `open` / `close` tokens that bracket variations. Move tokens
  * carry everything the view needs (`san`, `nags`, `comment`, the move-number
@@ -194,4 +253,35 @@ export function treeTokens(tree: MoveTree | null): MoveToken[] {
 
   walkChildren(tree.root, 0, 0)
   return tokens
+}
+
+/** A single move token (the `move` variant of `MoveToken`). */
+export type MoveTokenMove = Extract<MoveToken, { type: 'move' }>
+
+/** A rendered item: a move, or a nested variation block (one bracket level). */
+export type MoveTreeItem =
+  | { kind: 'move'; token: MoveTokenMove }
+  | { kind: 'block'; items: MoveTreeItem[] }
+
+/**
+ * Fold the flat `open`/`close`-bracketed token stream into a nested item tree so
+ * the move panel can render each variation as an indented block instead of inline
+ * parentheses. Move-number/depth metadata on the tokens is preserved verbatim.
+ */
+export function tokenBlocks(tokens: MoveToken[]): MoveTreeItem[] {
+  const root: MoveTreeItem[] = []
+  const stack: MoveTreeItem[][] = [root]
+  for (const t of tokens) {
+    const top = stack[stack.length - 1]
+    if (t.type === 'open') {
+      const items: MoveTreeItem[] = []
+      top.push({ kind: 'block', items })
+      stack.push(items)
+    } else if (t.type === 'close') {
+      if (stack.length > 1) stack.pop()
+    } else {
+      top.push({ kind: 'move', token: t })
+    }
+  }
+  return root
 }

@@ -5,6 +5,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Board from '../components/Board.vue'
 import BoardControls from '../components/BoardControls.vue'
+import BoardEvalBar from '../components/BoardEvalBar.vue'
 import MoveTree from '../components/MoveTree.vue'
 import MoveComment from '../components/MoveComment.vue'
 import AnnotationEditor from '../components/AnnotationEditor.vue'
@@ -49,6 +50,16 @@ const overlayShapes = computed(() => [
 /** Clear the user's hand-drawn arrows; the computed overlay layers stay. */
 function clearArrows() {
   boardRef.value?.clearUserShapes()
+}
+
+/** Delete a node (and its subtree) from the open study, after confirming. */
+async function onRemoveNode(id: number) {
+  if (!window.confirm('Delete this move and everything after it in the line?')) return
+  try {
+    await editor.deleteNode(id)
+  } catch (e) {
+    loadError.value = String((e as Error)?.message ?? e)
+  }
 }
 
 const databases = ref<Database[]>([])
@@ -167,7 +178,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         v-if="hasStudy"
         type="button"
         data-test="export"
-        class="ml-auto rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+        class="ml-auto rounded border border-border px-3 py-1 text-sm hover:bg-surface-2"
         @click="onExport(false)"
       >
         Export PGN
@@ -176,7 +187,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         v-if="hasStudy"
         type="button"
         data-test="export-eval"
-        class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+        class="rounded border border-border px-3 py-1 text-sm hover:bg-surface-2"
         title="Lichess imports the eval gauge + arrows from this PGN; chess.com ignores them. Run 'Analyse study' first to fill the evals."
         @click="onExport(true)"
       >
@@ -185,7 +196,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       <button
         type="button"
         data-test="open-generate"
-        :class="['rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100', { 'ml-auto': !hasStudy }]"
+        :class="['rounded border border-border px-3 py-1 text-sm hover:bg-surface-2', { 'ml-auto': !hasStudy }]"
         @click="showGenerate = true"
       >
         Generate study
@@ -193,7 +204,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       <button
         type="button"
         data-test="open-danger-map"
-        class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+        class="rounded border border-border px-3 py-1 text-sm hover:bg-surface-2"
         @click="showDangerMap = true"
       >
         Danger map
@@ -216,7 +227,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
     <p
       v-if="loadError || studies.error"
-      class="mb-3 text-sm text-red-600"
+      class="mb-3 text-sm text-bad"
       data-test="error"
     >
       {{ loadError || studies.error }}
@@ -232,101 +243,119 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         @error="loadError = $event"
       />
 
-      <!-- Board -->
+      <!-- Board column: Stockfish on top, then the eval thermometer + board. -->
       <section
         v-if="hasStudy"
-        class="lg:w-2/5"
+        class="flex flex-col gap-4 lg:w-2/5"
       >
-        <Board
-          ref="boardRef"
-          :fen="editor.fen"
-          :dests="editor.legalDests"
-          :movable="true"
-          :last-move="editor.lastMove"
-          :board-theme="settings.boardTheme"
-          :shapes="pinnedShapes"
-          :overlay-shapes="overlayShapes"
-          :persist-shapes="true"
-          :editable-shapes="true"
-          @move="onBoardMove"
-          @drawn="onShapesDrawn"
-        />
+        <!-- Engine analysis for the selected node (#5 in studies), above the board. -->
+        <div class="rounded-lg border border-border bg-surface p-4 shadow-sm">
+          <StudyAnalysis />
+        </div>
 
-        <BoardControls
-          class="mt-3"
-          :at-start="editor.atStart"
-          :at-end="editor.atEnd"
-          @first="editor.goToStart()"
-          @prev="editor.back()"
-          @next="editor.forward()"
-          @last="editor.goToEnd()"
-          @clear-arrows="clearArrows"
-        />
+        <div>
+          <div class="flex items-stretch gap-2">
+            <BoardEvalBar :fen="editor.fen" />
+            <Board
+              ref="boardRef"
+              :fen="editor.fen"
+              :dests="editor.legalDests"
+              :movable="true"
+              :last-move="editor.lastMove"
+              :board-theme="settings.boardTheme"
+              :shapes="pinnedShapes"
+              :overlay-shapes="overlayShapes"
+              :persist-shapes="true"
+              :editable-shapes="true"
+              @move="onBoardMove"
+              @drawn="onShapesDrawn"
+            />
+          </div>
 
-        <!-- Read surface for the selected move's comment, right under the board. -->
-        <MoveComment
-          class="mt-3"
-          :tree="editor.tree"
-          :current-id="editor.nodeId"
-        />
+          <BoardControls
+            class="mt-3"
+            :at-start="editor.atStart"
+            :at-end="editor.atEnd"
+            @first="editor.goToStart()"
+            @prev="editor.back()"
+            @next="editor.forward()"
+            @last="editor.goToEnd()"
+            @clear-arrows="clearArrows"
+          />
 
-        <!-- Per-view extra: clear the persisted pinned plan on this node (#61). -->
-        <button
-          v-if="editor.currentNode?.shapes?.length"
-          class="mt-2 rounded border border-neutral-300 px-2 py-1 text-sm"
-          data-test="clear-pin"
-          @click="editor.setShapes([])"
-        >
-          Clear pinned plan
-        </button>
+          <!-- Read surface for the selected move's comment, right under the board. -->
+          <MoveComment
+            class="mt-3"
+            :tree="editor.tree"
+            :current-id="editor.nodeId"
+          />
 
-        <!-- Engine analysis for the selected node (#5 in studies). -->
-        <StudyAnalysis class="mt-4" />
+          <!-- Per-view extra: clear the persisted pinned plan on this node (#61). -->
+          <button
+            v-if="editor.currentNode?.shapes?.length"
+            class="mt-2 rounded border border-border px-2 py-1 text-sm hover:bg-surface-2"
+            data-test="clear-pin"
+            @click="editor.setShapes([])"
+          >
+            Clear pinned plan
+          </button>
+        </div>
+      </section>
 
-        <!-- Engine-only danger overlay (#156): walk a spine for danger and show
-             Weapon / Caution / Off-book replies as arrows + a digest. No LLM. -->
+      <!-- Right column: PGN notation on top, danger map below it. -->
+      <section
+        v-if="hasStudy"
+        class="flex flex-1 flex-col gap-4"
+      >
+        <!-- PGN notation + annotations. -->
+        <div class="rounded-lg border border-border bg-surface p-4 shadow-sm">
+          <p class="mb-2 flex items-center gap-2 text-sm font-medium">
+            <span>{{ studies.current?.name }}</span>
+            <RouterLink
+              v-if="studies.current?.origin_game_id != null"
+              :to="{ name: 'games' }"
+              data-test="origin-game-link"
+              class="rounded bg-surface-2 px-2 py-0.5 text-xs font-normal text-muted hover:text-fg"
+            >
+              From game #{{ studies.current.origin_game_id }}
+            </RouterLink>
+          </p>
+          <!-- Cap the notation to ~board height and scroll in place; the
+               annotation editor below stays visible. -->
+          <div class="max-h-[360px] overflow-y-auto">
+            <MoveTree
+              :tree="editor.tree"
+              :current-id="editor.nodeId"
+              editable
+              @select="editor.select($event)"
+              @promote="editor.promote($event)"
+              @demote="editor.demote($event)"
+              @remove="onRemoveNode($event)"
+            />
+          </div>
+          <hr class="my-3 border-border">
+          <AnnotationEditor
+            :node="editor.currentNode"
+            @comment="editor.annotate({ comment: $event })"
+            @nag="editor.annotate({ nag: $event })"
+            @promote="editor.promote(editor.nodeId)"
+            @demote="editor.demote(editor.nodeId)"
+            @delete="onRemoveNode(editor.nodeId)"
+          />
+        </div>
+
+        <!-- Danger map under the PGN notation: walk a spine for danger and graft
+             the lines into the tree (#156). Engine-only, no LLM. -->
         <DangerMapPanel
-          class="mt-4"
           :engine-enabled="engineEnabled"
           :study-id="studies.current?.id ?? null"
           :start-fen="editor.tree?.start_fen"
         />
       </section>
 
-      <!-- Tree + annotations -->
-      <section
-        v-if="hasStudy"
-        class="lg:w-1/3"
-      >
-        <p class="mb-2 flex items-center gap-2 text-sm font-medium">
-          <span>{{ studies.current?.name }}</span>
-          <RouterLink
-            v-if="studies.current?.origin_game_id != null"
-            :to="{ name: 'games' }"
-            data-test="origin-game-link"
-            class="rounded bg-neutral-100 px-2 py-0.5 text-xs font-normal text-neutral-600 hover:bg-neutral-200"
-          >
-            From game #{{ studies.current.origin_game_id }}
-          </RouterLink>
-        </p>
-        <MoveTree
-          :tree="editor.tree"
-          :current-id="editor.nodeId"
-          @select="editor.select($event)"
-        />
-        <hr class="my-3 border-neutral-200">
-        <AnnotationEditor
-          :node="editor.currentNode"
-          @comment="editor.annotate({ comment: $event })"
-          @nag="editor.annotate({ nag: $event })"
-          @promote="editor.promote(editor.nodeId)"
-          @delete="editor.deleteNode(editor.nodeId)"
-        />
-      </section>
-
       <p
         v-else
-        class="text-sm text-neutral-500"
+        class="text-sm text-muted"
       >
         Select or create a study to start editing.
       </p>

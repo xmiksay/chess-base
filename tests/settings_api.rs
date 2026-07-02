@@ -111,6 +111,44 @@ async fn rejects_invalid_theme_and_unknown_database() {
 }
 
 #[tokio::test]
+async fn engine_settings_round_trip_through_the_route() {
+    // Local mode: the single user is the implicit admin.
+    let db = connect(&DbConfig::in_memory()).await.unwrap();
+    let app = build_router(AppState {
+        db,
+        mode: Mode::Local,
+        engine_service: None,
+        llm_provider: None,
+    });
+
+    // In-range engine settings persist and come back through GET.
+    let (status, saved) = send(
+        &app,
+        put(
+            "/api/settings",
+            json!({
+                "engine_multipv": 4,
+                "engine_threads": 16,
+                "engine_hash_mb": 1024,
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["engine_multipv"], 4);
+
+    let (_, settings) = send(&app, get("/api/settings")).await;
+    assert_eq!(settings["engine_multipv"], 4);
+    assert_eq!(settings["engine_threads"], 16);
+    assert_eq!(settings["engine_hash_mb"], 1024);
+
+    // An out-of-range value is a 400 (e.g. MultiPV above the 1..=5 cap).
+    let (status, body) = send(&app, put("/api/settings", json!({"engine_multipv": 99}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].as_str().unwrap().contains("engine_multipv"));
+}
+
+#[tokio::test]
 async fn server_mode_requires_auth() {
     // Server mode with no credentials → the extractor rejects before the handler.
     let db = connect(&DbConfig::in_memory()).await.unwrap();

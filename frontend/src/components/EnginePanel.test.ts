@@ -37,27 +37,31 @@ describe('EnginePanel', () => {
     const wrapper = mount(EnginePanel, { props: { fen: STARTPOS_FEN } })
     // +0.35 from White's side to move at the start position.
     expect(wrapper.text()).toContain('+0.35')
-    expect(wrapper.text()).toContain('depth 18')
+    expect(wrapper.text()).toContain('d18')
     // The PV is rendered as SAN against the (start) position.
     expect(wrapper.text()).toContain('e4')
     expect(wrapper.text()).toContain('e5')
   })
 
-  it('starts analysing the fen when the analyse toggle is checked', async () => {
+  it('analyses by default and stops/restarts with the toggle', async () => {
     const engine = useEngineStore()
     vi.spyOn(engine, 'connect').mockImplementation(() => {})
     vi.spyOn(engine, 'disconnect').mockImplementation(() => {})
     const stop = vi.spyOn(engine, 'stop').mockImplementation(() => {})
     const analyse = vi.spyOn(engine, 'analyse').mockImplementation(() => {})
-    // Toggle is enabled only when the engine is ready.
+    // Engine ready at mount → analysis is on by default and auto-starts.
     engine.status = 'ready'
 
     const wrapper = mount(EnginePanel, { props: { fen: STARTPOS_FEN } })
-    await wrapper.find('[data-test="analyse-toggle"]').setValue(true)
+    const toggle = wrapper.find('[data-test="analyse-toggle"]')
     expect(analyse).toHaveBeenCalledWith(STARTPOS_FEN, {})
+    expect((toggle.element as HTMLInputElement).checked).toBe(true)
 
-    await wrapper.find('[data-test="analyse-toggle"]').setValue(false)
+    await toggle.setValue(false)
     expect(stop).toHaveBeenCalled()
+
+    await toggle.setValue(true)
+    expect(analyse).toHaveBeenCalledTimes(2)
   })
 
   it('hides the analyse toggle and PV list when analysis is delegated away', () => {

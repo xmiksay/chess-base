@@ -15,14 +15,14 @@ const tab = ref('header') // 'header' | 'position'
       Search
     </h2>
 
-    <div class="mt-3 mb-5 flex gap-1 border-b border-neutral-200 dark:border-neutral-800">
+    <div class="mt-3 mb-5 flex gap-1 border-b border-border">
       <button
         type="button"
         data-test="tab-header"
         class="border-b-2 px-3 py-2 text-sm font-medium"
         :class="tab === 'header'
-          ? 'border-emerald-600 text-emerald-700 dark:text-emerald-400'
-          : 'border-transparent text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'"
+          ? 'border-accent text-accent'
+          : 'border-transparent text-muted hover:text-fg'"
         @click="tab = 'header'"
       >
         Header search
@@ -32,8 +32,8 @@ const tab = ref('header') // 'header' | 'position'
         data-test="tab-position"
         class="border-b-2 px-3 py-2 text-sm font-medium"
         :class="tab === 'position'
-          ? 'border-emerald-600 text-emerald-700 dark:text-emerald-400'
-          : 'border-transparent text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'"
+          ? 'border-accent text-accent'
+          : 'border-transparent text-muted hover:text-fg'"
         @click="tab = 'position'"
       >
         Position explorer

@@ -21,7 +21,9 @@ Full detail in [`../docs/architecture.md`](../docs/architecture.md); decisions i
 src/
   position.rs      pure: FEN/SAN, legal moves, Zobrist hash (shakmaty)   ← unit-tested
   pgn_tree.rs      pure: study move-tree (variations/comments/NAGs/shapes/[%eval] +
-                   set-up start_fen, ADR-0028: [FEN] header honoured on import/export) ← unit-tested
+                   set-up start_fen, ADR-0028: [FEN] header honoured on import/export);
+                   graft_subtree(at, src) grafts a MoveTree's moves in as deduped,
+                   legality-checked variations (ADR-0032) ← unit-tested
   openings.rs      pure: ECO classification (embedded lichess dataset)     ← unit-tested
   plans.rs         pure: engine-PV → per-piece trajectories (ADR 0017)      ← unit-tested
   features.rs      pure: position feature tags (material/phase/check, #33)    ← unit-tested
@@ -35,6 +37,12 @@ src/
                    Mode B), service.review_game, POST /api/games/{id}/analyse   ← unit-tested
   games/export.rs  pure: mainline → MoveTree (+#119 review: [%eval]/NAGs/why) for
                    GET /api/games/{id}/export?annotated= — extended-PGN download (#120) ← unit-tested
+  games/           GameService: list/get + DELETE /api/games/{id} (writable-scope
+                   guard like databases; drops position_index rows first, SQLite FK
+                   is RESTRICT) ← unit-tested
+  settings/        SettingsService: per-user UI prefs as one JSON blob; persists
+                   engine settings engine_multipv (1..=5)/threads (1..=64)/hash_mb
+                   (1..=4096), range-validated; GET/PUT /api/settings ← unit-tested
   folders/         FolderService (#164, ADR-0030): study folder tree —
                    adjacency-list `folders` table (m0007), account-level, own ∪
                    global via scope(); create/rename/reparent (rejects cycles)/
@@ -51,7 +59,11 @@ src/
                    origin_game_id (analysis↔game); set_folder, studies_for_game, and
                    create_from_game (mainline → MoveTree, optional engine review via
                    the #120/#162 annotated_tree seam) back PUT /api/studies/{id}/folder,
-                   POST /api/games/{id}/save-as-study, GET /api/games/{id}/studies ← unit-tested
+                   POST /api/games/{id}/save-as-study, GET /api/games/{id}/studies;
+                   merge_danger (ADR-0032): graft an engine-walked DangerTree into an
+                   existing study as deduped variations (folds via danger_generate::
+                   to_variation_tree → move_tree_from, then MoveTree::graft_subtree;
+                   move-only, no LLM), POST /api/studies/{id}/merge-danger ← unit-tested
   ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
   ai/providers.rs  ProviderService over llm_providers table (#20): admin-managed providers
                    (key server-side); default row builds the provider at startup, else env
@@ -104,7 +116,14 @@ src/
                    routes/assistant.rs: AI assistant chat + provider registry (#20)
   bin/chess-base.rs  CLI entry (clap)
 frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
-                   (strict `vue-tsc`; shared API/domain types in src/types.ts; ADR 0021)
+                   (strict `vue-tsc`; shared API/domain types in src/types.ts; ADR 0021).
+                   Semantic design tokens + class-based dark mode in src/style.css
+                   (ADR 0031): bg-surface/text-fg/border-border auto-flip under
+                   `.dark`; accents good/warn/bad (green/orange/red) carry move
+                   quality (lib/moveTree nagClass). MoveTree renders variations as
+                   depth-indented blocks (MoveTreeLine) with per-node promote/demote
+                   /delete actions. Engine options (MultiPV/Threads/Hash) persist
+                   per user via settings (lib/useEnginePrefs); analysis on by default.
 ```
 
 **Layering rule:** pure logic (`position`, `pgn_tree`, `openings`, `plans`) is I/O-free and fully

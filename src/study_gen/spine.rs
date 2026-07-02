@@ -145,15 +145,17 @@ pub struct DangerTag {
 pub struct DangerNode {
     pub id: usize,
     pub parent: Option<usize>,
-    /// SAN of the move leading here; `None` only at the root.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// SAN of the move leading here; `None` only at the root. `default` so a
+    /// serialized tree (root omits `san`) round-trips back through deserialize —
+    /// the danger overlay POSTs it to `/api/studies/{id}/merge-danger` (ADR-0032).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub san: Option<String>,
     pub fen: String,
     /// Plies from the root.
     pub ply: usize,
     /// The danger signal on the move that reached this node, if any. Plain spine
-    /// moves carry `None`.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// moves carry `None`. `default` for the same round-trip reason as `san`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<DangerTag>,
     pub children: Vec<usize>,
 }

@@ -79,6 +79,10 @@ describe('dangerShapes', () => {
       {
         nodeId: 3,
         san: 'Qh5',
+        // The full line + a move-numbered label, so the panel can disambiguate
+        // and navigate to it in the study tree.
+        line: ['e4', 'e5', 'Qh5'],
+        label: '2.Qh5',
         kind: 'Trap',
         role: 'Caution',
         onlyMoveGap: 150,

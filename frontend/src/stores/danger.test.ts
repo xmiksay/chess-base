@@ -45,6 +45,8 @@ describe('danger store', () => {
       {
         nodeId: 1,
         san: 'Qh5',
+        line: ['Qh5'],
+        label: '1.Qh5',
         kind: 'Trap',
         role: 'Caution',
         onlyMoveGap: null,

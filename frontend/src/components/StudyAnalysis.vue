@@ -8,11 +8,13 @@ import { ref } from 'vue'
 import { useEngineStore } from '../stores/engine'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { plansToShapes } from '../lib/plansToShapes'
+import { useEnginePrefs } from '../lib/useEnginePrefs'
 import type { EngineLine, Shape } from '../types'
 import EnginePanel from './EnginePanel.vue'
 
 const engine = useEngineStore()
 const editor = useStudyEditorStore()
+const prefs = useEnginePrefs()
 
 const pinError = ref<string | null>(null)
 
@@ -64,7 +66,7 @@ async function pinLine(line: EngineLine) {
   >
     <p
       v-if="pinError"
-      class="text-sm text-red-600"
+      class="text-sm text-bad"
       data-test="pin-error"
     >
       {{ pinError }}
@@ -76,7 +78,7 @@ async function pinLine(line: EngineLine) {
       <button
         type="button"
         data-test="analyse-study"
-        class="w-full rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-60"
+        class="w-full rounded border border-border px-3 py-1 text-sm hover:bg-surface-2 disabled:opacity-60"
         :disabled="analysing"
         title="Run the engine over every move and store a White-perspective eval on each node"
         @click="analyseStudy"
@@ -85,7 +87,7 @@ async function pinLine(line: EngineLine) {
       </button>
       <p
         v-if="analyseError"
-        class="text-sm text-red-600"
+        class="text-sm text-bad"
         data-test="analyse-error"
       >
         {{ analyseError }}
@@ -100,8 +102,8 @@ async function pinLine(line: EngineLine) {
             Lines
             <select
               v-model.number="engine.multipv"
-              class="rounded border border-neutral-300 px-1 py-0.5"
-              @change="engine.reconfigure()"
+              class="rounded border border-border px-1 py-0.5"
+              @change="prefs.persist()"
             >
               <option
                 v-for="n in 5"
@@ -119,8 +121,8 @@ async function pinLine(line: EngineLine) {
               type="number"
               min="1"
               max="64"
-              class="rounded border border-neutral-300 px-1 py-0.5"
-              @change="engine.reconfigure()"
+              class="rounded border border-border px-1 py-0.5"
+              @change="prefs.persist()"
             >
           </label>
           <label class="flex flex-col gap-1">
@@ -130,8 +132,8 @@ async function pinLine(line: EngineLine) {
               type="number"
               min="1"
               max="4096"
-              class="rounded border border-neutral-300 px-1 py-0.5"
-              @change="engine.reconfigure()"
+              class="rounded border border-border px-1 py-0.5"
+              @change="prefs.persist()"
             >
           </label>
         </div>
@@ -140,7 +142,7 @@ async function pinLine(line: EngineLine) {
       <template #line-action="{ line }">
         <button
           v-if="planFor(line)?.trajectories.length"
-          class="shrink-0 rounded border border-neutral-300 px-1.5 py-0.5 text-xs hover:bg-neutral-200"
+          class="shrink-0 rounded border border-border px-1.5 py-0.5 text-xs hover:bg-surface-2"
           title="Pin this plan to the current study node"
           data-test="pin-line"
           @click="pinLine(line)"

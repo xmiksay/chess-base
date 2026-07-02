@@ -37,7 +37,7 @@ onMounted(() => {
       <div class="flex items-center gap-2">
         <button
           type="button"
-          class="rounded border border-neutral-300 px-3 py-1 text-sm disabled:opacity-50 dark:border-neutral-700"
+          class="rounded border border-border px-3 py-1 text-sm disabled:opacity-50"
           :disabled="search.line.length === 0"
           @click="search.resetBoard()"
         >
@@ -45,17 +45,17 @@ onMounted(() => {
         </button>
         <button
           type="button"
-          class="rounded border border-neutral-300 px-3 py-1 text-sm disabled:opacity-50 dark:border-neutral-700"
+          class="rounded border border-border px-3 py-1 text-sm disabled:opacity-50"
           :disabled="search.line.length === 0"
           @click="search.back()"
         >
           ← Back
         </button>
       </div>
-      <p class="font-mono text-sm text-neutral-600 dark:text-neutral-400">
+      <p class="font-mono text-sm text-muted">
         <span
           v-if="search.line.length === 0"
-          class="text-neutral-400"
+          class="text-muted"
         >start position</span>
         <span v-else>{{ search.line.join(' ') }}</span>
       </p>
@@ -64,18 +64,18 @@ onMounted(() => {
     <section class="flex-1">
       <p
         v-if="search.explorerError"
-        class="mb-2 text-sm text-red-600"
+        class="mb-2 text-sm text-bad"
       >
         {{ search.explorerError }}
       </p>
 
-      <h3 class="mb-2 text-sm font-semibold text-neutral-500">
+      <h3 class="mb-2 text-sm font-semibold text-muted">
         Moves <span v-if="total">({{ total }} games)</span>
       </h3>
 
       <p
         v-if="!search.explorerLoading && search.tree.length === 0"
-        class="text-sm text-neutral-500"
+        class="text-sm text-muted"
       >
         No games reach this position.
       </p>
@@ -85,7 +85,7 @@ onMounted(() => {
         class="w-full border-collapse text-sm"
       >
         <thead>
-          <tr class="border-b border-neutral-300 text-left text-neutral-500 dark:border-neutral-700">
+          <tr class="border-b border-border text-left text-muted">
             <th class="py-1 pr-3">
               Move
             </th>
@@ -102,14 +102,14 @@ onMounted(() => {
             v-for="m in search.tree"
             :key="m.san"
             data-test="tree-row"
-            class="cursor-pointer border-b border-neutral-100 hover:bg-neutral-100 dark:border-neutral-800 dark:hover:bg-neutral-800"
+            class="cursor-pointer border-b border-border hover:bg-surface-2"
             @click="search.playSan(m.san)"
           >
             <td class="py-1 pr-3 font-mono font-medium">
               {{ m.san }}
             </td>
             <td class="py-1 pr-3">
-              {{ m.count }}<span class="text-neutral-400"> ({{ frequency(m, total) }}%)</span>
+              {{ m.count }}<span class="text-muted"> ({{ frequency(m, total) }}%)</span>
             </td>
             <td class="py-1">
               <div class="flex h-4 w-40 overflow-hidden rounded text-[10px] leading-4 text-white">
@@ -143,7 +143,7 @@ onMounted(() => {
 
       <h3
         v-if="search.games.length"
-        class="mb-2 mt-6 text-sm font-semibold text-neutral-500"
+        class="mb-2 mt-6 text-sm font-semibold text-muted"
       >
         Games
       </h3>
@@ -155,12 +155,12 @@ onMounted(() => {
           class="text-sm"
         >
           <span class="font-medium">{{ g.white ?? '—' }}</span>
-          <span class="text-neutral-400"> vs </span>
+          <span class="text-muted"> vs </span>
           <span class="font-medium">{{ g.black ?? '—' }}</span>
-          <span class="font-mono text-neutral-500"> {{ g.result ?? '*' }}</span>
+          <span class="font-mono text-muted"> {{ g.result ?? '*' }}</span>
           <span
             v-if="g.date"
-            class="text-neutral-400"
+            class="text-muted"
           > · {{ g.date }}</span>
         </li>
       </ul>

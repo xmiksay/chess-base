@@ -311,6 +311,59 @@ async fn annotated_export_without_engine_is_unavailable() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 }
 
+/// DELETE `uri` with a bearer token, returning the status.
+async fn delete(app: &Router, uri: &str, token: &str) -> StatusCode {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn owner_deletes_a_game_and_it_no_longer_lists() {
+    let (app, db) = app_with_db().await;
+    let (alice, alice_id) = register(&app, "alice").await;
+    let db_id = seed(&db, &alice_id, &[SCHOLARS_MATE, QUEENS_DRAW]).await;
+    let game_id = first_game_id(&app, db_id, &alice).await;
+
+    assert_eq!(
+        delete(&app, &format!("/api/games/{game_id}"), &alice).await,
+        StatusCode::NO_CONTENT
+    );
+
+    // It is gone from the list and from a direct fetch.
+    let (_, list) = get(&app, &format!("/api/games?database_id={db_id}"), &alice).await;
+    assert_eq!(list["games"].as_array().unwrap().len(), 1);
+    let (status, _) = get(&app, &format!("/api/games/{game_id}"), &alice).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn non_owner_cannot_delete_a_game() {
+    let (app, db) = app_with_db().await;
+    let (alice, alice_id) = register(&app, "alice").await; // first user → admin
+    let (bob, _bob_id) = register(&app, "bob").await;
+    let alice_db = seed(&db, &alice_id, &[SCHOLARS_MATE]).await;
+    let game_id = first_game_id(&app, alice_db, &alice).await;
+
+    // Bob cannot see alice's private database, so the id is hidden as 404.
+    assert_eq!(
+        delete(&app, &format!("/api/games/{game_id}"), &bob).await,
+        StatusCode::NOT_FOUND
+    );
+    // The game still exists for its owner.
+    let (status, _) = get(&app, &format!("/api/games/{game_id}"), &alice).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
 #[tokio::test]
 async fn list_scope_excludes_other_users_database() {
     let (app, db) = app_with_db().await;

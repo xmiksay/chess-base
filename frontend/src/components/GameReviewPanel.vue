@@ -53,7 +53,7 @@ function onGraphSelect(ply: number) {
       <button
         type="button"
         data-test="analyse"
-        class="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700 disabled:opacity-50"
+        class="rounded bg-fg px-3 py-1 text-sm text-surface hover:opacity-90 disabled:opacity-50"
         :disabled="review.loading || engineEnabled === false"
         :title="engineEnabled === false ? 'No engine configured on the server.' : ''"
         @click="onAnalyse"
@@ -63,7 +63,7 @@ function onGraphSelect(ply: number) {
       <button
         type="button"
         data-test="export"
-        class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+        class="rounded border border-border px-3 py-1 text-sm hover:bg-surface-2"
         @click="onExport(false)"
       >
         Export PGN
@@ -71,7 +71,7 @@ function onGraphSelect(ply: number) {
       <button
         type="button"
         data-test="export-annotated"
-        class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-50"
+        class="rounded border border-border px-3 py-1 text-sm hover:bg-surface-2 disabled:opacity-50"
         :disabled="engineEnabled === false"
         :title="engineEnabled === false ? 'No engine configured on the server.' : ''"
         @click="onExport(true)"
@@ -81,13 +81,13 @@ function onGraphSelect(ply: number) {
       <SaveAsAnalysisForm :engine-enabled="engineEnabled" />
       <span
         v-if="engineEnabled === false"
-        class="text-xs text-neutral-500"
+        class="text-xs text-muted"
       >
         No engine configured.
       </span>
       <span
         v-if="review.error"
-        class="text-xs text-red-600"
+        class="text-xs text-bad"
         data-test="review-error"
       >
         {{ review.error }}
@@ -110,7 +110,7 @@ function onGraphSelect(ply: number) {
         <div
           v-for="side in (['white', 'black'] as const)"
           :key="side"
-          class="rounded border border-neutral-200 p-2"
+          class="rounded border border-border p-2"
           :data-test="`summary-${side}`"
         >
           <p class="mb-1 font-medium capitalize">
@@ -118,7 +118,7 @@ function onGraphSelect(ply: number) {
           </p>
           <p>Accuracy: {{ pct(review.review.summary[side].accuracy) }}</p>
           <p>ACPL: {{ review.review.summary[side].acpl }}</p>
-          <p class="text-neutral-500">
+          <p class="text-muted">
             {{ review.review.summary[side].inaccuracies }} inacc ·
             {{ review.review.summary[side].mistakes }} mist ·
             {{ review.review.summary[side].blunders }} blun
@@ -128,7 +128,7 @@ function onGraphSelect(ply: number) {
 
       <div
         v-if="review.currentMove"
-        class="mt-3 rounded border border-neutral-200 p-2 text-sm"
+        class="mt-3 rounded border border-border p-2 text-sm"
         data-test="why-note"
       >
         <span
@@ -137,12 +137,12 @@ function onGraphSelect(ply: number) {
         >
           {{ review.currentMove.san }}{{ classificationGlyph(review.currentMove.classification) }}
         </span>
-        <span class="text-neutral-500"> {{ formatReviewEval(review.currentMove) }}</span>
+        <span class="text-muted"> {{ formatReviewEval(review.currentMove) }}</span>
         <span
           v-if="review.currentMove.best_move"
-          class="text-neutral-500"
+          class="text-muted"
         > · best: {{ review.currentMove.best_move }}</span>
-        <p class="mt-1 text-neutral-700">
+        <p class="mt-1 text-fg">
           {{ review.currentMove.explanation }}
         </p>
       </div>
@@ -154,7 +154,7 @@ function onGraphSelect(ply: number) {
       class="mt-4"
       data-test="linked-analyses"
     >
-      <p class="mb-1 text-xs font-medium text-neutral-500">
+      <p class="mb-1 text-xs font-medium text-muted">
         Saved analyses
       </p>
       <ul class="flex flex-col gap-0.5 text-sm">
@@ -165,7 +165,7 @@ function onGraphSelect(ply: number) {
           <RouterLink
             :to="{ name: 'studies' }"
             data-test="linked-analysis"
-            class="text-neutral-700 hover:underline"
+            class="text-fg hover:underline"
           >
             {{ s.name }}
           </RouterLink>

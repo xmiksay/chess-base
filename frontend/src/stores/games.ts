@@ -145,6 +145,22 @@ export const useGamesStore = defineStore('games', () => {
     return study
   }
 
+  /**
+   * Delete a game from its database. Drops it from the current page (and clears
+   * the opened board if it was the one shown), then refreshes the page so the
+   * paginator/total stay correct. Throws on failure for the caller to surface.
+   */
+  async function remove(id: number) {
+    await api.games.remove(id)
+    if (openGame.value?.id === id) {
+      openGame.value = null
+      board.reset()
+    }
+    games.value = games.value.filter((g) => g.id !== id)
+    total.value = Math.max(0, total.value - 1)
+    await fetchPage()
+  }
+
   /** Node ids along the mainline; the array index is the ply (0 = start). */
   function mainlinePath(): number[] {
     return mainlinePathOf(board.tree.value)
@@ -213,6 +229,7 @@ export const useGamesStore = defineStore('games', () => {
     goToPage,
     setSort,
     open,
+    remove,
     mainlinePath,
     plyOf,
     nodeAtPly,

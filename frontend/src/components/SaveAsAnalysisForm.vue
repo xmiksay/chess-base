@@ -70,14 +70,14 @@ async function submit() {
     <button
       type="button"
       data-test="save-as-analysis"
-      class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+      class="rounded border border-border px-3 py-1 text-sm hover:bg-surface-2"
       @click="show"
     >
       Save as analysis
     </button>
     <span
       v-if="savedName"
-      class="text-xs text-green-700"
+      class="text-xs text-good"
       data-test="save-as-analysis-saved"
     >
       Saved “{{ savedName }}”.
@@ -85,24 +85,24 @@ async function submit() {
 
     <div
       v-if="open"
-      class="absolute z-10 mt-2 w-72 rounded border border-neutral-300 bg-white p-3 shadow-lg"
+      class="absolute z-10 mt-2 w-72 rounded border border-border bg-surface p-3 shadow-lg"
       data-test="save-as-analysis-dialog"
     >
-      <label class="mb-2 block text-xs text-neutral-600">
+      <label class="mb-2 block text-xs text-muted">
         Name
         <input
           v-model="name"
           data-test="save-as-analysis-name"
-          class="mt-1 w-full rounded border border-neutral-300 px-2 py-1 text-sm"
+          class="mt-1 w-full rounded border border-border px-2 py-1 text-sm"
         >
       </label>
 
-      <label class="mb-2 block text-xs text-neutral-600">
+      <label class="mb-2 block text-xs text-muted">
         Folder
         <select
           v-model="folderId"
           data-test="save-as-analysis-folder"
-          class="mt-1 w-full rounded border border-neutral-300 px-2 py-1 text-sm"
+          class="mt-1 w-full rounded border border-border px-2 py-1 text-sm"
         >
           <option :value="null">
             Unfiled
@@ -117,7 +117,7 @@ async function submit() {
         </select>
       </label>
 
-      <label class="mb-2 flex items-center gap-2 text-xs text-neutral-600">
+      <label class="mb-2 flex items-center gap-2 text-xs text-muted">
         <input
           v-model="analyse"
           type="checkbox"
@@ -127,13 +127,13 @@ async function submit() {
         Run engine analysis
         <span
           v-if="props.engineEnabled !== true"
-          class="text-neutral-400"
+          class="text-muted"
         >(no engine)</span>
       </label>
 
       <p
         v-if="error"
-        class="mb-2 text-xs text-red-600"
+        class="mb-2 text-xs text-bad"
         data-test="save-as-analysis-error"
       >
         {{ error }}
@@ -142,7 +142,7 @@ async function submit() {
       <div class="flex justify-end gap-2">
         <button
           type="button"
-          class="rounded px-2 py-1 text-xs text-neutral-500 hover:text-neutral-800"
+          class="rounded px-2 py-1 text-xs text-muted hover:text-fg"
           @click="open = false"
         >
           Cancel
@@ -150,7 +150,7 @@ async function submit() {
         <button
           type="button"
           data-test="save-as-analysis-submit"
-          class="rounded bg-neutral-800 px-3 py-1 text-xs text-white hover:bg-neutral-700 disabled:opacity-50"
+          class="rounded bg-fg px-3 py-1 text-xs text-surface hover:opacity-90 disabled:opacity-50"
           :disabled="saving || !name.trim()"
           @click="submit"
         >

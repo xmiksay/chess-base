@@ -19,7 +19,9 @@ import {
   firstChild,
   getNode,
   lastMainlineId,
+  reorderChild,
   sanPath,
+  siblingIndex,
 } from './moveTree'
 import type { BoardMove, Color, Dests, MoveTree, Square } from '../types'
 
@@ -146,6 +148,26 @@ export function useTreeBoard() {
     seek(parentId)
   }
 
+  /** Delete any node and its subtree, dropping the cursor to its parent. */
+  function removeNode(id: number) {
+    if (id === tree.value.root) return
+    const { tree: pruned, parentId } = deleteSubtree(tree.value, id)
+    tree.value = pruned
+    seek(currentId.value === id || !getNode(pruned, currentId.value) ? parentId : currentId.value)
+  }
+
+  /** Promote a node to its parent's mainline continuation. */
+  function promoteNode(id: number) {
+    tree.value = reorderChild(tree.value, id, 0)
+  }
+
+  /** Demote a node one step away from the mainline (its sibling index + 1). */
+  function demoteNode(id: number) {
+    const idx = siblingIndex(tree.value, id)
+    if (idx < 0) return
+    tree.value = reorderChild(tree.value, id, idx + 1)
+  }
+
   /** Load an arbitrary position as a fresh start; returns false on invalid FEN. */
   function setFen(newFen: string): boolean {
     let next
@@ -206,6 +228,9 @@ export function useTreeBoard() {
     last,
     reset,
     undo,
+    removeNode,
+    promoteNode,
+    demoteNode,
     setFen,
     load,
   }

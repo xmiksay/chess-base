@@ -71,10 +71,32 @@ export function dangerShapesForFen(tree: DangerTree | null, fen: string): DrawSh
   return shapes
 }
 
+/** SAN line from the root down to `node` (the moves that reach this danger node). */
+function lineSan(tree: DangerTree, node: DangerTree['nodes'][number]): string[] {
+  const sans: string[] = []
+  let cur: DangerTree['nodes'][number] | undefined = node
+  while (cur && cur.parent != null) {
+    if (cur.san) sans.push(cur.san)
+    cur = tree.nodes[cur.parent]
+  }
+  return sans.reverse()
+}
+
+/** Move-number label for a ply, e.g. `3.dxc4` (White) or `3…dxc4` (Black). */
+function moveLabel(ply: number, san: string): string {
+  const moveNo = Math.ceil(ply / 2)
+  return ply % 2 === 1 ? `${moveNo}.${san}` : `${moveNo}…${san}`
+}
+
 /** One tagged node flattened for the side panel, with the raw figures it carries. */
 export interface DangerRoleRow {
   nodeId: number
   san: string | null
+  // The full line reaching this node and a move-numbered label for it, so the
+  // panel can disambiguate the same move appearing in several lines (e.g. four
+  // different "dxc4"s) and navigate the study tree to it.
+  line: string[]
+  label: string
   kind: string // Trap | OnlyMove | Attack | OffBook
   role: string // Weapon | Caution | OffBook
   onlyMoveGap: number | null // PV1 − PV2 gap, centipawns
@@ -97,6 +119,8 @@ export function dangerRoles(tree: DangerTree | null): DangerRoleRow[] {
       return {
         nodeId: n.id,
         san: n.san ?? null,
+        line: lineSan(tree, n),
+        label: n.san ? moveLabel(n.ply, n.san) : '—',
         kind: tag.kind,
         role: tag.role,
         onlyMoveGap: tag.only_move_gap ?? null,

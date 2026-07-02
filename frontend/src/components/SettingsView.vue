@@ -41,18 +41,27 @@ const setDefaultDatabase = (e: Event) =>
       ? Number((e.target as HTMLSelectElement).value)
       : null,
   })
+
+// Persistent engine options, applied on every analysis board (issue: engine
+// defaults). Clamped to the same ranges the backend validates.
+const setEngineMultipv = (e: Event) =>
+  settings.update({ engineMultipv: Number((e.target as HTMLSelectElement).value) })
+const setEngineThreads = (e: Event) =>
+  settings.update({ engineThreads: Number((e.target as HTMLInputElement).value) })
+const setEngineHash = (e: Event) =>
+  settings.update({ engineHash: Number((e.target as HTMLInputElement).value) })
 </script>
 
 <template>
   <div class="flex flex-col gap-6">
-    <section class="rounded border border-neutral-200 p-4">
+    <section class="rounded border border-border p-4">
       <h2 class="mb-3 text-lg font-semibold">
         Appearance
       </h2>
 
       <p
         v-if="settings.error"
-        class="mb-3 text-sm text-red-600"
+        class="mb-3 text-sm text-bad"
         data-test="error"
       >
         {{ settings.error }}
@@ -62,7 +71,7 @@ const setDefaultDatabase = (e: Event) =>
         <label class="flex flex-col gap-1 text-sm">
           <span class="font-medium">Theme</span>
           <select
-            class="rounded border border-neutral-300 px-2 py-1"
+            class="rounded border border-border px-2 py-1"
             data-test="theme"
             :value="settings.theme"
             @change="setTheme"
@@ -80,7 +89,7 @@ const setDefaultDatabase = (e: Event) =>
         <label class="flex flex-col gap-1 text-sm">
           <span class="font-medium">Board theme</span>
           <select
-            class="rounded border border-neutral-300 px-2 py-1"
+            class="rounded border border-border px-2 py-1"
             data-test="board-theme"
             :value="settings.boardTheme"
             @change="setBoardTheme"
@@ -98,7 +107,7 @@ const setDefaultDatabase = (e: Event) =>
         <label class="flex flex-col gap-1 text-sm">
           <span class="font-medium">Piece set</span>
           <select
-            class="rounded border border-neutral-300 px-2 py-1"
+            class="rounded border border-border px-2 py-1"
             data-test="piece-set"
             :value="settings.pieceSet"
             @change="setPieceSet"
@@ -116,7 +125,7 @@ const setDefaultDatabase = (e: Event) =>
         <label class="flex flex-col gap-1 text-sm">
           <span class="font-medium">Default database</span>
           <select
-            class="rounded border border-neutral-300 px-2 py-1"
+            class="rounded border border-border px-2 py-1"
             data-test="default-database"
             :value="settings.defaultDatabaseId ?? ''"
             @change="setDefaultDatabase"
@@ -132,6 +141,61 @@ const setDefaultDatabase = (e: Event) =>
               {{ d.name }}
             </option>
           </select>
+        </label>
+      </div>
+    </section>
+
+    <section class="rounded border border-border p-4">
+      <h2 class="mb-1 text-lg font-semibold">
+        Engine analysis
+      </h2>
+      <p class="mb-3 text-sm text-muted">
+        Saved per user and used on every analysis board.
+      </p>
+
+      <div class="grid gap-4 sm:grid-cols-3">
+        <label class="flex flex-col gap-1 text-sm">
+          <span class="font-medium">Lines (MultiPV)</span>
+          <select
+            class="rounded border border-border bg-surface px-2 py-1"
+            data-test="engine-multipv"
+            :value="settings.engineMultipv"
+            @change="setEngineMultipv"
+          >
+            <option
+              v-for="n in 5"
+              :key="n"
+              :value="n"
+            >
+              {{ n }}
+            </option>
+          </select>
+        </label>
+
+        <label class="flex flex-col gap-1 text-sm">
+          <span class="font-medium">Threads</span>
+          <input
+            type="number"
+            min="1"
+            max="64"
+            class="rounded border border-border bg-surface px-2 py-1"
+            data-test="engine-threads"
+            :value="settings.engineThreads"
+            @change="setEngineThreads"
+          >
+        </label>
+
+        <label class="flex flex-col gap-1 text-sm">
+          <span class="font-medium">Hash (MB)</span>
+          <input
+            type="number"
+            min="1"
+            max="4096"
+            class="rounded border border-border bg-surface px-2 py-1"
+            data-test="engine-hash"
+            :value="settings.engineHash"
+            @change="setEngineHash"
+          >
         </label>
       </div>
     </section>

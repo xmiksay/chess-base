@@ -17,6 +17,7 @@ const emit = defineEmits<{
   comment: [comment: string]
   nag: [nag: number]
   promote: []
+  demote: []
   delete: []
 }>()
 
@@ -47,8 +48,8 @@ const editable = () => props.node && props.node.parent != null
         :key="n"
         type="button"
         data-test="nag"
-        class="rounded border border-neutral-300 px-2 py-0.5 text-sm hover:bg-neutral-100 disabled:opacity-50"
-        :class="{ 'border-blue-500 bg-blue-50': node?.nags?.includes(n) }"
+        class="rounded border border-border px-2 py-0.5 text-sm hover:bg-surface-2 disabled:opacity-50"
+        :class="{ 'border-accent bg-accent/10': node?.nags?.includes(n) }"
         :disabled="!editable()"
         @click="emit('nag', n)"
       >
@@ -62,7 +63,7 @@ const editable = () => props.node && props.node.parent != null
       rows="2"
       placeholder="Comment on this move…"
       aria-label="Comment"
-      class="w-full rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
+      class="w-full rounded border border-border bg-surface px-2 py-1 text-sm disabled:opacity-50"
       :disabled="!editable()"
       @change="emit('comment', comment)"
     />
@@ -71,7 +72,7 @@ const editable = () => props.node && props.node.parent != null
       <button
         type="button"
         data-test="promote"
-        class="rounded border border-neutral-300 px-2 py-1 text-sm hover:bg-neutral-100 disabled:opacity-50"
+        class="rounded border border-border px-2 py-1 text-sm hover:bg-surface-2 disabled:opacity-50"
         :disabled="!editable()"
         @click="emit('promote')"
       >
@@ -79,8 +80,17 @@ const editable = () => props.node && props.node.parent != null
       </button>
       <button
         type="button"
+        data-test="demote"
+        class="rounded border border-border px-2 py-1 text-sm hover:bg-surface-2 disabled:opacity-50"
+        :disabled="!editable()"
+        @click="emit('demote')"
+      >
+        Demote
+      </button>
+      <button
+        type="button"
         data-test="delete"
-        class="rounded border border-red-300 px-2 py-1 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+        class="rounded border border-bad/50 px-2 py-1 text-sm text-bad hover:bg-bad/10 disabled:opacity-50"
         :disabled="!editable()"
         @click="emit('delete')"
       >

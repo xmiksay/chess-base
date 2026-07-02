@@ -872,3 +872,84 @@ async fn analyse_study_without_an_engine_is_service_unavailable() {
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("No engine configured"), "body was: {text}");
 }
+
+const STARTPOS: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+/// `POST /api/studies/{id}/merge-danger` (ADR-0032) grafts an engine-walked
+/// danger tree into a study as deduped variations: a new reply appears, and
+/// merging the same tree again adds nothing.
+#[tokio::test]
+async fn merge_danger_grafts_variations_and_dedups() {
+    let app = server_app().await;
+    let bob = register(&app, "bob").await;
+    let db_id = make_database(&app, &bob).await;
+
+    // A study with a 1.e4 e5 mainline.
+    let (status, study) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/import",
+            &bob,
+            json!({
+                "database_id": db_id,
+                "name": "Open Games",
+                "pgn": "1. e4 e5 *",
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let study_id = study["id"].as_i64().unwrap();
+
+    // A danger tree at 1.e4 with two replies: e5 (shared with the mainline) and
+    // c5 (a new variation to graft). FENs are cosmetic for the graft, which
+    // re-derives positions from the study's own start.
+    let danger = json!({
+        "root": 0,
+        "nodes": [
+            {"id":0,"parent":null,"fen":STARTPOS,"ply":0,"children":[1]},
+            {"id":1,"parent":0,"san":"e4","fen":"rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1","ply":1,"children":[2,3]},
+            {"id":2,"parent":1,"san":"e5","fen":"rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2","ply":2,"children":[]},
+            {"id":3,"parent":1,"san":"c5","fen":"rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2","ply":2,"children":[]}
+        ]
+    });
+
+    let (status, merged) = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("/api/studies/{study_id}/merge-danger"),
+            &bob,
+            json!({ "tree": danger }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let nodes = merged["tree"]["nodes"].as_array().unwrap();
+    // e4's node now branches into e5 (kept) + c5 (grafted).
+    let e4 = nodes
+        .iter()
+        .find(|n| n["san"] == "e4")
+        .expect("the e4 node survives the merge");
+    assert_eq!(e4["children"].as_array().unwrap().len(), 2);
+    assert!(nodes.iter().any(|n| n["san"] == "c5"));
+    let count_after_first = nodes.len();
+
+    // Merging the same tree again follows the existing children — no duplicates.
+    let (status, merged2) = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("/api/studies/{study_id}/merge-danger"),
+            &bob,
+            json!({ "tree": danger }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        merged2["tree"]["nodes"].as_array().unwrap().len(),
+        count_after_first
+    );
+}

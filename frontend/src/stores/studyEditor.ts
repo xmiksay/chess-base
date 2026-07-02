@@ -9,7 +9,14 @@ import { ref, computed } from 'vue'
 import { Chess } from 'chess.js'
 import { api } from '../api'
 import { useStudiesStore } from './studies'
-import { childWithSan, firstChild, getNode, lastMainlineId, sanPath } from '../lib/moveTree'
+import {
+  childWithSan,
+  firstChild,
+  getNode,
+  lastMainlineId,
+  sanPath,
+  siblingIndex,
+} from '../lib/moveTree'
 import type { Annotation, BoardMove, Shape, Square } from '../types'
 
 /** A chess.js seeded from a study's set-up `start_fen`, or the standard start
@@ -155,6 +162,14 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
     studies.current = await api.studies.reorder(studyId.value!, id, index)
   }
 
+  /** Demote a node one step away from the mainline (its sibling index + 1). */
+  async function demote(id: number) {
+    if (!tree.value) return
+    const idx = siblingIndex(tree.value, id)
+    if (idx < 0) return
+    await reorder(id, idx + 1)
+  }
+
   /**
    * Delete a node and its subtree. The backend re-indexes node ids, so the
    * returned tree is authoritative; we drop the selection back to the start.
@@ -189,6 +204,7 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
     analyseStudy,
     promote,
     reorder,
+    demote,
     deleteNode,
   }
 })

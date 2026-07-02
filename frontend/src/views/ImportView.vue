@@ -68,14 +68,14 @@ onMounted(async () => {
     <h2 class="text-lg font-semibold">
       Import games
     </h2>
-    <p class="mt-1 text-sm text-neutral-500">
+    <p class="mt-1 text-sm text-muted">
       Sync from Lichess or Chess.com, or upload a PGN file, into one of your
       collections.
     </p>
 
     <p
       v-if="store.error"
-      class="mt-3 text-sm text-red-600"
+      class="mt-3 text-sm text-bad"
       data-test="error"
     >
       {{ store.error }}
@@ -86,7 +86,7 @@ onMounted(async () => {
       <select
         v-model="targetId"
         aria-label="Target collection"
-        class="rounded border border-neutral-300 px-2 py-1 text-sm"
+        class="rounded border border-border px-2 py-1 text-sm"
         data-test="target"
       >
         <option
@@ -100,7 +100,7 @@ onMounted(async () => {
     </label>
     <p
       v-if="!store.databases.length"
-      class="mt-2 text-sm text-neutral-500"
+      class="mt-2 text-sm text-muted"
       data-test="no-databases"
     >
       No collections yet — create one first.
@@ -108,7 +108,7 @@ onMounted(async () => {
 
     <!-- Provider sync -->
     <form
-      class="mt-6 rounded border border-neutral-200 p-4"
+      class="mt-6 rounded border border-border p-4"
       data-test="sync-form"
       @submit.prevent="startSync"
     >
@@ -117,11 +117,11 @@ onMounted(async () => {
       </h3>
       <div class="mt-3 flex flex-wrap items-end gap-2">
         <label class="flex flex-col gap-1 text-sm">
-          <span class="text-neutral-600">Source</span>
+          <span class="text-muted">Source</span>
           <select
             v-model="sync.source"
             aria-label="Source"
-            class="rounded border border-neutral-300 px-2 py-1 text-sm"
+            class="rounded border border-border px-2 py-1 text-sm"
             data-test="source"
           >
             <option value="lichess">
@@ -133,10 +133,10 @@ onMounted(async () => {
           </select>
         </label>
         <label class="flex flex-col gap-1 text-sm">
-          <span class="text-neutral-600">Username</span>
+          <span class="text-muted">Username</span>
           <input
             v-model="sync.username"
-            class="rounded border border-neutral-300 px-2 py-1 text-sm"
+            class="rounded border border-border px-2 py-1 text-sm"
             placeholder="username"
             data-test="username"
           >
@@ -145,10 +145,10 @@ onMounted(async () => {
           v-if="supportsToken"
           class="flex flex-col gap-1 text-sm"
         >
-          <span class="text-neutral-600">API token (optional)</span>
+          <span class="text-muted">API token (optional)</span>
           <input
             v-model="sync.token"
-            class="rounded border border-neutral-300 px-2 py-1 text-sm"
+            class="rounded border border-border px-2 py-1 text-sm"
             placeholder="lichess token"
             data-test="token"
           >
@@ -156,7 +156,7 @@ onMounted(async () => {
         <button
           type="submit"
           :disabled="!canSync"
-          class="rounded bg-emerald-600 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          class="rounded bg-accent px-3 py-1 text-sm font-medium text-surface hover:opacity-90 disabled:opacity-50"
           data-test="sync-submit"
         >
           Sync
@@ -166,7 +166,7 @@ onMounted(async () => {
 
     <!-- PGN upload -->
     <form
-      class="mt-4 rounded border border-neutral-200 p-4"
+      class="mt-4 rounded border border-border p-4"
       data-test="pgn-form"
       @submit.prevent="uploadPgn"
     >
@@ -185,7 +185,7 @@ onMounted(async () => {
         <button
           type="submit"
           :disabled="!canUpload"
-          class="rounded bg-emerald-600 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          class="rounded bg-accent px-3 py-1 text-sm font-medium text-surface hover:opacity-90 disabled:opacity-50"
           data-test="pgn-submit"
         >
           Upload
@@ -204,7 +204,7 @@ onMounted(async () => {
       >
         {{ summaryText }}
       </p>
-      <ul class="mt-3 divide-y divide-neutral-100">
+      <ul class="mt-3 divide-y divide-border">
         <li
           v-for="job in store.jobs"
           :key="job.id"
@@ -214,9 +214,9 @@ onMounted(async () => {
           <span
             class="rounded px-1.5 py-0.5 text-xs"
             :class="{
-              'bg-neutral-100 text-neutral-600': job.status === 'running',
-              'bg-emerald-100 text-emerald-800': job.status === 'success',
-              'bg-red-100 text-red-800': job.status === 'error',
+              'bg-surface-2 text-muted': job.status === 'running',
+              'bg-good/10 text-good': job.status === 'success',
+              'bg-bad/10 text-bad': job.status === 'error',
             }"
             data-test="job-status"
           >
@@ -225,14 +225,14 @@ onMounted(async () => {
           <span class="font-medium">{{ job.label }}</span>
           <span
             v-if="job.status === 'success'"
-            class="text-neutral-500"
+            class="text-muted"
             data-test="job-imported"
           >
             {{ job.imported }} game(s)
           </span>
           <span
             v-else-if="job.status === 'error'"
-            class="text-red-600"
+            class="text-bad"
             data-test="job-error"
           >
             {{ job.error }}

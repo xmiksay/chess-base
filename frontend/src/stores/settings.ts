@@ -24,6 +24,11 @@ interface SettingsState {
   showPlans: boolean
   showThreats: boolean
   showMasterMoves: boolean
+  // Persistent engine options (MultiPV / Threads / Hash MB), shared by every
+  // engine panel so analysis runs with the user's chosen strength everywhere.
+  engineMultipv: number
+  engineThreads: number
+  engineHash: number
 }
 
 const DEFAULTS: SettingsState = {
@@ -34,6 +39,9 @@ const DEFAULTS: SettingsState = {
   showPlans: true,
   showThreats: false,
   showMasterMoves: false,
+  engineMultipv: 3,
+  engineThreads: 4,
+  engineHash: 16,
 }
 
 /** Map the backend's snake_case payload into the store's camelCase shape. */
@@ -46,6 +54,9 @@ function fromApi(s: ApiSettings): SettingsState {
     showPlans: s.show_plans ?? DEFAULTS.showPlans,
     showThreats: s.show_threats ?? DEFAULTS.showThreats,
     showMasterMoves: s.show_master_moves ?? DEFAULTS.showMasterMoves,
+    engineMultipv: s.engine_multipv ?? DEFAULTS.engineMultipv,
+    engineThreads: s.engine_threads ?? DEFAULTS.engineThreads,
+    engineHash: s.engine_hash_mb ?? DEFAULTS.engineHash,
   }
 }
 
@@ -60,6 +71,9 @@ function toApi(s: SettingsState): ApiSettings {
   out.show_plans = s.showPlans
   out.show_threats = s.showThreats
   out.show_master_moves = s.showMasterMoves
+  out.engine_multipv = s.engineMultipv
+  out.engine_threads = s.engineThreads
+  out.engine_hash_mb = s.engineHash
   return out
 }
 
@@ -82,6 +96,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const showPlans = ref(mirror.showPlans)
   const showThreats = ref(mirror.showThreats)
   const showMasterMoves = ref(mirror.showMasterMoves)
+  const engineMultipv = ref(mirror.engineMultipv)
+  const engineThreads = ref(mirror.engineThreads)
+  const engineHash = ref(mirror.engineHash)
   const error = ref<string | null>(null)
 
   function snapshot(): SettingsState {
@@ -93,6 +110,9 @@ export const useSettingsStore = defineStore('settings', () => {
       showPlans: showPlans.value,
       showThreats: showThreats.value,
       showMasterMoves: showMasterMoves.value,
+      engineMultipv: engineMultipv.value,
+      engineThreads: engineThreads.value,
+      engineHash: engineHash.value,
     }
   }
 
@@ -104,6 +124,9 @@ export const useSettingsStore = defineStore('settings', () => {
     showPlans.value = s.showPlans
     showThreats.value = s.showThreats
     showMasterMoves.value = s.showMasterMoves
+    engineMultipv.value = s.engineMultipv
+    engineThreads.value = s.engineThreads
+    engineHash.value = s.engineHash
     persistMirror()
     applyTheme()
   }
@@ -162,6 +185,9 @@ export const useSettingsStore = defineStore('settings', () => {
     showPlans,
     showThreats,
     showMasterMoves,
+    engineMultipv,
+    engineThreads,
+    engineHash,
     error,
     snapshot,
     load,

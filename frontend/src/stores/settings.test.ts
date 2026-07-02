@@ -87,6 +87,31 @@ describe('settings store', () => {
     expect(s.showMasterMoves).toBe(false)
   })
 
+  it('defaults engine options to 3 lines / 4 threads / 16 MB', () => {
+    const s = useSettingsStore()
+    expect(s.engineMultipv).toBe(3)
+    expect(s.engineThreads).toBe(4)
+    expect(s.engineHash).toBe(16)
+  })
+
+  it('maps engine options from the server and persists them snake_case', async () => {
+    vi.mocked(api.settings.set).mockResolvedValue({
+      engine_multipv: 5,
+      engine_threads: 8,
+      engine_hash_mb: 256,
+    })
+    const s = useSettingsStore()
+    await s.update({ engineMultipv: 5, engineThreads: 8, engineHash: 256 })
+
+    expect(api.settings.set).toHaveBeenCalledWith(
+      expect.objectContaining({ engine_multipv: 5, engine_threads: 8, engine_hash_mb: 256 }),
+    )
+    expect(s.engineMultipv).toBe(5)
+    expect(s.engineThreads).toBe(8)
+    expect(s.engineHash).toBe(256)
+    expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY)!).engineThreads).toBe(8)
+  })
+
   it('maps overlay flags from the server and persists them snake_case', async () => {
     vi.mocked(api.settings.set).mockResolvedValue({
       show_plans: false,

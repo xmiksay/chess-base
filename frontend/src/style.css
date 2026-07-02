@@ -5,12 +5,62 @@
 @import 'chessground/assets/chessground.brown.css';
 @import 'chessground/assets/chessground.cburnett.css';
 
+/*
+ * Class-based dark mode (the settings store toggles `.dark` on <html>, see
+ * stores/settings.ts:applyTheme). This overrides Tailwind v4's default
+ * prefers-color-scheme dark variant so `dark:` utilities follow the class.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Semantic design tokens (black/white + shadow motif). Each maps a Tailwind
+ * color token to a CSS variable that flips under `.dark`, so most components use
+ * `bg-surface` / `text-fg` / `border-border` and auto-adapt with no `dark:`
+ * prefix. Accents are the move-quality colors: good (green), warn (orange),
+ * bad (red); `accent` is the primary (green).
+ */
+@theme {
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-accent: var(--accent);
+}
+
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+  --surface: #ffffff;
+  --surface-2: #f4f4f5;
+  --border: #e4e4e7;
+  --fg: #0a0a0a;
+  --muted: #6b7280;
+  --good: #16a34a;
+  --warn: #ea580c;
+  --bad: #dc2626;
+  --accent: #16a34a;
+}
+
+.dark {
+  color-scheme: dark;
+  --surface: #0b0b0c;
+  --surface-2: #18181b;
+  --border: #27272a;
+  --fg: #fafafa;
+  --muted: #9ca3af;
+  --good: #22c55e;
+  --warn: #fb923c;
+  --bad: #f87171;
+  --accent: #22c55e;
 }
 
 body {
   margin: 0;
+  background-color: var(--surface);
+  color: var(--fg);
 }
 
 /*
