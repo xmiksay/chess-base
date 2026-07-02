@@ -20,7 +20,9 @@ describe('MoveTree', () => {
     const text = wrapper.text()
     expect(text).toContain('1.e4')
     expect(text).toContain('e5')
-    expect(text).toContain('(')
+    // The c5 line is a variation: it renders as its own indented block (no more
+    // inline parentheses), so the tree carries a variation container.
+    expect(wrapper.findAll('[data-test="variation"]')).toHaveLength(1)
     expect(text).toContain('c5')
     expect(text).toContain('!?') // NAG 5
     // The comment text is shown in MoveComment, not inline; the list only marks
@@ -33,7 +35,7 @@ describe('MoveTree', () => {
   it('highlights the current node', () => {
     const wrapper = mount(MoveTree, { props: { tree: sampleTree(), currentId: 1 } })
     const current = wrapper.findAll('[data-test="move"]')[0]
-    expect(current.classes()).toContain('bg-yellow-200')
+    expect(current.classes()).toContain('ring-accent')
   })
 
   it('emits select with the clicked node id', async () => {

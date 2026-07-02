@@ -1,74 +1,54 @@
 <script setup lang="ts">
-// Presentational variation tree: flattens the MoveTree into move / paren tokens
-// and renders them inline. The parent owns selection; clicking a move emits
-// `select(nodeId)`. Variations render dimmer the deeper they nest.
+// Variation tree panel: flattens the MoveTree into tokens, folds them into nested
+// variation blocks, and renders them with each variation indented one level (via
+// the recursive MoveTreeLine). The parent owns selection and the store edits;
+// clicking a move emits `select`, and the per-node toolbar emits promote / demote
+// / remove (only shown when `editable`).
 import { computed } from 'vue'
-import { treeTokens, nagGlyph } from '../lib/moveTree'
+import { treeTokens, tokenBlocks } from '../lib/moveTree'
+import MoveTreeLine from './MoveTreeLine.vue'
 import type { MoveTree } from '../types'
 
 interface Props {
   tree?: MoveTree | null
   currentId?: number | null
+  editable?: boolean
 }
 const props = withDefaults(defineProps<Props>(), {
   tree: null,
   currentId: null,
+  editable: false,
 })
-const emit = defineEmits<{ select: [nodeId: number] }>()
+defineEmits<{
+  select: [nodeId: number]
+  promote: [nodeId: number]
+  demote: [nodeId: number]
+  remove: [nodeId: number]
+}>()
 
-const tokens = computed(() => treeTokens(props.tree))
+const items = computed(() => tokenBlocks(treeTokens(props.tree)))
 </script>
 
 <template>
   <div
-    class="flex flex-wrap items-baseline gap-x-0.5 gap-y-0.5 text-sm leading-tight"
+    class="flex flex-wrap items-baseline gap-x-0.5 gap-y-1 text-sm leading-relaxed"
     data-test="move-tree"
   >
     <p
-      v-if="!tokens.length"
-      class="text-neutral-500"
+      v-if="!items.length"
+      class="text-muted"
     >
       No moves yet — play a move on the board to start the line.
     </p>
 
-    <template
-      v-for="(t, i) in tokens"
-      :key="i"
-    >
-      <span
-        v-if="t.type === 'open'"
-        class="text-neutral-400"
-      >(</span>
-      <span
-        v-else-if="t.type === 'close'"
-        class="text-neutral-400"
-      >)</span>
-      <button
-        v-else
-        type="button"
-        data-test="move"
-        class="rounded px-0.5 hover:bg-neutral-200"
-        :class="[
-          t.depth === 0 ? 'font-medium text-neutral-900' : 'text-neutral-600',
-          t.id === currentId ? 'bg-yellow-200 hover:bg-yellow-200' : '',
-        ]"
-        @click="emit('select', t.id)"
-      >
-        <span
-          v-if="t.number"
-          class="mr-0.5 text-neutral-400"
-        >{{ t.number }}</span>{{ t.san
-        }}<span
-          v-for="(n, ni) in t.nags"
-          :key="ni"
-          class="text-blue-600"
-        >{{ nagGlyph(n) }}</span><span
-          v-if="t.comment"
-          class="ml-0.5 text-green-600"
-          data-test="comment-marker"
-          title="has comment"
-        >•</span>
-      </button>
-    </template>
+    <MoveTreeLine
+      :items="items"
+      :current-id="currentId"
+      :editable="editable"
+      @select="$emit('select', $event)"
+      @promote="$emit('promote', $event)"
+      @demote="$emit('demote', $event)"
+      @remove="$emit('remove', $event)"
+    />
   </div>
 </template>

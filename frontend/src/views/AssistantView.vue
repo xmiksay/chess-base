@@ -56,7 +56,7 @@ onMounted(async () => {
     <aside class="w-60 shrink-0">
       <button
         type="button"
-        class="mb-3 w-full rounded bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-700"
+        class="mb-3 w-full rounded bg-fg px-3 py-2 text-sm font-medium text-surface hover:opacity-90"
         @click="startChat"
       >
         + New chat
@@ -65,8 +65,8 @@ onMounted(async () => {
         <li
           v-for="s in store.sessions"
           :key="s.id"
-          class="group flex items-center justify-between rounded px-2 py-1 text-sm hover:bg-neutral-100"
-          :class="{ 'bg-neutral-100 font-semibold': s.id === session?.id }"
+          class="group flex items-center justify-between rounded px-2 py-1 text-sm hover:bg-surface-2"
+          :class="{ 'bg-surface-2 font-semibold': s.id === session?.id }"
         >
           <button
             type="button"
@@ -77,7 +77,7 @@ onMounted(async () => {
           </button>
           <button
             type="button"
-            class="ml-2 hidden text-neutral-400 hover:text-red-600 group-hover:block"
+            class="ml-2 hidden text-muted hover:text-bad group-hover:block"
             title="Delete chat"
             @click="store.remove(s.id)"
           >
@@ -91,7 +91,7 @@ onMounted(async () => {
     <section class="flex min-h-[70vh] flex-1 flex-col">
       <p
         v-if="llmConfigured === false"
-        class="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+        class="mb-3 rounded border border-warn/50 bg-warn/10 px-3 py-2 text-sm text-warn"
       >
         No language model is configured. Set <code>ANTHROPIC_API_KEY</code> (or add an
         LLM provider) to use the study assistant.
@@ -99,17 +99,17 @@ onMounted(async () => {
 
       <div
         v-if="!session"
-        class="flex flex-1 items-center justify-center text-neutral-400"
+        class="flex flex-1 items-center justify-center text-muted"
       >
         Start a chat to build studies — e.g. “build me a repertoire vs the Sicilian”.
       </div>
 
       <template v-else>
-        <header class="mb-3 flex items-center justify-between border-b border-neutral-200 pb-2">
+        <header class="mb-3 flex items-center justify-between border-b border-border pb-2">
           <h2 class="font-semibold">
             {{ session.title }}
           </h2>
-          <span class="text-xs text-neutral-500">
+          <span class="text-xs text-muted">
             {{ session.model }} · step {{ session.iterations }}/{{ session.iteration_cap }}
           </span>
         </header>
@@ -125,7 +125,7 @@ onMounted(async () => {
               v-if="m.role === 'user'"
               class="flex justify-end"
             >
-              <div class="max-w-[80%] rounded-lg bg-neutral-900 px-3 py-2 text-sm text-white">
+              <div class="max-w-[80%] rounded-lg bg-fg px-3 py-2 text-sm text-surface">
                 {{ m.text }}
               </div>
             </div>
@@ -138,21 +138,21 @@ onMounted(async () => {
               <div class="max-w-[80%] space-y-2">
                 <div
                   v-if="m.text"
-                  class="whitespace-pre-wrap rounded-lg bg-neutral-100 px-3 py-2 text-sm"
+                  class="whitespace-pre-wrap rounded-lg bg-surface-2 px-3 py-2 text-sm"
                 >
                   {{ m.text }}
                 </div>
                 <div
                   v-for="call in m.tool_calls ?? []"
                   :key="call.id"
-                  class="rounded border border-neutral-200 bg-white px-2 py-1 text-xs"
+                  class="rounded border border-border bg-surface px-2 py-1 text-xs"
                 >
                   <span class="font-mono font-semibold">⚙ {{ call.name }}</span>
                   <span
                     v-if="call.requires_approval"
-                    class="ml-1 text-amber-600"
+                    class="ml-1 text-warn"
                   >(needs approval)</span>
-                  <pre class="mt-1 overflow-x-auto text-neutral-500">{{ prettyInput(call.input) }}</pre>
+                  <pre class="mt-1 overflow-x-auto text-muted">{{ prettyInput(call.input) }}</pre>
                 </div>
               </div>
             </div>
@@ -168,8 +168,8 @@ onMounted(async () => {
                   :key="r.tool_call_id"
                   class="overflow-x-auto rounded border px-2 py-1 text-xs"
                   :class="r.is_error
-                    ? 'border-red-200 bg-red-50 text-red-700'
-                    : 'border-neutral-200 bg-neutral-50 text-neutral-600'"
+                    ? 'border-bad/50 bg-bad/10 text-bad'
+                    : 'border-border bg-surface-2 text-muted'"
                 >{{ r.content }}</pre>
               </div>
             </div>
@@ -177,7 +177,7 @@ onMounted(async () => {
 
           <p
             v-if="store.sending"
-            class="text-sm text-neutral-400"
+            class="text-sm text-muted"
           >
             Thinking…
           </p>
@@ -186,23 +186,23 @@ onMounted(async () => {
         <!-- Pending approvals -->
         <div
           v-if="store.awaitingApproval"
-          class="mt-3 rounded border border-amber-300 bg-amber-50 p-3"
+          class="mt-3 rounded border border-warn/50 bg-warn/10 p-3"
         >
           <div class="mb-2 flex items-center justify-between">
-            <span class="text-sm font-medium text-amber-800">
+            <span class="text-sm font-medium text-warn">
               The assistant wants to run {{ store.pending.length }} action(s):
             </span>
             <div class="flex gap-2">
               <button
                 type="button"
-                class="rounded bg-emerald-600 px-2 py-1 text-xs text-white hover:bg-emerald-500"
+                class="rounded bg-accent px-2 py-1 text-xs text-surface hover:opacity-90"
                 @click="approveAll"
               >
                 Approve all
               </button>
               <button
                 type="button"
-                class="rounded bg-neutral-200 px-2 py-1 text-xs hover:bg-neutral-300"
+                class="rounded bg-surface-2 px-2 py-1 text-xs hover:bg-surface-2"
                 @click="denyAll"
               >
                 Deny all
@@ -213,20 +213,20 @@ onMounted(async () => {
             <li
               v-for="call in store.pending"
               :key="call.id"
-              class="flex items-center justify-between rounded bg-white px-2 py-1 text-xs"
+              class="flex items-center justify-between rounded bg-surface px-2 py-1 text-xs"
             >
               <span class="font-mono">{{ call.name }}</span>
               <span class="flex gap-1">
                 <button
                   type="button"
-                  class="text-emerald-600 hover:underline"
+                  class="text-accent hover:underline"
                   @click="decide(call.id, true)"
                 >
                   approve
                 </button>
                 <button
                   type="button"
-                  class="text-red-600 hover:underline"
+                  class="text-bad hover:underline"
                   @click="decide(call.id, false)"
                 >
                   deny
@@ -245,13 +245,13 @@ onMounted(async () => {
             v-model="draft"
             rows="2"
             placeholder="Ask the assistant to analyse a position or build a study…"
-            class="flex-1 resize-none rounded border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none"
+            class="flex-1 resize-none rounded border border-border px-3 py-2 text-sm focus:border-border focus:outline-none"
             :disabled="store.awaitingApproval"
             @keydown.enter.exact.prevent="submit"
           />
           <button
             type="submit"
-            class="self-end rounded bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+            class="self-end rounded bg-fg px-4 py-2 text-sm font-medium text-surface hover:opacity-90 disabled:opacity-50"
             :disabled="store.sending || store.awaitingApproval || !draft.trim()"
           >
             Send
@@ -259,13 +259,13 @@ onMounted(async () => {
         </form>
         <p
           v-if="store.awaitingApproval"
-          class="mt-1 text-xs text-amber-600"
+          class="mt-1 text-xs text-warn"
         >
           Resolve the pending action(s) above before sending another message.
         </p>
         <p
           v-if="store.error"
-          class="mt-1 text-xs text-red-600"
+          class="mt-1 text-xs text-bad"
         >
           {{ store.error }}
         </p>

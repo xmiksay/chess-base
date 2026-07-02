@@ -51,13 +51,13 @@ onMounted(() => store.refresh().catch(() => {}))
     <h2 class="text-lg font-semibold">
       Collections
     </h2>
-    <p class="mt-1 text-sm text-neutral-500">
+    <p class="mt-1 text-sm text-muted">
       Your databases of games, plus the global (admin-managed) ones.
     </p>
 
     <p
       v-if="store.error"
-      class="mt-3 text-sm text-red-600"
+      class="mt-3 text-sm text-bad"
       data-test="error"
     >
       {{ store.error }}
@@ -65,7 +65,7 @@ onMounted(() => store.refresh().catch(() => {}))
 
     <ul
       v-if="store.list.length"
-      class="mt-4 divide-y divide-neutral-100"
+      class="mt-4 divide-y divide-border"
     >
       <li
         v-for="db in store.list"
@@ -76,20 +76,20 @@ onMounted(() => store.refresh().catch(() => {}))
         <template v-if="editingId === db.id">
           <input
             v-model="editName"
-            class="rounded border border-neutral-300 px-2 py-1 text-sm"
+            class="rounded border border-border px-2 py-1 text-sm"
             aria-label="New name"
             @keyup.enter="commitRename(db.id)"
             @keyup.esc="cancelRename"
           >
           <button
-            class="text-neutral-800 hover:underline"
+            class="text-fg hover:underline"
             data-test="save"
             @click="commitRename(db.id)"
           >
             Save
           </button>
           <button
-            class="text-neutral-500 hover:underline"
+            class="text-muted hover:underline"
             @click="cancelRename"
           >
             Cancel
@@ -97,26 +97,26 @@ onMounted(() => store.refresh().catch(() => {}))
         </template>
         <template v-else>
           <span class="font-medium">{{ db.name }}</span>
-          <span class="text-neutral-500">{{ db.kind }}</span>
+          <span class="text-muted">{{ db.kind }}</span>
           <span
             class="rounded px-1.5 py-0.5 text-xs"
             :class="db.global
-              ? 'bg-amber-100 text-amber-800'
-              : 'bg-neutral-100 text-neutral-600'"
+              ? 'bg-warn/10 text-warn'
+              : 'bg-surface-2 text-muted'"
             data-test="badge"
           >
             {{ db.global ? 'Global' : 'Mine' }}
           </span>
           <template v-if="store.canWrite(db)">
             <button
-              class="ml-auto text-neutral-700 hover:underline"
+              class="ml-auto text-fg hover:underline"
               data-test="rename"
               @click="startRename(db)"
             >
               Rename
             </button>
             <button
-              class="text-red-600 hover:underline"
+              class="text-bad hover:underline"
               data-test="delete"
               @click="remove(db)"
             >
@@ -125,7 +125,7 @@ onMounted(() => store.refresh().catch(() => {}))
           </template>
           <span
             v-else
-            class="ml-auto text-xs text-neutral-400"
+            class="ml-auto text-xs text-muted"
             data-test="readonly"
           >
             Read-only
@@ -135,7 +135,7 @@ onMounted(() => store.refresh().catch(() => {}))
     </ul>
     <p
       v-else
-      class="mt-4 text-sm text-neutral-500"
+      class="mt-4 text-sm text-muted"
     >
       No collections yet.
     </p>
@@ -148,12 +148,12 @@ onMounted(() => store.refresh().catch(() => {}))
       <input
         v-model="form.name"
         placeholder="New collection name"
-        class="rounded border border-neutral-300 px-2 py-1 text-sm"
+        class="rounded border border-border px-2 py-1 text-sm"
       >
       <select
         v-model="form.kind"
         aria-label="Kind"
-        class="rounded border border-neutral-300 px-2 py-1 text-sm"
+        class="rounded border border-border px-2 py-1 text-sm"
       >
         <option
           v-for="k in KINDS"
@@ -165,7 +165,7 @@ onMounted(() => store.refresh().catch(() => {}))
       </select>
       <label
         v-if="store.isAdmin"
-        class="flex items-center gap-1 text-sm text-neutral-600"
+        class="flex items-center gap-1 text-sm text-muted"
       >
         <input
           v-model="form.global"
@@ -176,7 +176,7 @@ onMounted(() => store.refresh().catch(() => {}))
       </label>
       <button
         type="submit"
-        class="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700"
+        class="rounded bg-fg px-3 py-1 text-sm text-surface hover:opacity-90"
       >
         Create
       </button>

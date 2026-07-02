@@ -84,6 +84,7 @@ async fn analyse(
 fn game_error_response(err: GameError) -> Response {
     let status = match err {
         GameError::NotFound => StatusCode::NOT_FOUND,
+        GameError::Forbidden => StatusCode::FORBIDDEN,
         GameError::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     error_response(status, err.to_string())

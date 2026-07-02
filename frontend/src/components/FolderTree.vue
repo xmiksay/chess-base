@@ -56,12 +56,12 @@ async function onDelete() {
 <template>
   <li data-test="folder-node">
     <div
-      class="group flex items-center gap-1 rounded px-1 py-0.5 text-sm hover:bg-neutral-100"
-      :class="{ 'bg-neutral-100 font-medium': selectedId === folder.id }"
+      class="group flex items-center gap-1 rounded px-1 py-0.5 text-sm hover:bg-surface-2"
+      :class="{ 'bg-surface-2 font-medium': selectedId === folder.id }"
     >
       <button
         type="button"
-        class="w-4 text-neutral-400 hover:text-neutral-700"
+        class="w-4 text-muted hover:text-fg"
         :aria-label="expanded ? 'Collapse' : 'Expand'"
         data-test="folder-toggle"
         @click="expanded = !expanded"
@@ -73,14 +73,14 @@ async function onDelete() {
         <input
           v-model="renameValue"
           data-test="folder-rename-input"
-          class="flex-1 rounded border border-neutral-300 px-1 py-0.5 text-sm"
+          class="flex-1 rounded border border-border px-1 py-0.5 text-sm"
           @keyup.enter="submitRename"
           @keyup.esc="renaming = false"
         >
         <button
           type="button"
           data-test="folder-rename-submit"
-          class="text-xs text-neutral-500 hover:text-neutral-800"
+          class="text-xs text-muted hover:text-fg"
           @click="submitRename"
         >
           Save
@@ -96,11 +96,11 @@ async function onDelete() {
         >
           {{ folder.name }}{{ folder.global ? ' (global)' : '' }}
         </button>
-        <span class="hidden gap-1 text-xs text-neutral-400 group-hover:flex">
+        <span class="hidden gap-1 text-xs text-muted group-hover:flex">
           <button
             type="button"
             data-test="folder-add-child"
-            class="hover:text-neutral-800"
+            class="hover:text-fg"
             title="New subfolder"
             @click="addingChild = true"
           >
@@ -109,7 +109,7 @@ async function onDelete() {
           <button
             type="button"
             data-test="folder-rename"
-            class="hover:text-neutral-800"
+            class="hover:text-fg"
             title="Rename"
             @click="startRename"
           >
@@ -118,7 +118,7 @@ async function onDelete() {
           <button
             type="button"
             data-test="folder-delete"
-            class="hover:text-red-600"
+            class="hover:text-bad"
             title="Delete"
             @click="onDelete"
           >
@@ -137,13 +137,13 @@ async function onDelete() {
         v-model="childName"
         placeholder="Subfolder name"
         data-test="folder-child-input"
-        class="flex-1 rounded border border-neutral-300 px-1 py-0.5 text-sm"
+        class="flex-1 rounded border border-border px-1 py-0.5 text-sm"
         @keyup.esc="addingChild = false"
       >
       <button
         type="submit"
         data-test="folder-child-submit"
-        class="text-xs text-neutral-500 hover:text-neutral-800"
+        class="text-xs text-muted hover:text-fg"
       >
         Add
       </button>
@@ -151,7 +151,7 @@ async function onDelete() {
 
     <ul
       v-if="expanded"
-      class="ml-4 border-l border-neutral-200 pl-1"
+      class="ml-4 border-l border-border pl-1"
     >
       <FolderTree
         v-for="child in folders.childrenOf(folder.id)"

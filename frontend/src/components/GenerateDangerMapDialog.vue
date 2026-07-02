@@ -90,14 +90,14 @@ onMounted(async () => {
     data-test="danger-dialog"
     @click.self="emit('close')"
   >
-    <div class="w-full max-w-md rounded bg-white p-5 shadow-lg">
+    <div class="w-full max-w-md rounded bg-surface p-5 shadow-lg">
       <header class="mb-4 flex items-center justify-between">
         <h3 class="text-base font-semibold">
           Generate danger map
         </h3>
         <button
           type="button"
-          class="text-neutral-400 hover:text-neutral-700"
+          class="text-muted hover:text-fg"
           aria-label="Close"
           @click="emit('close')"
         >
@@ -122,16 +122,16 @@ onMounted(async () => {
           <li
             v-for="r in result.roles"
             :key="r.node_id"
-            class="flex items-center justify-between gap-2 rounded bg-neutral-50 px-2 py-1"
+            class="flex items-center justify-between gap-2 rounded bg-surface-2 px-2 py-1"
           >
             <span class="font-mono">{{ r.san ?? '—' }}</span>
-            <span class="text-neutral-500">{{ r.kind }} · {{ r.role }}</span>
+            <span class="text-muted">{{ r.kind }} · {{ r.role }}</span>
           </li>
         </ul>
         <div class="mt-4 flex justify-end gap-2">
           <button
             type="button"
-            class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+            class="rounded border border-border px-3 py-1 text-sm hover:bg-surface-2"
             @click="emit('close')"
           >
             Close
@@ -139,7 +139,7 @@ onMounted(async () => {
           <button
             type="button"
             data-test="open-result"
-            class="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700"
+            class="rounded bg-fg px-3 py-1 text-sm text-surface hover:opacity-90"
             @click="onOpenResult"
           >
             Open study
@@ -158,7 +158,7 @@ onMounted(async () => {
           <select
             v-model="databaseId"
             data-test="database"
-            class="rounded border border-neutral-300 px-2 py-1"
+            class="rounded border border-border px-2 py-1"
           >
             <option
               v-for="d in databases"
@@ -176,7 +176,7 @@ onMounted(async () => {
             v-model="name"
             data-test="name"
             placeholder="e.g. Smith-Morra traps"
-            class="rounded border border-neutral-300 px-2 py-1"
+            class="rounded border border-border px-2 py-1"
           >
         </label>
 
@@ -187,7 +187,7 @@ onMounted(async () => {
             data-test="spine-pgn"
             rows="3"
             placeholder="1. e4 c5 2. d4 cxd4 3. c3 *"
-            class="rounded border border-neutral-300 px-2 py-1 font-mono text-xs"
+            class="rounded border border-border px-2 py-1 font-mono text-xs"
           />
         </label>
 
@@ -196,7 +196,7 @@ onMounted(async () => {
           <input
             v-model="startFen"
             data-test="start-fen"
-            class="rounded border border-neutral-300 px-2 py-1 font-mono text-xs"
+            class="rounded border border-border px-2 py-1 font-mono text-xs"
           >
         </label>
 
@@ -206,7 +206,7 @@ onMounted(async () => {
             <select
               v-model="ourSide"
               data-test="our-side"
-              class="rounded border border-neutral-300 px-2 py-1"
+              class="rounded border border-border px-2 py-1"
             >
               <option value="White">
                 White
@@ -223,7 +223,7 @@ onMounted(async () => {
               data-test="max-depth"
               type="number"
               min="1"
-              class="rounded border border-neutral-300 px-2 py-1"
+              class="rounded border border-border px-2 py-1"
             >
           </label>
           <label class="flex flex-col gap-1">
@@ -233,7 +233,7 @@ onMounted(async () => {
               data-test="movetime"
               type="number"
               min="1"
-              class="rounded border border-neutral-300 px-2 py-1"
+              class="rounded border border-border px-2 py-1"
             >
           </label>
           <label class="flex flex-col gap-1">
@@ -243,21 +243,21 @@ onMounted(async () => {
               data-test="multipv"
               type="number"
               min="2"
-              class="rounded border border-neutral-300 px-2 py-1"
+              class="rounded border border-border px-2 py-1"
             >
           </label>
         </div>
 
         <p
           v-if="!llmEnabled"
-          class="text-xs text-neutral-500"
+          class="text-xs text-muted"
           data-test="llm-hint"
         >
           Configure an engine and set ANTHROPIC_API_KEY to enable danger-map generation.
         </p>
         <p
           v-if="error"
-          class="text-xs text-red-600"
+          class="text-xs text-bad"
           data-test="error"
         >
           {{ error }}
@@ -266,7 +266,7 @@ onMounted(async () => {
         <div class="mt-1 flex justify-end gap-2">
           <button
             type="button"
-            class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+            class="rounded border border-border px-3 py-1 text-sm hover:bg-surface-2"
             @click="emit('close')"
           >
             Cancel
@@ -274,7 +274,7 @@ onMounted(async () => {
           <button
             type="submit"
             data-test="submit"
-            class="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700 disabled:opacity-50"
+            class="rounded bg-fg px-3 py-1 text-sm text-surface hover:opacity-90 disabled:opacity-50"
             :disabled="!canSubmit"
           >
             {{ running ? 'Generating…' : 'Generate' }}

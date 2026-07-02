@@ -27,7 +27,7 @@ function toggleLayer(key: 'showPlans' | 'showThreats' | 'showMasterMoves', value
     <!-- Move-list navigation -->
     <div class="flex items-center gap-2">
       <button
-        class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
+        class="rounded border border-border px-2 py-1 text-sm disabled:opacity-50"
         :disabled="atStart"
         aria-label="Start"
         @click="$emit('first')"
@@ -35,7 +35,7 @@ function toggleLayer(key: 'showPlans' | 'showThreats' | 'showMasterMoves', value
         ⏮
       </button>
       <button
-        class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
+        class="rounded border border-border px-2 py-1 text-sm disabled:opacity-50"
         :disabled="atStart"
         aria-label="Back"
         @click="$emit('prev')"
@@ -43,7 +43,7 @@ function toggleLayer(key: 'showPlans' | 'showThreats' | 'showMasterMoves', value
         ◀
       </button>
       <button
-        class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
+        class="rounded border border-border px-2 py-1 text-sm disabled:opacity-50"
         :disabled="atEnd"
         aria-label="Forward"
         @click="$emit('next')"
@@ -51,7 +51,7 @@ function toggleLayer(key: 'showPlans' | 'showThreats' | 'showMasterMoves', value
         ▶
       </button>
       <button
-        class="rounded border border-neutral-300 px-2 py-1 text-sm disabled:opacity-50"
+        class="rounded border border-border px-2 py-1 text-sm disabled:opacity-50"
         :disabled="atEnd"
         aria-label="End"
         @click="$emit('last')"
@@ -70,7 +70,7 @@ function toggleLayer(key: 'showPlans' | 'showThreats' | 'showMasterMoves', value
           data-test="toggle-plans"
           @change="toggleLayer('showPlans', ($event.target as HTMLInputElement).checked)"
         >
-        <span class="text-green-700">Plans</span>
+        <span class="text-good">Plans</span>
       </label>
       <label class="flex items-center gap-1.5">
         <input
@@ -79,7 +79,7 @@ function toggleLayer(key: 'showPlans' | 'showThreats' | 'showMasterMoves', value
           data-test="toggle-threats"
           @change="toggleLayer('showThreats', ($event.target as HTMLInputElement).checked)"
         >
-        <span class="text-red-600">Threats</span>
+        <span class="text-bad">Threats</span>
       </label>
       <label class="flex items-center gap-1.5">
         <input
@@ -91,7 +91,7 @@ function toggleLayer(key: 'showPlans' | 'showThreats' | 'showMasterMoves', value
         <span class="text-violet-600">Master moves</span>
       </label>
       <button
-        class="ml-auto rounded border border-neutral-300 px-2 py-1 text-xs"
+        class="ml-auto rounded border border-border px-2 py-1 text-xs"
         data-test="clear-arrows"
         @click="$emit('clear-arrows')"
       >

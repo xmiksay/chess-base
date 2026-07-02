@@ -52,6 +52,16 @@ function clearArrows() {
   boardRef.value?.clearUserShapes()
 }
 
+/** Delete a game from the open database, after confirming. */
+async function onDelete(g: GameRow) {
+  if (!window.confirm(`Delete "${players(g)}"? This cannot be undone.`)) return
+  try {
+    await games.remove(g.id)
+  } catch (e) {
+    loadError.value = String((e as Error)?.message ?? e)
+  }
+}
+
 // Clear the review when a different game is opened so stale data never shows.
 watch(
   () => games.openGame?.id,
@@ -112,7 +122,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       </h2>
       <select
         v-model="selectedDb"
-        class="rounded border border-neutral-300 px-2 py-1 text-sm"
+        class="rounded border border-border px-2 py-1 text-sm"
         aria-label="Database"
         @change="onSelectDatabase"
       >
@@ -128,7 +138,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
     <p
       v-if="loadError"
-      class="mb-3 text-sm text-red-600"
+      class="mb-3 text-sm text-bad"
     >
       {{ loadError }}
     </p>
@@ -137,37 +147,38 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       <!-- Game list -->
       <section class="lg:w-1/2">
         <table class="w-full text-sm">
-          <thead class="text-left text-neutral-500">
+          <thead class="text-left text-muted">
             <tr>
               <th class="py-1 pr-2">
                 Players
               </th>
               <th
-                class="cursor-pointer select-none py-1 pr-2 hover:text-neutral-800"
+                class="cursor-pointer select-none py-1 pr-2 hover:text-fg"
                 @click="games.setSort('result')"
               >
                 Result{{ sortArrow('result') }}
               </th>
               <th
-                class="cursor-pointer select-none py-1 pr-2 hover:text-neutral-800"
+                class="cursor-pointer select-none py-1 pr-2 hover:text-fg"
                 @click="games.setSort('date')"
               >
                 Date{{ sortArrow('date') }}
               </th>
               <th
-                class="cursor-pointer select-none py-1 pr-2 hover:text-neutral-800"
+                class="cursor-pointer select-none py-1 pr-2 hover:text-fg"
                 @click="games.setSort('eco')"
               >
                 ECO{{ sortArrow('eco') }}
               </th>
+              <th class="py-1" />
             </tr>
           </thead>
           <tbody>
             <tr
               v-for="g in games.games"
               :key="g.id"
-              class="cursor-pointer border-t border-neutral-200 hover:bg-neutral-100"
-              :class="{ 'bg-neutral-100': games.openGame?.id === g.id }"
+              class="group cursor-pointer border-t border-border hover:bg-surface-2"
+              :class="{ 'bg-surface-2': games.openGame?.id === g.id }"
               @click="games.open(g.id)"
             >
               <td class="py-1 pr-2">
@@ -182,13 +193,24 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
               <td class="py-1 pr-2">
                 {{ g.eco ?? '' }}
               </td>
+              <td class="py-1 text-right">
+                <button
+                  type="button"
+                  data-test="delete-game"
+                  class="rounded px-1.5 text-muted opacity-0 transition hover:text-bad group-hover:opacity-100"
+                  title="Delete game"
+                  @click.stop="onDelete(g)"
+                >
+                  ✕
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
 
         <p
           v-if="!games.games.length && !games.loading"
-          class="mt-3 text-sm text-neutral-500"
+          class="mt-3 text-sm text-muted"
         >
           No games in this database.
         </p>
@@ -199,25 +221,25 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           class="mt-3 flex items-center gap-3 text-sm"
         >
           <button
-            class="rounded border border-neutral-300 px-2 py-1 disabled:opacity-50"
+            class="rounded border border-border px-2 py-1 disabled:opacity-50"
             :disabled="!games.hasPrev || games.loading"
             aria-label="Previous page"
             @click="games.goToPage(games.page - 1)"
           >
             ◀ Prev
           </button>
-          <span class="text-neutral-600">
+          <span class="text-muted">
             Page {{ games.page + 1 }} of {{ games.pageCount }}
           </span>
           <button
-            class="rounded border border-neutral-300 px-2 py-1 disabled:opacity-50"
+            class="rounded border border-border px-2 py-1 disabled:opacity-50"
             :disabled="!games.hasNext || games.loading"
             aria-label="Next page"
             @click="games.goToPage(games.page + 1)"
           >
             Next ▶
           </button>
-          <span class="text-neutral-400">
+          <span class="text-muted">
             {{ games.rangeStart }}–{{ games.rangeEnd }} of {{ games.total }}
           </span>
         </div>
@@ -253,7 +275,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
         <p class="mt-3 text-sm font-medium">
           {{ games.openGame.white ?? '?' }} – {{ games.openGame.black ?? '?' }}
-          <span class="text-neutral-500">{{ games.openGame.result ?? '*' }}</span>
+          <span class="text-muted">{{ games.openGame.result ?? '*' }}</span>
         </p>
 
         <MoveComment

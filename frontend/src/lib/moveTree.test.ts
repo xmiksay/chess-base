@@ -5,11 +5,17 @@ import {
   childWithSan,
   deleteSubtree,
   emptyTree,
+  findNodeByPath,
   firstChild,
   getNode,
   lastMainlineId,
+  nagClass,
   nagGlyph,
+  promote,
+  reorderChild,
   sanPath,
+  siblingIndex,
+  tokenBlocks,
   treeTokens,
 } from './moveTree'
 
@@ -42,6 +48,13 @@ describe('moveTree navigation', () => {
     expect(childWithSan(tree, 1, 'c5')).toBe(4)
     expect(childWithSan(tree, 1, 'e5')).toBe(2)
     expect(childWithSan(tree, 1, 'Nf3')).toBeNull()
+  })
+
+  it('findNodeByPath resolves a SAN line to its node, else null', () => {
+    expect(findNodeByPath(tree, ['e4', 'c5', 'Nf3'])).toBe(5)
+    expect(findNodeByPath(tree, ['e4', 'e5'])).toBe(2)
+    expect(findNodeByPath(tree, [])).toBe(0) // the root
+    expect(findNodeByPath(tree, ['e4', 'd4'])).toBeNull() // not in the tree
   })
 
   it('sanPath returns the line reaching a node', () => {
@@ -158,5 +171,47 @@ describe('treeTokens', () => {
     ).toEqual(
       [],
     )
+  })
+})
+
+describe('node reorder (analysis tree)', () => {
+  it('siblingIndex reports a node position; -1 for root/missing', () => {
+    const t = sampleTree()
+    expect(siblingIndex(t, 2)).toBe(0) // e5 is the mainline child of e4
+    expect(siblingIndex(t, 4)).toBe(1) // c5 is the first variation
+    expect(siblingIndex(t, 0)).toBe(-1) // root
+    expect(siblingIndex(t, 99)).toBe(-1) // missing
+  })
+
+  it('promote makes a variation the mainline continuation', () => {
+    const t = promote(sampleTree(), 4) // promote c5
+    expect(getNode(t, 1)!.children).toEqual([4, 2])
+    expect(firstChild(t, 1)).toBe(4)
+  })
+
+  it('reorderChild moves a node among siblings and is a no-op on the root', () => {
+    const t = reorderChild(sampleTree(), 2, 1) // demote e5 below c5
+    expect(getNode(t, 1)!.children).toEqual([4, 2])
+    expect(reorderChild(sampleTree(), 0, 0).nodes).toHaveLength(6)
+  })
+})
+
+describe('tokenBlocks', () => {
+  it('folds bracketed tokens into nested variation blocks', () => {
+    const items = tokenBlocks(treeTokens(sampleTree()))
+    // e4, e5, [block: c5 Nf3], Nf3
+    expect(items.map((i) => i.kind)).toEqual(['move', 'move', 'block', 'move'])
+    const block = items[2]
+    if (block.kind !== 'block') throw new Error('expected a block')
+    expect(block.items.map((i) => (i.kind === 'move' ? i.token.san : i.kind))).toEqual(['c5', 'Nf3'])
+  })
+})
+
+describe('nagClass', () => {
+  it('maps quality to accent colors', () => {
+    expect(nagClass(1)).toBe('text-good') // !
+    expect(nagClass(4)).toBe('text-bad') // ??
+    expect(nagClass(6)).toBe('text-warn') // ?!
+    expect(nagClass(99)).toBe('text-muted')
   })
 })

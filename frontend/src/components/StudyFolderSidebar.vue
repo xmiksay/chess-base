@@ -57,6 +57,16 @@ async function onMoveStudy(id: number, folderId: number | null) {
   }
 }
 
+/** Delete a study (clears the editor if it was the open one), after confirming. */
+async function onDeleteStudy(id: number, name: string) {
+  if (!window.confirm(`Delete study "${name}"? This cannot be undone.`)) return
+  try {
+    await studies.remove(id)
+  } catch (e) {
+    fail(e)
+  }
+}
+
 async function onCreateRootFolder() {
   const name = newRootFolder.value.trim()
   if (!name) return
@@ -99,8 +109,8 @@ watch(
         <button
           type="button"
           data-test="folder-root"
-          class="w-full rounded px-2 py-0.5 text-left text-sm hover:bg-neutral-100"
-          :class="{ 'bg-neutral-100 font-medium': selectedFolderId === null }"
+          class="w-full rounded px-2 py-0.5 text-left text-sm hover:bg-surface-2"
+          :class="{ 'bg-surface-2 font-medium': selectedFolderId === null }"
           @click="selectedFolderId = null"
         >
           Unfiled
@@ -121,7 +131,7 @@ watch(
         v-if="!showNewRootFolder"
         type="button"
         data-test="new-root-folder"
-        class="text-xs text-neutral-500 hover:text-neutral-800"
+        class="text-xs text-muted hover:text-fg"
         @click="showNewRootFolder = true"
       >
         + New folder
@@ -135,13 +145,13 @@ watch(
           v-model="newRootFolder"
           placeholder="Folder name"
           data-test="new-root-folder-input"
-          class="flex-1 rounded border border-neutral-300 px-1 py-0.5 text-sm"
+          class="flex-1 rounded border border-border px-1 py-0.5 text-sm"
           @keyup.esc="showNewRootFolder = false"
         >
         <button
           type="submit"
           data-test="new-root-folder-submit"
-          class="text-xs text-neutral-500 hover:text-neutral-800"
+          class="text-xs text-muted hover:text-fg"
         >
           Add
         </button>
@@ -157,8 +167,8 @@ watch(
           <button
             type="button"
             data-test="study-row"
-            class="flex-1 truncate rounded px-2 py-1 text-left text-sm hover:bg-neutral-100"
-            :class="{ 'bg-neutral-100 font-medium': currentId === s.id }"
+            class="flex-1 truncate rounded px-2 py-1 text-left text-sm hover:bg-surface-2"
+            :class="{ 'bg-surface-2 font-medium': currentId === s.id }"
             @click="emit('open', s.id)"
           >
             {{ s.name }}{{ s.global ? ' (global)' : '' }}
@@ -167,7 +177,7 @@ watch(
             :value="s.folder_id ?? ''"
             data-test="move-study"
             aria-label="Move to folder"
-            class="rounded border border-neutral-300 px-1 py-0.5 text-xs"
+            class="rounded border border-border px-1 py-0.5 text-xs"
             @change="onMoveStudy(s.id, ($event.target as HTMLSelectElement).value === '' ? null : Number(($event.target as HTMLSelectElement).value))"
           >
             <option value="">
@@ -181,6 +191,15 @@ watch(
               {{ f.name }}
             </option>
           </select>
+          <button
+            type="button"
+            data-test="delete-study"
+            class="rounded px-1 text-muted hover:text-bad"
+            title="Delete study"
+            @click="onDeleteStudy(s.id, s.name)"
+          >
+            ✕
+          </button>
         </div>
       </li>
     </ul>
@@ -193,12 +212,12 @@ watch(
       <input
         v-model="newName"
         placeholder="New study name"
-        class="rounded border border-neutral-300 px-2 py-1 text-sm"
+        class="rounded border border-border px-2 py-1 text-sm"
       >
       <select
         v-model="newDb"
         aria-label="Database"
-        class="rounded border border-neutral-300 px-2 py-1 text-sm"
+        class="rounded border border-border px-2 py-1 text-sm"
       >
         <option
           v-for="d in databases"
@@ -210,7 +229,7 @@ watch(
       </select>
       <button
         type="submit"
-        class="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700 disabled:opacity-50"
+        class="rounded bg-fg px-3 py-1 text-sm text-surface hover:opacity-90 disabled:opacity-50"
         :disabled="!newName.trim() || newDb == null"
       >
         Create study

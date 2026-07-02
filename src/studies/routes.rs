@@ -26,6 +26,7 @@ use crate::server::error::error_response;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 use crate::studies::{StudyError, StudyService};
+use crate::study_gen::spine::DangerTree;
 use crate::study_gen::tree::TreeConfig;
 use crate::study_gen::{
     generate_study_live, GenerateError, GenerateOutcome, GenerateParams, MAX_PLAN_LINES,
@@ -56,6 +57,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/studies/{id}/export/lichess", get(export_lichess))
         .route("/api/studies/{id}/analyse", post(analyse))
         .route("/api/studies/{id}/moves", post(add_move))
+        .route("/api/studies/{id}/merge-danger", post(merge_danger))
         .route(
             "/api/studies/{id}/nodes/{node_id}",
             axum::routing::delete(delete_node),
@@ -466,6 +468,32 @@ async fn add_move(
         Json(json!({ "new_node_id": new_node_id, "study": view })),
     )
         .into_response())
+}
+
+/// Body for `POST /api/studies/{id}/merge-danger`: graft an engine-walked
+/// [`DangerTree`] into the study's move tree as deduped variations. `at_node_id`
+/// chooses the graft point (defaults to the root / start position).
+#[derive(Deserialize)]
+struct MergeDangerBody {
+    tree: DangerTree,
+    #[serde(default)]
+    at_node_id: Option<usize>,
+}
+
+/// Merge a danger tree into an existing study
+/// (`POST /api/studies/{id}/merge-danger`). Thin caller over
+/// [`StudyService::merge_danger`]; returns the refreshed [`StudyView`] (200) so the
+/// editor re-renders the grafted variations from one response.
+async fn merge_danger(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+    Json(body): Json<MergeDangerBody>,
+) -> Result<Response, StudyError> {
+    let model = service(&state)
+        .merge_danger(&user, id, body.tree, body.at_node_id)
+        .await?;
+    Ok((StatusCode::OK, Json(StudyView::try_from(model)?)).into_response())
 }
 
 async fn annotate(

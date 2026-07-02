@@ -490,6 +490,11 @@ export interface ApiSettings {
   show_plans?: boolean
   show_threats?: boolean
   show_master_moves?: boolean
+  // Persistent engine options (MultiPV / Threads / Hash MB). Absent ⇒ store
+  // defaults (3 / 4 / 16).
+  engine_multipv?: number
+  engine_threads?: number
+  engine_hash_mb?: number
 }
 
 // --- imports ----------------------------------------------------------------

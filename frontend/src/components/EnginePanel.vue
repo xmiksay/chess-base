@@ -17,14 +17,15 @@ import { formatScore } from '../lib/engineStream'
 import { uciLineToSan } from '../lib/pv'
 import { sideToMove } from '../lib/fen'
 import type { EngineLine } from '../types'
-import EvalBar from './EvalBar.vue'
 
 const props = withDefaults(defineProps<{ fen: string; analyse?: boolean }>(), {
   analyse: true,
 })
 
 const engine = useEngineStore()
-const analyseOn = ref(false)
+// Analysis is on by default; it kicks off as soon as the engine reports ready
+// (the watch below), so opening the page immediately shows an evaluation.
+const analyseOn = ref(true)
 
 // Format eval/PV against the position the engine actually searched, not the live
 // board (see the note in stores/engine): in play mode the board moves on after
@@ -54,6 +55,16 @@ watch(analyseOn, (on) => {
   else engine.stop()
 })
 
+// Start the first search once the engine connects (it isn't ready at mount, so
+// the default-on toggle can't analyse immediately). Only fires the transition
+// into ready, not every status change.
+watch(
+  () => engine.ready,
+  (ready) => {
+    if (ready && props.analyse && analyseOn.value && !engine.analysing) startAnalyse()
+  },
+)
+
 // When the consumer takes over the engine (e.g. AnalysisPanel switching to play
 // mode), drop our toggle so the two never fight over the socket. The consumer's
 // own logic is responsible for stopping/redirecting the engine.
@@ -64,7 +75,12 @@ watch(
   },
 )
 
-onMounted(() => engine.connect())
+onMounted(() => {
+  engine.connect()
+  // If the engine is already ready (e.g. another panel connected it), the ready
+  // watch won't fire — kick the default-on analysis off here.
+  if (engine.ready && props.analyse && analyseOn.value) startAnalyse()
+})
 onUnmounted(() => {
   engine.stop()
   engine.disconnect()
@@ -73,71 +89,57 @@ onUnmounted(() => {
 
 <template>
   <div
-    class="space-y-3"
+    class="space-y-2"
     data-test="engine-panel"
   >
-    <!-- Engine status -->
-    <div class="flex items-center gap-2">
+    <!-- Compact header: status dot + engine name, eval + depth on the right. -->
+    <div class="flex items-baseline gap-2">
       <span
-        class="inline-block h-2.5 w-2.5 rounded-full"
-        :class="engine.ready ? 'bg-green-500' : engine.error ? 'bg-red-500' : 'bg-neutral-400'"
+        class="inline-block h-2 w-2 shrink-0 self-center rounded-full"
+        :class="engine.ready ? 'bg-good' : engine.error ? 'bg-bad' : 'bg-muted'"
       />
-      <span class="text-sm font-medium">{{ engine.engineName || 'Engine' }}</span>
+      <span class="truncate text-sm font-medium">{{ engine.engineName || 'Engine' }}</span>
+      <span class="ml-auto text-lg font-semibold tabular-nums">{{ evalText }}</span>
+      <span class="shrink-0 text-xs text-muted">
+        d{{ engine.depth ?? '–' }}<span v-if="engine.nps"> · {{ Math.round(engine.nps / 1000) }}kn</span>
+      </span>
     </div>
 
     <p
       v-if="engine.error"
-      class="text-sm text-red-600"
+      class="text-xs text-bad"
     >
       {{ engine.error }}
     </p>
 
-    <!-- Eval readout -->
-    <div class="flex gap-3">
-      <EvalBar
-        :score="topScore"
-        :side-to-move="stm"
-      />
-      <div class="flex-1 space-y-1">
-        <div class="text-2xl font-semibold tabular-nums">
-          {{ evalText }}
-        </div>
-        <div class="text-xs text-neutral-500">
-          depth {{ engine.depth ?? '–' }}
-          <span v-if="engine.nps"> · {{ Math.round(engine.nps / 1000) }} knps</span>
-          <span> · {{ engine.status }}</span>
-        </div>
-      </div>
-    </div>
-
     <template v-if="analyse">
-      <label class="flex items-center gap-2 text-sm">
+      <label class="flex items-center gap-1.5 text-xs">
         <input
           v-model="analyseOn"
           type="checkbox"
           data-test="analyse-toggle"
           :disabled="!engine.ready"
         >
-        Analyse current position
+        Analyse
       </label>
 
       <!-- Per-panel engine config (e.g. MultiPV/Threads/Hash). -->
       <slot name="controls" />
 
       <!-- PV lines -->
-      <ol class="space-y-1 text-sm">
+      <ol class="space-y-0.5 text-sm">
         <li
           v-for="line in engine.lines"
           :key="line.multipv"
-          class="flex cursor-default items-center gap-2 rounded px-2 py-1 ring-inset transition"
-          :class="engine.activeLine === line.multipv ? 'bg-neutral-200 ring-1 ring-neutral-400' : 'bg-neutral-100'"
+          class="flex cursor-default items-center gap-2 rounded px-2 py-0.5 ring-inset transition"
+          :class="engine.activeLine === line.multipv ? 'bg-surface-2 ring-1 ring-border' : 'bg-surface-2/60'"
           @mouseenter="engine.setActiveLine(line.multipv)"
           @mouseleave="engine.setActiveLine(null)"
         >
-          <span class="w-12 shrink-0 font-semibold tabular-nums">
+          <span class="w-11 shrink-0 text-xs font-semibold tabular-nums">
             {{ formatScore(line.score, stm) }}
           </span>
-          <span class="flex-1 truncate text-neutral-700">{{ lineSan(line) }}</span>
+          <span class="flex-1 truncate text-xs text-fg">{{ lineSan(line) }}</span>
           <slot
             name="line-action"
             :line="line"
@@ -145,7 +147,7 @@ onUnmounted(() => {
         </li>
         <li
           v-if="!engine.lines.length"
-          class="text-xs text-neutral-400"
+          class="text-xs text-muted"
         >
           No analysis yet.
         </li>

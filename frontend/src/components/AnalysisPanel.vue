@@ -4,12 +4,14 @@ import { useEngineStore } from '../stores/engine'
 import { useGameStore } from '../stores/game'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { plansToShapes } from '../lib/plansToShapes'
+import { useEnginePrefs } from '../lib/useEnginePrefs'
 import type { Color, EngineLine, Shape } from '../types'
 import EnginePanel from './EnginePanel.vue'
 
 const engine = useEngineStore()
 const game = useGameStore()
 const editor = useStudyEditorStore()
+const prefs = useEnginePrefs()
 
 // Engine think-time (play mode).
 const thinkMs = ref(800)
@@ -110,7 +112,7 @@ function flip() {
     <div class="flex items-center justify-end">
       <select
         v-model="game.mode"
-        class="rounded border border-neutral-300 bg-white px-2 py-1 text-sm"
+        class="rounded border border-border bg-surface px-2 py-1 text-sm"
       >
         <option value="analyse">
           Analyse
@@ -123,7 +125,7 @@ function flip() {
 
     <p
       v-if="pinError"
-      class="text-sm text-red-600"
+      class="text-sm text-bad"
       data-test="pin-error"
     >
       {{ pinError }}
@@ -140,8 +142,8 @@ function flip() {
             Lines
             <select
               v-model.number="engine.multipv"
-              class="rounded border border-neutral-300 px-1 py-0.5"
-              @change="engine.reconfigure()"
+              class="rounded border border-border bg-surface px-1 py-0.5"
+              @change="prefs.persist()"
             >
               <option
                 v-for="n in 5"
@@ -159,8 +161,8 @@ function flip() {
               type="number"
               min="1"
               max="64"
-              class="rounded border border-neutral-300 px-1 py-0.5"
-              @change="engine.reconfigure()"
+              class="rounded border border-border bg-surface px-1 py-0.5"
+              @change="prefs.persist()"
             >
           </label>
           <label class="flex flex-col gap-1">
@@ -170,8 +172,8 @@ function flip() {
               type="number"
               min="1"
               max="4096"
-              class="rounded border border-neutral-300 px-1 py-0.5"
-              @change="engine.reconfigure()"
+              class="rounded border border-border bg-surface px-1 py-0.5"
+              @change="prefs.persist()"
             >
           </label>
         </div>
@@ -180,7 +182,7 @@ function flip() {
       <template #line-action="{ line }">
         <button
           v-if="canPin && planFor(line)?.trajectories.length"
-          class="shrink-0 rounded border border-neutral-300 px-1.5 py-0.5 text-xs hover:bg-neutral-200"
+          class="shrink-0 rounded border border-border px-1.5 py-0.5 text-xs hover:bg-surface-2"
           title="Pin this plan to the current study node"
           data-test="pin-line"
           @click="pinLine(line)"
@@ -196,27 +198,27 @@ function flip() {
       class="space-y-3 text-sm"
     >
       <div class="flex items-center gap-2">
-        <span class="text-neutral-500">Play as</span>
+        <span class="text-muted">Play as</span>
         <button
           class="rounded border px-2 py-0.5"
-          :class="game.playColor === 'white' ? 'border-neutral-800 bg-neutral-800 text-white' : 'border-neutral-300'"
+          :class="game.playColor === 'white' ? 'border-fg bg-fg text-surface' : 'border-border'"
           @click="setPlayColor('white')"
         >
           White
         </button>
         <button
           class="rounded border px-2 py-0.5"
-          :class="game.playColor === 'black' ? 'border-neutral-800 bg-neutral-800 text-white' : 'border-neutral-300'"
+          :class="game.playColor === 'black' ? 'border-fg bg-fg text-surface' : 'border-border'"
           @click="setPlayColor('black')"
         >
           Black
         </button>
       </div>
       <label class="flex items-center gap-2">
-        <span class="text-neutral-500">Engine time</span>
+        <span class="text-muted">Engine time</span>
         <select
           v-model.number="thinkMs"
-          class="rounded border border-neutral-300 px-2 py-0.5"
+          class="rounded border border-border px-2 py-0.5"
         >
           <option :value="200">
             Fast
@@ -239,13 +241,13 @@ function flip() {
 
     <div class="flex gap-2">
       <button
-        class="rounded bg-neutral-800 px-3 py-1 text-sm text-white"
+        class="rounded bg-fg px-3 py-1 text-sm text-surface hover:opacity-90"
         @click="newGame"
       >
         New game
       </button>
       <button
-        class="rounded border border-neutral-300 px-3 py-1 text-sm"
+        class="rounded border border-border px-3 py-1 text-sm"
         @click="flip"
       >
         Flip

@@ -18,6 +18,7 @@ import type {
   GameRow,
   DangerMapBody,
   DangerMapView,
+  DangerTree,
   DangerWalkBody,
   DangerWalkResult,
   GenerateBody,
@@ -200,6 +201,11 @@ export const api = {
     // works on a no-key install. 503 when no engine is configured.
     dangerMap: (body: DangerWalkBody) =>
       send<DangerWalkResult>('POST', '/api/studies/danger-map', body),
+    // Graft a walked DangerTree into this study as variations (deduped), so the
+    // dangerous lines live in the PGN instead of a throwaway list. `atNodeId`
+    // null ⇒ graft from the root. Returns the refreshed study.
+    mergeDanger: (id: number, tree: DangerTree, atNodeId: number | null = null) =>
+      send<Study>('POST', `/api/studies/${id}/merge-danger`, { tree, at_node_id: atNodeId }),
   },
 
   // Ownable databases (issue #6): collections to search/import into. `list`
@@ -231,6 +237,9 @@ export const api = {
       return getJson<GamesPage>(`/api/games?${params}`)
     },
     get: (id: number) => getJson<GameDetail>(`/api/games/${id}`),
+    // Delete a game from its database (issue: collection CRUD). 204 on success;
+    // 404 when the caller can't see / write the game's database.
+    remove: (id: number) => send<null>('DELETE', `/api/games/${id}`),
     // The stored game as a variation tree (issue #135): the Rust PGN parser keeps
     // `(…)` sub-variations that the chess.js flattener drops. 422 (bad PGN), 404.
     tree: (id: number) => getJson<MoveTree>(`/api/games/${id}/tree`),

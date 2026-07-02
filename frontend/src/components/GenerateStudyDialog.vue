@@ -84,14 +84,14 @@ onMounted(async () => {
     data-test="generate-dialog"
     @click.self="emit('close')"
   >
-    <div class="w-full max-w-md rounded bg-white p-5 shadow-lg">
+    <div class="w-full max-w-md rounded bg-surface p-5 shadow-lg">
       <header class="mb-4 flex items-center justify-between">
         <h3 class="text-base font-semibold">
           Generate study
         </h3>
         <button
           type="button"
-          class="text-neutral-400 hover:text-neutral-700"
+          class="text-muted hover:text-fg"
           aria-label="Close"
           @click="emit('close')"
         >
@@ -111,7 +111,7 @@ onMounted(async () => {
         <div class="mt-4 flex justify-end gap-2">
           <button
             type="button"
-            class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+            class="rounded border border-border px-3 py-1 text-sm hover:bg-surface-2"
             @click="emit('close')"
           >
             Close
@@ -119,7 +119,7 @@ onMounted(async () => {
           <button
             type="button"
             data-test="open-result"
-            class="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700"
+            class="rounded bg-fg px-3 py-1 text-sm text-surface hover:opacity-90"
             @click="onOpenResult"
           >
             Open study
@@ -138,7 +138,7 @@ onMounted(async () => {
           <select
             v-model="databaseId"
             data-test="database"
-            class="rounded border border-neutral-300 px-2 py-1"
+            class="rounded border border-border px-2 py-1"
           >
             <option
               v-for="d in databases"
@@ -156,7 +156,7 @@ onMounted(async () => {
             v-model="name"
             data-test="name"
             placeholder="e.g. Najdorf for Black"
-            class="rounded border border-neutral-300 px-2 py-1"
+            class="rounded border border-border px-2 py-1"
           >
         </label>
 
@@ -165,7 +165,7 @@ onMounted(async () => {
           <input
             v-model="startFen"
             data-test="start-fen"
-            class="rounded border border-neutral-300 px-2 py-1 font-mono text-xs"
+            class="rounded border border-border px-2 py-1 font-mono text-xs"
           >
         </label>
 
@@ -177,7 +177,7 @@ onMounted(async () => {
               data-test="engine-depth"
               type="number"
               min="1"
-              class="rounded border border-neutral-300 px-2 py-1"
+              class="rounded border border-border px-2 py-1"
             >
           </label>
           <label class="flex flex-col gap-1">
@@ -187,7 +187,7 @@ onMounted(async () => {
               data-test="max-depth"
               type="number"
               min="1"
-              class="rounded border border-neutral-300 px-2 py-1"
+              class="rounded border border-border px-2 py-1"
             >
           </label>
           <label class="flex flex-col gap-1">
@@ -197,7 +197,7 @@ onMounted(async () => {
               data-test="max-children"
               type="number"
               min="1"
-              class="rounded border border-neutral-300 px-2 py-1"
+              class="rounded border border-border px-2 py-1"
             >
           </label>
         </div>
@@ -212,7 +212,7 @@ onMounted(async () => {
               type="number"
               min="0"
               max="3"
-              class="w-20 rounded border border-neutral-300 px-2 py-1"
+              class="w-20 rounded border border-border px-2 py-1"
             >
           </label>
           <label class="flex items-center gap-2 pb-1.5">
@@ -220,7 +220,7 @@ onMounted(async () => {
               v-model="threats"
               data-test="threats"
               type="checkbox"
-              class="rounded border-neutral-300"
+              class="rounded border-border"
             >
             Threat arrows
           </label>
@@ -228,14 +228,14 @@ onMounted(async () => {
 
         <p
           v-if="!llmEnabled"
-          class="text-xs text-neutral-500"
+          class="text-xs text-muted"
           data-test="llm-hint"
         >
           Set ANTHROPIC_API_KEY to enable AI study generation.
         </p>
         <p
           v-if="error"
-          class="text-xs text-red-600"
+          class="text-xs text-bad"
           data-test="error"
         >
           {{ error }}
@@ -244,7 +244,7 @@ onMounted(async () => {
         <div class="mt-1 flex justify-end gap-2">
           <button
             type="button"
-            class="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
+            class="rounded border border-border px-3 py-1 text-sm hover:bg-surface-2"
             @click="emit('close')"
           >
             Cancel
@@ -252,7 +252,7 @@ onMounted(async () => {
           <button
             type="submit"
             data-test="submit"
-            class="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700 disabled:opacity-50"
+            class="rounded bg-fg px-3 py-1 text-sm text-surface hover:opacity-90 disabled:opacity-50"
             :disabled="!canSubmit"
           >
             {{ running ? 'Generating…' : 'Generate' }}

@@ -60,14 +60,14 @@ defineExpose({ refresh })
 </script>
 
 <template>
-  <section class="rounded border border-neutral-200 p-4">
+  <section class="rounded border border-border p-4">
     <h2 class="mb-3 text-lg font-semibold">
       Engines
     </h2>
 
     <p
       v-if="error"
-      class="mb-3 text-sm text-red-600"
+      class="mb-3 text-sm text-bad"
       data-test="error"
     >
       {{ error }}
@@ -75,7 +75,7 @@ defineExpose({ refresh })
 
     <ul
       v-if="engines.length"
-      class="mb-4 divide-y divide-neutral-100"
+      class="mb-4 divide-y divide-border"
     >
       <li
         v-for="e in engines"
@@ -90,9 +90,9 @@ defineExpose({ refresh })
           @change="selectDefault(e.name)"
         >
         <span class="font-medium">{{ e.name }}</span>
-        <span class="text-neutral-500">{{ e.runner ? `${e.runner} ` : '' }}{{ e.path }}</span>
+        <span class="text-muted">{{ e.runner ? `${e.runner} ` : '' }}{{ e.path }}</span>
         <button
-          class="ml-auto text-red-600 hover:underline"
+          class="ml-auto text-bad hover:underline"
           @click="remove(e.name)"
         >
           Remove
@@ -101,7 +101,7 @@ defineExpose({ refresh })
     </ul>
     <p
       v-else
-      class="mb-4 text-sm text-neutral-500"
+      class="mb-4 text-sm text-muted"
     >
       No engines configured.
     </p>
@@ -113,26 +113,26 @@ defineExpose({ refresh })
       <input
         v-model="form.name"
         placeholder="Name (e.g. Stockfish 16)"
-        class="rounded border border-neutral-300 px-2 py-1 text-sm"
+        class="rounded border border-border px-2 py-1 text-sm"
       >
       <input
         v-model="form.path"
         placeholder="Binary path"
-        class="rounded border border-neutral-300 px-2 py-1 text-sm"
+        class="rounded border border-border px-2 py-1 text-sm"
       >
       <input
         v-model="form.runner"
         placeholder="Runner (optional, e.g. wine)"
-        class="rounded border border-neutral-300 px-2 py-1 text-sm"
+        class="rounded border border-border px-2 py-1 text-sm"
       >
       <input
         v-model="form.weights"
         placeholder="Weights (optional, Lc0/Maia)"
-        class="rounded border border-neutral-300 px-2 py-1 text-sm"
+        class="rounded border border-border px-2 py-1 text-sm"
       >
       <button
         type="submit"
-        class="col-span-2 rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700"
+        class="col-span-2 rounded bg-fg px-3 py-1 text-sm text-surface hover:opacity-90"
       >
         Add / update engine
       </button>

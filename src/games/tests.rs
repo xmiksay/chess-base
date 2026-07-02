@@ -222,3 +222,77 @@ async fn get_missing_game_is_not_found() {
     let err = svc.get(&user("alice"), 9999).await;
     assert!(matches!(err, Err(GameError::NotFound)));
 }
+
+fn admin(id: &str) -> CurrentUser {
+    CurrentUser {
+        id: id.to_string(),
+        is_admin: true,
+    }
+}
+
+#[tokio::test]
+async fn delete_removes_an_owned_game() {
+    let (conn, db_id) = db_for(Some("alice")).await;
+    let ingested = ingest_pgn(&conn, db_id, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .unwrap();
+    let svc = GameService::new(conn);
+    let alice = user("alice");
+
+    svc.delete(&alice, ingested.game_id).await.unwrap();
+    // It is gone afterwards.
+    assert!(matches!(
+        svc.get(&alice, ingested.game_id).await,
+        Err(GameError::NotFound)
+    ));
+}
+
+#[tokio::test]
+async fn delete_hides_game_in_another_users_database() {
+    let (conn, alice_db) = db_for(Some("alice")).await;
+    let ingested = ingest_pgn(&conn, alice_db, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .unwrap();
+    let svc = GameService::new(conn);
+
+    // Bob can neither see nor delete it — hidden as NotFound, and it survives.
+    assert!(matches!(
+        svc.delete(&user("bob"), ingested.game_id).await,
+        Err(GameError::NotFound)
+    ));
+    assert!(svc.get(&user("alice"), ingested.game_id).await.is_ok());
+}
+
+#[tokio::test]
+async fn delete_in_global_database_requires_admin() {
+    let (conn, global_db) = db_for(None).await;
+    let ingested = ingest_pgn(&conn, global_db, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .unwrap();
+    let svc = GameService::new(conn);
+
+    // A non-admin sees the global game but may not delete it.
+    assert!(matches!(
+        svc.delete(&user("bob"), ingested.game_id).await,
+        Err(GameError::Forbidden)
+    ));
+    // An admin may.
+    svc.delete(&admin("root"), ingested.game_id).await.unwrap();
+    assert!(matches!(
+        svc.get(&user("bob"), ingested.game_id).await,
+        Err(GameError::NotFound)
+    ));
+}
+
+#[tokio::test]
+async fn delete_missing_game_is_not_found() {
+    let (conn, _db_id) = db_for(Some("alice")).await;
+    let svc = GameService::new(conn);
+    assert!(matches!(
+        svc.delete(&user("alice"), 9999).await,
+        Err(GameError::NotFound)
+    ));
+}

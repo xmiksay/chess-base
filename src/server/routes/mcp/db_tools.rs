@@ -172,6 +172,7 @@ fn database_error(error: DatabaseError) -> ToolOutcome {
 fn game_error(error: GameError) -> ToolOutcome {
     match error {
         GameError::NotFound => ToolOutcome::error("game not found"),
+        GameError::Forbidden => ToolOutcome::error("not permitted"),
         GameError::Db(_) => ToolOutcome::error("database query failed"),
     }
 }

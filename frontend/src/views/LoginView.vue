@@ -46,7 +46,7 @@ async function signOut() {
       <h2 class="text-lg font-semibold">
         Sign in
       </h2>
-      <p class="mt-2 text-sm text-neutral-500">
+      <p class="mt-2 text-sm text-muted">
         You're running in local mode — signed in as the local admin. No login required.
       </p>
     </template>
@@ -56,12 +56,12 @@ async function signOut() {
       <h2 class="text-lg font-semibold">
         Signed in
       </h2>
-      <p class="mt-2 text-sm text-neutral-500">
-        Signed in as <span class="font-medium text-neutral-700">{{ auth.user.id }}</span>.
+      <p class="mt-2 text-sm text-muted">
+        Signed in as <span class="font-medium text-fg">{{ auth.user.id }}</span>.
       </p>
       <button
         type="button"
-        class="mt-4 rounded bg-neutral-800 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700"
+        class="mt-4 rounded bg-fg px-4 py-2 text-sm font-medium text-surface hover:opacity-90"
         @click="signOut"
       >
         Sign out
@@ -80,7 +80,7 @@ async function signOut() {
         <div>
           <label
             for="username"
-            class="block text-sm font-medium text-neutral-700"
+            class="block text-sm font-medium text-fg"
           >Username</label>
           <input
             id="username"
@@ -89,13 +89,13 @@ async function signOut() {
             type="text"
             autocomplete="username"
             required
-            class="mt-1 w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+            class="mt-1 w-full rounded border border-border px-3 py-2 text-sm"
           >
         </div>
         <div>
           <label
             for="password"
-            class="block text-sm font-medium text-neutral-700"
+            class="block text-sm font-medium text-fg"
           >Password</label>
           <input
             id="password"
@@ -104,13 +104,13 @@ async function signOut() {
             type="password"
             :autocomplete="isRegister ? 'new-password' : 'current-password'"
             required
-            class="mt-1 w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+            class="mt-1 w-full rounded border border-border px-3 py-2 text-sm"
           >
         </div>
 
         <p
           v-if="auth.error"
-          class="text-sm text-red-600"
+          class="text-sm text-bad"
           role="alert"
         >
           {{ auth.error }}
@@ -119,17 +119,17 @@ async function signOut() {
         <button
           type="submit"
           :disabled="submitting"
-          class="w-full rounded bg-neutral-800 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+          class="w-full rounded bg-fg px-4 py-2 text-sm font-medium text-surface hover:opacity-90 disabled:opacity-50"
         >
           {{ isRegister ? 'Create account' : 'Sign in' }}
         </button>
       </form>
 
-      <p class="mt-4 text-sm text-neutral-500">
+      <p class="mt-4 text-sm text-muted">
         {{ isRegister ? 'Already have an account?' : "Don't have an account?" }}
         <button
           type="button"
-          class="font-medium text-neutral-800 hover:underline"
+          class="font-medium text-fg hover:underline"
           @click="toggleMode"
         >
           {{ isRegister ? 'Sign in' : 'Create one' }}

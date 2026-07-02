@@ -17,8 +17,8 @@ use sea_orm::{
 };
 use serde::Serialize;
 
-use crate::db::entities::{databases, games, players};
-use crate::server::identity::{scope, CurrentUser};
+use crate::db::entities::{databases, games, players, position_index};
+use crate::server::identity::{assert_can_write, scope, CurrentUser};
 
 /// Default page size when the caller does not specify `limit`.
 pub const DEFAULT_LIMIT: u64 = 50;
@@ -97,6 +97,10 @@ pub enum GameError {
     /// No game (or database) with that id is visible to the caller.
     #[error("game not found")]
     NotFound,
+    /// Authenticated but not permitted: a game in a global database deleted by a
+    /// non-admin (mirrors [`crate::databases::DatabaseError::Forbidden`]).
+    #[error("not permitted")]
+    Forbidden,
     /// Underlying database error (never surfaced verbatim to clients).
     #[error(transparent)]
     Db(#[from] DbErr),
@@ -234,6 +238,35 @@ impl GameService {
             ply_count: game.ply_count,
             pgn: game.pgn,
         })
+    }
+
+    /// Delete a game the caller may write. Its owning database must be visible
+    /// (own ∪ global) and writable (own, or admin for a global one) — the same
+    /// write guard collections use (mirrors [`DatabaseService::delete`]). An id
+    /// the caller cannot see is hidden as `NotFound`; a visible-but-unwritable
+    /// database (a global one for a non-admin) is `Forbidden`.
+    ///
+    /// [`DatabaseService::delete`]: crate::databases::DatabaseService::delete
+    pub async fn delete(&self, user: &CurrentUser, id: i32) -> Result<(), GameError> {
+        let game = games::Entity::find_by_id(id)
+            .one(&self.db)
+            .await?
+            .ok_or(GameError::NotFound)?;
+        // Hide games in databases the caller cannot see before revealing more.
+        self.assert_database_visible(user, game.database_id).await?;
+        let database = databases::Entity::find_by_id(game.database_id)
+            .one(&self.db)
+            .await?
+            .ok_or(GameError::NotFound)?;
+        assert_can_write(database.owner_id.as_deref(), user).map_err(|_| GameError::Forbidden)?;
+        // The Zobrist `position_index` rows reference this game (FK RESTRICT, no
+        // cascade on SQLite), so drop them before the game row itself.
+        position_index::Entity::delete_many()
+            .filter(position_index::Column::GameId.eq(game.id))
+            .exec(&self.db)
+            .await?;
+        games::Entity::delete_by_id(game.id).exec(&self.db).await?;
+        Ok(())
     }
 
     /// Ensure the database is visible to the caller (own ∪ global), else NotFound.

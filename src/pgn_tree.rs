@@ -5,7 +5,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::position::STARTPOS_FEN;
+use crate::position::{apply_san, replay, CastlingMode, STARTPOS_FEN};
+
+/// Studies are standard chess; castling rights parse the normal way (mirrors
+/// [`crate::studies`]). The graft validates moves against this mode.
+const MODE: CastlingMode = CastlingMode::Standard;
 
 pub mod eval;
 pub mod lichess;
@@ -43,6 +47,12 @@ pub struct Shape {
 /// are mutually exclusive — a move carries at most one.
 fn is_move_quality_nag(nag: u8) -> bool {
     (1..=6).contains(&nag)
+}
+
+/// SAN without its trailing check/mate marker, so `Qh5+` matches a generated
+/// `Qh5` when deduping a graft.
+fn san_core(san: &str) -> &str {
+    san.trim_end_matches(['+', '#'])
 }
 
 /// A single node in a study move tree.
@@ -252,6 +262,74 @@ impl MoveTree {
         // from the root naturally drops it.
         self.compact();
         Ok(())
+    }
+
+    /// Graft another tree's moves into this one at node `at`, as deduped
+    /// variations, returning the count of **newly added** nodes (issue: danger-map
+    /// merge, ADR-0032). Walks `src` from its root; for each move it follows an
+    /// existing child with the same SAN when present (so a re-graft adds nothing),
+    /// else appends a new child (a variation). Each move is validated for legality
+    /// in the running position — an illegal or unparseable move (and its subtree)
+    /// is skipped, never panicking. An unknown `at` or a corrupt line to it grafts
+    /// nothing.
+    pub fn graft_subtree(&mut self, at: usize, src: &MoveTree) -> usize {
+        let Some(line) = self.line_to(at) else {
+            return 0;
+        };
+        let Ok(plies) = replay(self.start_position(), &line, MODE) else {
+            return 0;
+        };
+        let fen = plies
+            .last()
+            .map(|p| p.fen.clone())
+            .unwrap_or_else(|| self.start_position().to_string());
+        self.graft_children(at, &fen, src, src.root)
+    }
+
+    /// Recursive worker for [`graft_subtree`](Self::graft_subtree): graft the
+    /// children of `src_id` (in `src`) under `dst` (whose position is `dst_fen`).
+    fn graft_children(
+        &mut self,
+        dst: usize,
+        dst_fen: &str,
+        src: &MoveTree,
+        src_id: usize,
+    ) -> usize {
+        let Some(src_node) = src.nodes.get(src_id) else {
+            return 0;
+        };
+        let mut added = 0;
+        for &child in &src_node.children.clone() {
+            let Some(san) = src.nodes.get(child).and_then(|n| n.san.clone()) else {
+                continue;
+            };
+            // Validate the move in the current position; skip illegal/unparseable
+            // moves (and their subtree) so a bad source never corrupts the tree.
+            let Ok((after_fen, _)) = apply_san(dst_fen, &san, MODE) else {
+                continue;
+            };
+            let target = match self.child_by_san(dst, &san) {
+                Some(existing) => existing,
+                None => {
+                    added += 1;
+                    self.add_move(dst, san)
+                }
+            };
+            added += self.graft_children(target, &after_fen, src, child);
+        }
+        added
+    }
+
+    /// The first child of `parent` whose move matches `san` (ignoring a trailing
+    /// check/mate marker), if any. Used to dedup the graft onto existing lines.
+    fn child_by_san(&self, parent: usize, san: &str) -> Option<usize> {
+        self.nodes.get(parent)?.children.iter().copied().find(|&c| {
+            self.nodes
+                .get(c)
+                .and_then(|n| n.san.as_deref())
+                .map(san_core)
+                == Some(san_core(san))
+        })
     }
 
     /// The parent of `id`, erroring if `id` is absent (`NoSuchNode`) or the root
@@ -464,6 +542,71 @@ mod tests {
         // An empty vec clears them again.
         t.set_shapes(e4, Vec::new());
         assert!(t.nodes[e4].shapes.is_empty());
+    }
+
+    #[test]
+    fn graft_adds_variations_and_dedups_existing_children() {
+        let mut dst = MoveTree::new();
+        let e4 = dst.add_move(dst.root, "e4");
+        dst.add_move(e4, "e5"); // mainline: 1.e4 e5
+
+        // Source: 1.e4 with two replies — e5 (shared) and c5 (new).
+        let mut src = MoveTree::new();
+        let s_e4 = src.add_move(src.root, "e4");
+        src.add_move(s_e4, "e5");
+        src.add_move(s_e4, "c5");
+
+        let added = dst.graft_subtree(dst.root, &src);
+        assert_eq!(added, 1, "only c5 is new; e4 and e5 already exist");
+
+        // e4 now branches into e5 (kept) + c5 (grafted as a variation).
+        let sans: Vec<String> = dst.nodes[e4]
+            .children
+            .iter()
+            .filter_map(|&c| dst.nodes[c].san.clone())
+            .collect();
+        assert_eq!(sans.len(), 2);
+        assert!(sans.contains(&"c5".to_string()));
+
+        // Re-grafting the same source follows the now-existing children: adds 0.
+        assert_eq!(dst.graft_subtree(dst.root, &src), 0);
+    }
+
+    #[test]
+    fn graft_skips_illegal_moves() {
+        let mut dst = MoveTree::new();
+
+        // Source rooted at the start position: an illegal first move carrying a
+        // child (the whole subtree must be skipped) plus a legal sibling.
+        let mut src = MoveTree::new();
+        let bad = src.add_move(src.root, "Nf6"); // illegal as White's first move
+        src.add_move(bad, "d4");
+        src.add_move(src.root, "d4"); // legal
+
+        let added = dst.graft_subtree(dst.root, &src);
+        assert_eq!(
+            added, 1,
+            "only the legal d4 grafts; the Nf6 subtree is skipped"
+        );
+        assert_eq!(dst.mainline(), vec!["d4"]);
+    }
+
+    #[test]
+    fn graft_at_a_non_root_node_uses_that_position() {
+        let mut dst = MoveTree::new();
+        let e4 = dst.add_move(dst.root, "e4"); // 1.e4, Black to move
+
+        // Source rooted at the post-1.e4 position (one reply, c5).
+        let mut src = MoveTree::new();
+        src.start_fen =
+            Some("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1".to_string());
+        src.add_move(src.root, "c5");
+
+        let added = dst.graft_subtree(e4, &src);
+        assert_eq!(added, 1);
+        assert_eq!(dst.nodes[e4].children.len(), 1);
+        let c5 = dst.nodes[e4].children[0];
+        assert_eq!(dst.nodes[c5].san.as_deref(), Some("c5"));
     }
 
     #[test]

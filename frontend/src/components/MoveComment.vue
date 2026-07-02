@@ -25,24 +25,24 @@ const san = computed(() => node.value?.san ?? null)
 
 <template>
   <div
-    class="min-h-[3rem] rounded border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm"
+    class="min-h-[3rem] rounded border border-border bg-surface-2 px-3 py-2 text-sm"
     data-test="move-comment"
   >
     <template v-if="comment">
       <span
         v-if="san"
-        class="mr-1 font-medium text-neutral-900"
+        class="mr-1 font-medium text-fg"
       >{{ san
       }}<span
         v-for="(n, ni) in nags"
         :key="ni"
-        class="text-blue-600"
+        class="text-accent"
       >{{ nagGlyph(n) }}</span></span>
-      <span class="text-neutral-700">{{ comment }}</span>
+      <span class="text-fg">{{ comment }}</span>
     </template>
     <span
       v-else
-      class="text-neutral-400"
+      class="text-muted"
     >No comment on this move.</span>
   </div>
 </template>

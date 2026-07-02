@@ -39,7 +39,7 @@ const DEFAULT_SAVE_ANALYSE_DEPTH: u32 = 18;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/games", get(list))
-        .route("/api/games/{id}", get(get_one))
+        .route("/api/games/{id}", get(get_one).delete(delete_one))
         .route("/api/games/{id}/tree", get(get_tree))
         .route("/api/games/{id}/export", get(export_pgn))
         .route("/api/games/{id}/save-as-study", post(save_as_study))
@@ -89,6 +89,18 @@ async fn get_one(
 ) -> Result<Response, GameError> {
     let game = service(&state).get(&user, id).await?;
     Ok((StatusCode::OK, Json(game)).into_response())
+}
+
+/// `DELETE /api/games/{id}` — remove a game the caller may write (owner, or admin
+/// for a global database). Returns `204 No Content`; a hidden/absent id is `404`,
+/// a visible-but-unwritable database (global, non-admin) is `403`.
+async fn delete_one(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+) -> Result<Response, GameError> {
+    service(&state).delete(&user, id).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 /// `GET /api/games/{id}/tree` — the stored game parsed into a [`MoveTree`],
@@ -263,6 +275,7 @@ async fn linked_studies(
 fn game_error_response(err: GameError) -> Response {
     let status = match err {
         GameError::NotFound => StatusCode::NOT_FOUND,
+        GameError::Forbidden => StatusCode::FORBIDDEN,
         GameError::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     error_response(status, err.to_string())
@@ -290,6 +303,7 @@ impl IntoResponse for GameError {
     fn into_response(self) -> Response {
         let status = match &self {
             GameError::NotFound => StatusCode::NOT_FOUND,
+            GameError::Forbidden => StatusCode::FORBIDDEN,
             GameError::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         error_response(status, self.to_string())
