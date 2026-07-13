@@ -60,9 +60,72 @@ fn trap_respects_custom_config() {
         downside_floor_cp: -20,
         baited_upside_cp: 100,
         only_move_gap_cp: 120,
+        follow_up_floor_cp: -200,
     };
     assert_eq!(trap_verdict(-50, 300, &cfg), TrapVerdict::HopeChess);
     assert_eq!(trap_verdict(-10, 300, &cfg), TrapVerdict::Weapon);
+}
+
+// --- confirm_weapon (issue #175) -----------------------------------------------
+
+#[test]
+fn weapon_refuted_one_ply_deeper_downgrades_to_hope_chess() {
+    let cfg = DangerConfig::default();
+    // Root eval passed the shallow floor test (-50 >= -80), but our position
+    // after the opponent's best reply is actually played is well past the
+    // follow-up floor: the opponent's best reply refutes us one move later than
+    // the root search looked.
+    assert_eq!(
+        confirm_weapon(TrapVerdict::Weapon, Some(-350), &cfg),
+        TrapVerdict::HopeChess
+    );
+}
+
+#[test]
+fn weapon_survives_when_follow_up_holds() {
+    let cfg = DangerConfig::default();
+    assert_eq!(
+        confirm_weapon(TrapVerdict::Weapon, Some(-100), &cfg),
+        TrapVerdict::Weapon
+    );
+}
+
+#[test]
+fn weapon_unconfirmed_follow_up_is_left_alone() {
+    // No PV to walk, or the follow-up search failed: nothing on hand to reveal a
+    // refutation, so the shallow verdict stands.
+    let cfg = DangerConfig::default();
+    assert_eq!(
+        confirm_weapon(TrapVerdict::Weapon, None, &cfg),
+        TrapVerdict::Weapon
+    );
+}
+
+#[test]
+fn confirm_weapon_leaves_non_weapon_verdicts_untouched() {
+    let cfg = DangerConfig::default();
+    // Already hope-chess or quiet: nothing to confirm, regardless of follow-up.
+    assert_eq!(
+        confirm_weapon(TrapVerdict::HopeChess, Some(-9999), &cfg),
+        TrapVerdict::HopeChess
+    );
+    assert_eq!(
+        confirm_weapon(TrapVerdict::Quiet, Some(-9999), &cfg),
+        TrapVerdict::Quiet
+    );
+}
+
+#[test]
+fn confirm_weapon_floor_boundary_is_inclusive() {
+    let cfg = DangerConfig::default(); // follow_up_floor_cp = -200
+    assert_eq!(
+        confirm_weapon(TrapVerdict::Weapon, Some(cfg.follow_up_floor_cp), &cfg),
+        TrapVerdict::Weapon
+    );
+    assert_eq!(
+        confirm_weapon(TrapVerdict::Weapon, Some(cfg.follow_up_floor_cp - 1), &cfg),
+        TrapVerdict::HopeChess
+    );
 }
 
 // --- only_move_gap / is_only_move ---------------------------------------------

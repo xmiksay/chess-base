@@ -37,6 +37,14 @@ pub struct DangerConfig {
     /// `PV1 − PV2` gap (our perspective) at or above which the best move is the
     /// opponent's only adequate reply — a narrow path.
     pub only_move_gap_cp: i32,
+    /// A `Weapon` candidate is confirmed one ply deeper: our eval, from our
+    /// perspective, after the opponent's best reply is actually played. Below
+    /// this floor the trap is refuted and downgraded to `HopeChess` (issue
+    /// #175) — bounded on the shallow root eval alone, a follow-up this bad
+    /// means the opponent's best reply leaves *us* worse than "slightly worse",
+    /// not just the opponent. Deliberately stricter than `downside_floor_cp`
+    /// and aligned with `review.rs`'s mistake-magnitude buckets.
+    pub follow_up_floor_cp: i32,
 }
 
 impl Default for DangerConfig {
@@ -45,6 +53,7 @@ impl Default for DangerConfig {
             downside_floor_cp: -80,
             baited_upside_cp: 150,
             only_move_gap_cp: 120,
+            follow_up_floor_cp: -200,
         }
     }
 }
@@ -79,6 +88,30 @@ pub fn trap_verdict(if_refuted_cp: i32, if_baited_cp: i32, config: &DangerConfig
         TrapVerdict::Weapon
     } else {
         TrapVerdict::HopeChess
+    }
+}
+
+/// Confirm a `Weapon` candidate against our own follow-up, one ply deeper than
+/// [`trap_verdict`] looks (issue #175). `trap_verdict` only bounds the downside
+/// implied by the opponent's best-reply eval; it never checks that *we* still
+/// have a decent position once that reply is actually played — a shallow root
+/// search can pass the floor test while the deeper, played-out position is
+/// already lost. `follow_up_cp` is our eval, our perspective, at the position
+/// reached after the opponent's best reply; `None` when it could not be
+/// computed (no PV to follow, or the follow-up search failed) leaves the
+/// verdict unchanged — nothing on hand to reveal a refutation. Non-`Weapon`
+/// verdicts pass through untouched: only a recommended trap needs confirming.
+pub fn confirm_weapon(
+    verdict: TrapVerdict,
+    follow_up_cp: Option<i32>,
+    config: &DangerConfig,
+) -> TrapVerdict {
+    if verdict != TrapVerdict::Weapon {
+        return verdict;
+    }
+    match follow_up_cp {
+        Some(cp) if cp < config.follow_up_floor_cp => TrapVerdict::HopeChess,
+        _ => verdict,
     }
 }
 
