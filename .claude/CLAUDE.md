@@ -191,14 +191,14 @@ endpoint are both thin callers.
 - `make coverage` — `cargo llvm-cov` + vitest coverage.
 - `make lint` — clippy (`-D warnings`) + `cargo fmt --check` + eslint.
 - `make deploy` / `make deploy-restart` — apply `../deploy.yml` (k8s `services`
-  ns) / roll pods onto the fresh `:main` image (ADR-0037).
+  ns) / re-roll pods; the image is pinned by tag in the manifest (ADR-0037).
 
 Always `nvm use` (Node 22, see `frontend/.nvmrc`) before raw npm commands;
 set `CARGO_BUILD_JOBS=4` for cargo (the Makefile does both).
 
 CI: `.github/workflows/ci.yml` (test/lint), `release.yml` (desktop binaries on
 `v*` tags), `docker.yml` (GPLv3 image with bundled Stockfish →
-`ghcr.io/xmiksay/chess-base` on `main`/`v*`, ADR-0037).
+`ghcr.io/xmiksay/chess-base` on `v*` tags, ADR-0037).
 
 ## Engineering standards (project-specific)
 

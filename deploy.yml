@@ -3,11 +3,12 @@
 # package, bundled Stockfish).
 #
 #   make deploy           # kubectl apply -f deploy.yml
-#   make deploy-restart   # roll the pods onto the freshly pushed :main image
+#   make deploy-restart   # re-roll the pods (image tag is pinned below —
+#                         # bump it to the new release tag/sha, then deploy)
 #
-# The Secret below is a placeholder — set the real DATABASE_URL out-of-band
-# (kubectl apply overwrites it, so edit before applying or manage the secret
-# separately). The database lives in the shared `postgres` service; bootstrap:
+# The committed Secret is a placeholder — keep the real DATABASE_URL only in
+# your local copy (kubectl apply overwrites the in-cluster secret with this
+# file). The database lives behind the shared `postgres` service; bootstrap:
 #   kubectl -n services exec deploy/postgres -- psql -U postgres -c \
 #     "CREATE ROLE chessbase LOGIN PASSWORD '<pw>'; CREATE DATABASE chessbase OWNER chessbase;"
 apiVersion: v1
@@ -17,7 +18,9 @@ metadata:
   namespace: services
 type: Opaque
 stringData:
-  DATABASE_URL: "postgres://chessbase:CHANGE_ME@postgres:5432/chessbase"
+  # `postgres` is the pgbouncer-fronted service (5432 → pgbouncer:6432);
+  # `postgres-direct` bypasses the pooler.
+  DATABASE_URL: "postgres://chessbase:CHANGE_ME@postgres.services:5432/chessbase"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -46,7 +49,7 @@ spec:
     spec:
       containers:
         - name: chess-base
-          image: ghcr.io/xmiksay/chess-base:main
+          image: ghcr.io/xmiksay/chess-base:bcf0f6b
           imagePullPolicy: Always
           # The bundled engine outranks auto-download in the resolution order;
           # --no-engine-download keeps the pod from ever fetching engines.

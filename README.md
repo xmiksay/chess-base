@@ -121,12 +121,13 @@ image a **GPLv3 artifact** (see the licensing note above). See
 
 ## Deploy (k8s)
 
-Pushes to `main` (and `v*` tags) build the image via
-`.github/workflows/docker.yml` and publish it to
-**`ghcr.io/xmiksay/chess-base`** (a **public** GHCR package — make it public in
-the GitHub package settings after the first push). `deploy.yml` is a single-file
-manifest (Secret, ConfigMap, Deployment, Service, Ingress) targeting the
-`services` namespace with the shared Postgres:
+Version tags (`v*`) build the image via `.github/workflows/docker.yml` and
+publish it to **`ghcr.io/xmiksay/chess-base`** (a **public** GHCR package —
+make it public in the GitHub package settings after the first push) tagged
+with the semver, the short commit SHA and `latest`. `deploy.yml` is a
+single-file manifest (Secret, ConfigMap, Deployment, Service, Ingress)
+targeting the `services` namespace with the shared Postgres; it pins the
+image by tag — bump the tag there to roll a new release:
 
 ```sh
 # one-time: create the DB in the shared Postgres

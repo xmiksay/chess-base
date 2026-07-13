@@ -80,7 +80,7 @@ deploy: ## Apply the k8s manifest (Secret/ConfigMap/Deployment/Service/Ingress)
 	kubectl apply -f deploy.yml
 
 .PHONY: deploy-restart
-deploy-restart: ## Roll the pods onto the freshly pushed :main image
+deploy-restart: ## Re-roll the pods (re-pulls the tag pinned in deploy.yml)
 	kubectl -n services rollout restart deploy/chess-base
 	kubectl -n services rollout status deploy/chess-base
 

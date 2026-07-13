@@ -24,7 +24,7 @@ a single-file manifest per app in the `services` namespace, shared Postgres
    the container" note for the k8s path; Compose builds the same image and
    inherits the bundled engine.
 2. **The image is public on GHCR** (`ghcr.io/xmiksay/chess-base`), pushed by
-   `.github/workflows/docker.yml` on `main` pushes and `v*` tags
+   `.github/workflows/docker.yml` on `v*` tags (and manual dispatch)
    (branch/short-SHA/semver tags via `docker/metadata-action`). Public is both
    the cluster's pull pattern (its pull secret covers a different registry) and
    the licensing answer: bundling Stockfish makes the image **GPLv3**, so it
@@ -47,5 +47,6 @@ a single-file manifest per app in the `services` namespace, shared Postgres
   separately.
 - AVX2 is assumed on the nodes (verified at rollout); a non-AVX2 cluster would
   need the `sse41-popcnt` Stockfish slug instead.
-- `make deploy` / `make deploy-restart` wrap apply + rollout; image updates on
-  `:main` need the restart (imagePullPolicy Always, no digest pinning).
+- `make deploy` / `make deploy-restart` wrap apply + rollout; deploy.yml pins
+  the image by tag — releasing means tagging `v*`, bumping the tag in
+  deploy.yml, and applying.

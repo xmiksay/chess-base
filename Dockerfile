@@ -37,20 +37,12 @@ ENV CARGO_BUILD_JOBS=4
 # build.rs verifies that checksum at compile time.
 COPY Makefile ./
 RUN make bundle-stockfish
-# Cache the dependency build: compile against a stub main, then the real source.
+# Sources + the built SPA (embedded at compile time by rust-embed).
 COPY Cargo.toml Cargo.lock build.rs ./
-RUN mkdir -p src/bin frontend/dist \
-    && echo "fn main() {}" > src/bin/chess-base.rs \
-    && echo "" > src/lib.rs \
-    && cargo build --release --locked --features bundled-stockfish --bin chess-base \
-    ; rm -rf src
-# Real sources + the built SPA (embedded at compile time by rust-embed).
 COPY src ./src
 COPY assets ./assets
 COPY --from=frontend /app/frontend/dist ./frontend/dist
-# Bust the stub's cached crate so the real binary is rebuilt.
-RUN touch src/bin/chess-base.rs src/lib.rs \
-    && cargo build --release --locked --features bundled-stockfish --bin chess-base
+RUN cargo build --release --locked --features bundled-stockfish --bin chess-base
 
 # ---- 3. Runtime -------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
