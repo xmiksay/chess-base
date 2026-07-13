@@ -14,6 +14,7 @@ use crate::games::{
     GameError, GameListParams, GameService, GameSort, SortDir, DEFAULT_LIMIT as DEFAULT_GAME_LIMIT,
     MAX_LIMIT as MAX_GAME_LIMIT,
 };
+use crate::search::position::PositionFilter;
 use crate::search::report::PositionReportService;
 use crate::search::SearchError;
 use crate::server::identity::CurrentUser;
@@ -202,7 +203,10 @@ async fn position_report(app: AppState, user: CurrentUser, args: Value) -> ToolO
         return ToolOutcome::error("Invalid arguments: missing string field `fen`.");
     };
     let service = PositionReportService::new(app.db.clone());
-    match service.position_report(&user, &fen).await {
+    match service
+        .position_report(&user, &fen, &PositionFilter::default())
+        .await
+    {
         Ok(report) => json_outcome(&report),
         Err(e) => report_error(e),
     }
@@ -240,7 +244,10 @@ async fn reference_games(app: AppState, user: CurrentUser, args: Value) -> ToolO
         Err(msg) => return ToolOutcome::error(msg),
     };
     let service = PositionReportService::new(app.db.clone());
-    match service.references(&user, &fen, Some(limit)).await {
+    match service
+        .references(&user, &fen, Some(limit), &PositionFilter::default())
+        .await
+    {
         Ok(games) => json_outcome(&games),
         Err(e) => report_error(e),
     }
@@ -297,6 +304,7 @@ pub(super) fn json_outcome<T: Serialize>(value: &T) -> ToolOutcome {
 pub(super) fn report_error(error: SearchError) -> ToolOutcome {
     match error {
         SearchError::InvalidFen(msg) => ToolOutcome::error(format!("invalid FEN: {msg}")),
+        SearchError::BadRequest(msg) => ToolOutcome::error(format!("invalid arguments: {msg}")),
         SearchError::Serialize(_) | SearchError::Db(_) => {
             ToolOutcome::error("database query failed")
         }

@@ -9,15 +9,15 @@
 //! key; the client echoes it back to advance.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use sea_orm::sea_query::{Expr, Func, IntoCondition, LikeExpr, SimpleExpr};
+use sea_orm::sea_query::{Expr, Func, IntoCondition, SimpleExpr};
 use sea_orm::{
     ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, Order, QueryFilter, QueryOrder,
     QuerySelect,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::db::entities::{events, games, players};
-use crate::search::position::{GameHit, PositionSearchService, SearchError};
+use crate::db::entities::{events, games};
+use crate::search::position::{Color, GameHit, PositionSearchService, SearchError};
 use crate::server::identity::CurrentUser;
 
 /// Page size when the caller omits `limit`.
@@ -42,13 +42,6 @@ pub enum HeaderSearchError {
     /// Underlying database error (never surfaced verbatim to clients).
     #[error(transparent)]
     Db(#[from] DbErr),
-}
-
-/// Restrict a player filter to one side of the board.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Color {
-    White,
-    Black,
 }
 
 /// The column the result set is ordered by. `id` is always the tiebreaker.
@@ -221,7 +214,9 @@ impl HeaderSearchService {
             .await
             .map_err(|e| match e {
                 SearchError::Db(e) => HeaderSearchError::Db(e),
-                SearchError::InvalidFen(m) => HeaderSearchError::BadRequest(m),
+                SearchError::InvalidFen(m) | SearchError::BadRequest(m) => {
+                    HeaderSearchError::BadRequest(m)
+                }
                 SearchError::Serialize(e) => HeaderSearchError::Serialize(e),
             })?;
         if visible.is_empty() {
@@ -230,7 +225,9 @@ impl HeaderSearchService {
         let mut cond = Condition::all().add(games::Column::DatabaseId.is_in(visible));
 
         if let Some(name) = &query.player {
-            let ids = self.player_ids_matching(name).await?;
+            let ids = crate::search::position::player_ids_matching(&self.db, name)
+                .await
+                .map_err(HeaderSearchError::Db)?;
             if ids.is_empty() {
                 return Ok(HeaderPage::empty());
             }
@@ -296,46 +293,18 @@ impl HeaderSearchService {
         Ok(HeaderPage { games, next_cursor })
     }
 
-    /// Player ids whose name contains `name` (case-insensitive on SQLite's ASCII
-    /// `LIKE`); the substring match keeps player search forgiving of full names.
-    async fn player_ids_matching(&self, name: &str) -> Result<Vec<i32>, HeaderSearchError> {
-        Ok(players::Entity::find()
-            .filter(players::Column::Name.like(contains_like(name)))
-            .select_only()
-            .column(players::Column::Id)
-            .into_tuple()
-            .all(&self.db)
-            .await?)
-    }
-
-    /// Event ids whose name contains `name`.
+    /// Event ids whose name contains `name`. Events have no position-search
+    /// equivalent to move to, so this reuses position search's `LIKE`-escaping
+    /// helper (issue #172) rather than keeping a second copy here.
     async fn event_ids_matching(&self, name: &str) -> Result<Vec<i32>, HeaderSearchError> {
         Ok(events::Entity::find()
-            .filter(events::Column::Name.like(contains_like(name)))
+            .filter(events::Column::Name.like(crate::search::position::contains_like(name)))
             .select_only()
             .column(events::Column::Id)
             .into_tuple()
             .all(&self.db)
             .await?)
     }
-}
-
-/// Build a substring `LIKE` pattern that matches `needle` literally. SeaORM's
-/// `contains` wraps the raw input in `%…%` without escaping, so a `%`/`_` in a
-/// player/event name (or a `%` query) would act as a wildcard and over-match
-/// (issue #99). We escape the LIKE metacharacters with `\` and pair the pattern
-/// with `ESCAPE '\'` so they match as literals on both SQLite and Postgres.
-fn contains_like(needle: &str) -> LikeExpr {
-    LikeExpr::new(format!("%{}%", escape_like(needle))).escape('\\')
-}
-
-/// Escape the SQL `LIKE` metacharacters (`%`, `_`) and the escape char itself so
-/// the result matches `s` verbatim under `ESCAPE '\'`. Backslash is escaped first
-/// to avoid double-escaping the sequences introduced for `%`/`_`.
-fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
 }
 
 impl HeaderPage {

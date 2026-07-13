@@ -14,7 +14,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::search::headers::{HeaderParams, HeaderQuery, HeaderSearchError, HeaderSearchService};
-use crate::search::position::{PositionSearchService, SearchError};
+use crate::search::position::{Color, PositionFilter, PositionSearchService, SearchError};
 use crate::server::error::error_response;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
@@ -29,11 +29,50 @@ pub fn router(state: AppState) -> Router {
 }
 
 /// `?fen=<FEN>` query, shared by both endpoints. `limit` caps the games endpoint.
+/// `player`/`color`/`date_from`/`date_to` narrow continuations/games to one
+/// player's games (issue #172); see [`SearchQuery::filter`].
 #[derive(Deserialize)]
 struct SearchQuery {
     fen: String,
     #[serde(default)]
     limit: Option<u64>,
+    #[serde(default)]
+    player: Option<String>,
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    date_from: Option<String>,
+    #[serde(default)]
+    date_to: Option<String>,
+}
+
+impl SearchQuery {
+    /// Validate and build the position filter from the raw query params. Blank
+    /// strings are treated as unset (mirrors `search::headers::norm`); an
+    /// unrecognised `color` is a 400, not a silent ignore.
+    fn filter(&self) -> Result<PositionFilter, SearchError> {
+        let color = match norm(self.color.clone()).as_deref() {
+            None => None,
+            Some("white") => Some(Color::White),
+            Some("black") => Some(Color::Black),
+            Some(other) => {
+                return Err(SearchError::BadRequest(format!(
+                    "color must be 'white' or 'black', got '{other}'"
+                )))
+            }
+        };
+        Ok(PositionFilter {
+            player: norm(self.player.clone()),
+            color,
+            date_from: norm(self.date_from.clone()),
+            date_to: norm(self.date_to.clone()),
+        })
+    }
+}
+
+/// Trim a parameter and treat a blank value as unset.
+fn norm(s: Option<String>) -> Option<String> {
+    s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
 /// `GET /api/search/tree?fen=…` — per-continuation move statistics as NDJSON.
@@ -42,7 +81,8 @@ async fn tree(
     user: CurrentUser,
     Query(q): Query<SearchQuery>,
 ) -> Result<Response, SearchError> {
-    let stats = service(&state).opening_tree(&user, &q.fen).await?;
+    let filter = q.filter()?;
+    let stats = service(&state).opening_tree(&user, &q.fen, &filter).await?;
     ndjson(stats)
 }
 
@@ -52,8 +92,9 @@ async fn games(
     user: CurrentUser,
     Query(q): Query<SearchQuery>,
 ) -> Result<Response, SearchError> {
+    let filter = q.filter()?;
     let hits = service(&state)
-        .games_with_position(&user, &q.fen, q.limit)
+        .games_with_position(&user, &q.fen, q.limit, &filter)
         .await?;
     ndjson(hits)
 }
@@ -101,7 +142,7 @@ fn service(state: &AppState) -> PositionSearchService {
 impl IntoResponse for SearchError {
     fn into_response(self) -> Response {
         let status = match &self {
-            SearchError::InvalidFen(_) => StatusCode::BAD_REQUEST,
+            SearchError::InvalidFen(_) | SearchError::BadRequest(_) => StatusCode::BAD_REQUEST,
             SearchError::Serialize(_) | SearchError::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         error_response(status, self.to_string())

@@ -7,12 +7,20 @@ import Board from './Board.vue'
 import { useSearchStore } from '../stores/search'
 import { useSettingsStore } from '../stores/settings'
 import { frequency, scoreBar, totalCount } from '../lib/openingTree'
+import { isEmptyFilter } from '../lib/positionFilter'
 import type { BoardMove } from '../types'
 
 const search = useSearchStore()
 const settings = useSettingsStore()
 
 const total = computed(() => totalCount(search.tree))
+const filterIsEmpty = computed(() => isEmptyFilter(search.filter))
+
+const COLORS = [
+  { value: '', label: 'Either side' },
+  { value: 'white', label: 'as White' },
+  { value: 'black', label: 'as Black' },
+]
 
 function onMove({ from, to }: BoardMove) {
   search.playMove({ from, to })
@@ -68,6 +76,76 @@ onMounted(() => {
       >
         {{ search.explorerError }}
       </p>
+
+      <form
+        data-test="position-filter"
+        class="mb-3 flex flex-wrap items-end gap-2"
+        @submit.prevent="search.loadPosition()"
+      >
+        <label class="flex flex-col gap-1 text-xs">
+          <span class="text-muted">Player</span>
+          <input
+            v-model="search.filter.player"
+            type="text"
+            data-test="filter-player"
+            placeholder="e.g. Carlsen"
+            class="w-32 rounded border border-border px-2 py-1 bg-surface text-sm"
+          >
+        </label>
+        <label class="flex flex-col gap-1 text-xs">
+          <span class="text-muted">Color</span>
+          <select
+            v-model="search.filter.color"
+            data-test="filter-color"
+            class="rounded border border-border px-2 py-1 bg-surface text-sm"
+          >
+            <option
+              v-for="c in COLORS"
+              :key="c.value"
+              :value="c.value"
+            >
+              {{ c.label }}
+            </option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1 text-xs">
+          <span class="text-muted">Date from</span>
+          <input
+            v-model="search.filter.dateFrom"
+            type="text"
+            data-test="filter-date-from"
+            placeholder="YYYY.MM.DD"
+            class="w-28 rounded border border-border px-2 py-1 bg-surface text-sm"
+          >
+        </label>
+        <label class="flex flex-col gap-1 text-xs">
+          <span class="text-muted">Date to</span>
+          <input
+            v-model="search.filter.dateTo"
+            type="text"
+            data-test="filter-date-to"
+            placeholder="YYYY.MM.DD"
+            class="w-28 rounded border border-border px-2 py-1 bg-surface text-sm"
+          >
+        </label>
+        <button
+          type="submit"
+          data-test="filter-apply"
+          :disabled="search.explorerLoading"
+          class="rounded bg-accent px-3 py-1 text-sm font-medium text-surface hover:opacity-90 disabled:opacity-50"
+        >
+          Apply
+        </button>
+        <button
+          v-if="!filterIsEmpty"
+          type="button"
+          data-test="filter-clear"
+          class="rounded border border-border px-3 py-1 text-sm"
+          @click="search.resetFilter()"
+        >
+          Clear
+        </button>
+      </form>
 
       <h3 class="mb-2 text-sm font-semibold text-muted">
         Moves <span v-if="total">({{ total }} games)</span>

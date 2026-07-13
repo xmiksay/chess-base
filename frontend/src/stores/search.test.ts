@@ -193,3 +193,28 @@ describe('opening-tree navigation', () => {
     expect(store.tree).toEqual([])
   })
 })
+
+describe('position filter', () => {
+  it('passes mapped filter params to both tree and games calls', async () => {
+    const store = useSearchStore()
+    store.filter.player = 'Carlsen'
+
+    await store.loadPosition()
+
+    expect(vi.mocked(api.search.tree).mock.calls.at(-1)![1]).toEqual({ player: 'Carlsen' })
+    expect(vi.mocked(api.search.games).mock.calls.at(-1)![2]).toEqual({ player: 'Carlsen' })
+  })
+
+  it('resetFilter clears fields and reloads', async () => {
+    const store = useSearchStore()
+    store.filter.player = 'Carlsen'
+    store.filter.color = 'white'
+    store.filter.dateFrom = '2020.01.01'
+    store.filter.dateTo = '2021.01.01'
+
+    await store.resetFilter()
+
+    expect(store.filter).toEqual({ player: '', color: '', dateFrom: '', dateTo: '' })
+    expect(vi.mocked(api.search.tree).mock.calls.at(-1)![1]).toEqual({})
+  })
+})

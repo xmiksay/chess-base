@@ -39,3 +39,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0031 | Semantic design tokens + class-based dark mode in the SPA |
 | 0032 | Merge a danger map into an existing study (pure `graft_subtree`, move-only) |
 | 0033 | Merge multiple games into one frequency-ordered repertoire study |
+| 0034 | Position search gains a player/color/date filter |

@@ -219,15 +219,6 @@ async fn filters_by_player_event_eco_date_and_result() {
     assert_eq!(page.games.len(), 1);
 }
 
-#[test]
-fn escape_like_neutralizes_wildcards() {
-    assert_eq!(escape_like("a%b_c"), "a\\%b\\_c");
-    assert_eq!(escape_like("100%"), "100\\%");
-    // Backslash is escaped first so it can't form a spurious escape sequence.
-    assert_eq!(escape_like("a\\_b"), "a\\\\\\_b");
-    assert_eq!(escape_like("plain"), "plain");
-}
-
 #[tokio::test]
 async fn player_event_filters_treat_like_wildcards_as_literals() {
     let pgns = [

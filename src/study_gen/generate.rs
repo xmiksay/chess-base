@@ -20,6 +20,7 @@ use crate::ai::llm::LlmProvider;
 use crate::db::entities::studies;
 use crate::engine::{EngineService, Limits};
 use crate::position::CastlingMode;
+use crate::search::position::PositionFilter;
 use crate::search::report::PositionReportService;
 use crate::server::identity::CurrentUser;
 use crate::studies::{StudyError, StudyService};
@@ -60,6 +61,10 @@ pub struct GenerateParams {
     pub plan_lines: u8,
     /// Pin the static "threats" (hanging-piece) arrows on every node.
     pub threats: bool,
+    /// Optional player/color/date filter narrowing which games' continuations
+    /// feed the tree (issue #172); `PositionFilter::default()` (all `None`) uses
+    /// every scoped game, unchanged from before.
+    pub filter: PositionFilter,
 }
 
 /// The persisted study plus a summary of what the verification loop dropped.
@@ -197,7 +202,7 @@ pub async fn generate_study_live(
     engine_limits: Limits,
 ) -> Result<GenerateOutcome, GenerateError> {
     let evaluator = EngineEvaluator::new(engine, engine_limits.clone());
-    let continuations = ReportContinuations::new(reports, user);
+    let continuations = ReportContinuations::new(reports, user, params.filter.clone());
 
     // A separate depth-bounded multi-PV analyser sources the plan arrows; built
     // only when plan lines are requested (threats need no engine).

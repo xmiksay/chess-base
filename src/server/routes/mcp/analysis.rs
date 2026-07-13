@@ -28,6 +28,7 @@ use crate::ingest::parse_pgn;
 use crate::pgn_tree::pgn;
 use crate::position::STARTPOS_FEN;
 use crate::review::{review_game, ReviewError};
+use crate::search::position::PositionFilter;
 use crate::search::report::PositionReportService;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
@@ -87,7 +88,7 @@ async fn analyse_position(app: AppState, user: CurrentUser, args: Value) -> Tool
     };
 
     let report = match PositionReportService::new(app.db.clone())
-        .position_report(&user, &fen)
+        .position_report(&user, &fen, &PositionFilter::default())
         .await
     {
         Ok(report) => report,

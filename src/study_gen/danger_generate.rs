@@ -30,6 +30,7 @@ use crate::db::entities::studies;
 use crate::engine::EngineService;
 use crate::pgn_tree::MoveTree;
 use crate::position::{zobrist_of_fen, CastlingMode};
+use crate::search::position::PositionFilter;
 use crate::search::report::PositionReportService;
 use crate::server::identity::CurrentUser;
 use crate::studies::{StudyError, StudyService};
@@ -220,7 +221,9 @@ pub async fn generate_danger_study_live(
     multipv: u16,
 ) -> Result<DangerStudyOutcome, DangerStudyError> {
     let analyzer = EngineMultiAnalyzer::new(engine, movetime_ms, multipv);
-    let continuations = ReportContinuations::new(reports, user);
+    // Danger-map generation is out of scope for the #172 filter (per the ADR):
+    // the walk always sees every scoped game.
+    let continuations = ReportContinuations::new(reports, user, PositionFilter::default());
     generate_danger_study(&analyzer, &continuations, provider, studies, user, params).await
 }
 

@@ -20,7 +20,9 @@ use serde::{Deserialize, Serialize};
 use crate::db::entities::position_index;
 use crate::openings::opening_of_zobrist;
 use crate::position::{black_to_move, zobrist_of_fen, CastlingMode};
-use crate::search::position::{GameHit, MoveStat, PositionSearchService, SearchError};
+use crate::search::position::{
+    GameHit, MoveStat, PositionFilter, PositionSearchService, SearchError,
+};
 use crate::server::identity::CurrentUser;
 
 /// ECO classification (code + name) for a position.
@@ -133,13 +135,14 @@ impl PositionReportService {
         &self,
         user: &CurrentUser,
         fen: &str,
+        filter: &PositionFilter,
     ) -> Result<PositionReport, SearchError> {
         let zobrist = zobrist_of_fen(fen, CastlingMode::Standard)
             .map_err(|e| SearchError::InvalidFen(e.to_string()))?;
         let black = black_to_move(fen, CastlingMode::Standard)
             .map_err(|e| SearchError::InvalidFen(e.to_string()))?;
 
-        let stats = self.search.opening_tree(user, fen).await?;
+        let stats = self.search.opening_tree(user, fen, filter).await?;
         let total: u64 = stats.iter().map(|m| m.count).sum();
         let moves = stats
             .into_iter()
@@ -174,10 +177,11 @@ impl PositionReportService {
         &self,
         user: &CurrentUser,
         fens: &[impl AsRef<str>],
+        filter: &PositionFilter,
     ) -> Result<Vec<PositionReport>, SearchError> {
         let mut reports = Vec::with_capacity(fens.len());
         for fen in fens {
-            reports.push(self.position_report(user, fen.as_ref()).await?);
+            reports.push(self.position_report(user, fen.as_ref(), filter).await?);
         }
         Ok(reports)
     }
@@ -190,8 +194,11 @@ impl PositionReportService {
         user: &CurrentUser,
         fen: &str,
         limit: Option<u64>,
+        filter: &PositionFilter,
     ) -> Result<Vec<GameHit>, SearchError> {
-        self.search.games_with_position(user, fen, limit).await
+        self.search
+            .games_with_position(user, fen, limit, filter)
+            .await
     }
 
     /// Reconstruct the distinct move orders that reach the position. For every
@@ -340,7 +347,11 @@ mod tests {
 
         // After 1. e4 c5 both games continue with Nf3, so it is the lone move.
         let report = svc
-            .position_report(&user("alice"), &fen_after(&["e4", "c5"]))
+            .position_report(
+                &user("alice"),
+                &fen_after(&["e4", "c5"]),
+                &PositionFilter::default(),
+            )
             .await
             .unwrap();
         let eco = report.eco.expect("Sicilian is a known opening");
@@ -365,7 +376,11 @@ mod tests {
         // It is Black to move here, so `score` is from Black's perspective (#94):
         // the Black-winning move scores 1.0, the White-winning one 0.0.
         let report = svc
-            .position_report(&user("alice"), &fen_after(&["e4", "c5", "Nf3"]))
+            .position_report(
+                &user("alice"),
+                &fen_after(&["e4", "c5", "Nf3"]),
+                &PositionFilter::default(),
+            )
             .await
             .unwrap();
         assert_eq!(report.total, 2);
@@ -388,7 +403,11 @@ mod tests {
 
         // Both games reach this position; each by a distinct move order.
         let report = svc
-            .position_report(&user("alice"), &fen_after(&["d4", "Nf6", "c4", "g6"]))
+            .position_report(
+                &user("alice"),
+                &fen_after(&["d4", "Nf6", "c4", "g6"]),
+                &PositionFilter::default(),
+            )
             .await
             .unwrap();
 
@@ -416,7 +435,12 @@ mod tests {
 
         // After 1. e4 c5 2. Nf3 d6 only the White-win game is a reference.
         let games = svc
-            .references(&user("alice"), &fen_after(&["e4", "c5", "Nf3", "d6"]), None)
+            .references(
+                &user("alice"),
+                &fen_after(&["e4", "c5", "Nf3", "d6"]),
+                None,
+                &PositionFilter::default(),
+            )
             .await
             .unwrap();
         assert_eq!(games.len(), 1);
@@ -430,7 +454,10 @@ mod tests {
         let svc = PositionReportService::new(conn);
 
         let fens = [fen_after(&["e4", "c5"]), fen_after(&["e4", "c5", "Nf3"])];
-        let reports = svc.position_reports(&user("alice"), &fens).await.unwrap();
+        let reports = svc
+            .position_reports(&user("alice"), &fens, &PositionFilter::default())
+            .await
+            .unwrap();
         assert_eq!(reports.len(), 2);
         assert_eq!(reports[0].fen, fens[0]);
         assert_eq!(reports[1].fen, fens[1]);
@@ -444,7 +471,11 @@ mod tests {
 
         // A legal but un-indexed position (after 1. h4).
         let report = svc
-            .position_report(&user("alice"), &fen_after(&["h4"]))
+            .position_report(
+                &user("alice"),
+                &fen_after(&["h4"]),
+                &PositionFilter::default(),
+            )
             .await
             .unwrap();
         assert_eq!(report.total, 0);
@@ -456,7 +487,9 @@ mod tests {
     async fn invalid_fen_is_rejected() {
         let (conn, _) = db_for("alice").await;
         let svc = PositionReportService::new(conn);
-        let err = svc.position_report(&user("alice"), "not a fen").await;
+        let err = svc
+            .position_report(&user("alice"), "not a fen", &PositionFilter::default())
+            .await;
         assert!(matches!(err, Err(SearchError::InvalidFen(_))));
     }
 }

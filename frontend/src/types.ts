@@ -112,6 +112,17 @@ export interface HeaderQuery {
   dateTo: string
 }
 
+/** Position-explorer filter form state (camelCase; mapped to snake_case query
+ * params). A subset of `HeaderQuery` — player/color/date range only — applied
+ * to the opening-tree/games-list explorer and the study generator (issue #172).
+ * Mirrors the backend `PositionFilter` (src/search/position.rs). */
+export interface PositionFilter {
+  player: string
+  color: string
+  dateFrom: string
+  dateTo: string
+}
+
 // --- studies (move trees) ---------------------------------------------------
 
 /**
@@ -362,6 +373,10 @@ export interface GenerateBody {
   tree?: TreeConfig
   plan_lines?: number // pin top-N engine "plan" arrows per node (0–3, 0 = off)
   threats?: boolean // pin static hanging-piece "threat" arrows per node
+  player?: string // restrict continuations to this player's games (either side unless color narrows it)
+  color?: string // 'white' | 'black'; ignored without player
+  date_from?: string // only games on/after this PGN date (inclusive)
+  date_to?: string // only games on/before this PGN date (inclusive)
 }
 
 /** Result of a generation run. */
