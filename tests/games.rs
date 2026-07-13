@@ -311,6 +311,102 @@ async fn annotated_export_without_engine_is_unavailable() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 }
 
+/// POST `uri` with a JSON body as a download: returns (status, Content-Disposition,
+/// text body) — the `POST` counterpart of [`get_download`], for the bulk export
+/// endpoint which takes its ids as a body rather than a path segment.
+async fn post_download(
+    app: &Router,
+    uri: &str,
+    token: &str,
+    body: Value,
+) -> (StatusCode, Option<String>, String) {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let disposition = resp
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (
+        status,
+        disposition,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
+}
+
+#[tokio::test]
+async fn export_many_bundles_selected_games_into_one_pgn() {
+    let (app, db) = app_with_db().await;
+    let (alice, alice_id) = register(&app, "alice").await;
+    let db_id = seed(&db, &alice_id, &[SCHOLARS_MATE, QUEENS_DRAW]).await;
+
+    let (_, list) = get(&app, &format!("/api/games?database_id={db_id}"), &alice).await;
+    let ids: Vec<i64> = list["games"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["id"].as_i64().unwrap())
+        .collect();
+
+    let (status, disposition, pgn) = post_download(
+        &app,
+        "/api/games/export",
+        &alice,
+        json!({ "game_ids": ids }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        disposition.as_deref(),
+        Some("attachment; filename=\"games-export.pgn\"")
+    );
+    assert!(pgn.contains("Qxf7#"));
+    assert!(pgn.contains("Carlsen"));
+    // Games are separated by a blank line, as PGN multi-game files require.
+    assert!(pgn.contains("\n\n"));
+}
+
+#[tokio::test]
+async fn export_many_hides_a_game_in_another_users_database() {
+    let (app, db) = app_with_db().await;
+    let (alice, alice_id) = register(&app, "alice").await; // first user → admin
+    let (bob, _bob_id) = register(&app, "bob").await;
+    let alice_db = seed(&db, &alice_id, &[SCHOLARS_MATE]).await;
+    let game_id = first_game_id(&app, alice_db, &alice).await;
+
+    let (status, _, _) = post_download(
+        &app,
+        "/api/games/export",
+        &bob,
+        json!({ "game_ids": [game_id] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn export_many_rejects_an_empty_selection() {
+    let (app, _db) = app_with_db().await;
+    let (alice, _alice_id) = register(&app, "alice").await;
+
+    let (status, _, _) =
+        post_download(&app, "/api/games/export", &alice, json!({ "game_ids": [] })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 /// DELETE `uri` with a bearer token, returning the status.
 async fn delete(app: &Router, uri: &str, token: &str) -> StatusCode {
     app.clone()

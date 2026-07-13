@@ -71,6 +71,11 @@ export const useSearchStore = defineStore('search', () => {
     headerError.value = null
   }
 
+  /** Drop games from the results after a bulk delete (issue #171). */
+  function removeResults(ids: Set<number>) {
+    results.value = results.value.filter((g) => !ids.has(g.id))
+  }
+
   // --- Position / opening-tree explorer -------------------------------------
   const line = ref<string[]>([]) // SAN moves from the start position
   const tree = ref<MoveStat[]>([]) // MoveStat rows for the current position
@@ -156,6 +161,7 @@ export const useSearchStore = defineStore('search', () => {
     runHeaderSearch,
     loadMore,
     resetQuery,
+    removeResults,
     // explorer
     line,
     tree,

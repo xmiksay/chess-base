@@ -42,6 +42,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/games/{id}", get(get_one).delete(delete_one))
         .route("/api/games/{id}/tree", get(get_tree))
         .route("/api/games/{id}/export", get(export_pgn))
+        .route("/api/games/export", post(export_many))
         .route("/api/games/{id}/save-as-study", post(save_as_study))
         .route("/api/games/{id}/studies", get(linked_studies))
         .with_state(state)
@@ -176,6 +177,49 @@ async fn export_pgn(
     };
 
     Ok(pgn_attachment(&format!("game-{id}.pgn"), pgn))
+}
+
+/// Body for `POST /api/games/export`: the ids to bundle into one PGN download
+/// (issue #171 bulk export, header-search multi-select).
+#[derive(Deserialize)]
+struct ExportManyBody {
+    game_ids: Vec<i32>,
+}
+
+/// `POST /api/games/export` — download several games as one concatenated `.pgn`
+/// file (verbatim stored movetext, no engine involved). Mirrors [`merge_games`]'s
+/// visibility handling: an id the caller cannot see fails the whole request
+/// (404/403) rather than silently dropping it, since a caller who selected N
+/// games expects N games back or a clear reason why not. A game with no stored
+/// PGN (never happens for ingested games, but the column is nullable) is skipped.
+///
+/// [`merge_games`]: crate::studies::StudyService::merge_games
+async fn export_many(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(body): Json<ExportManyBody>,
+) -> Result<Response, Response> {
+    if body.game_ids.is_empty() {
+        return Err(error_response(StatusCode::BAD_REQUEST, "no games selected"));
+    }
+    let svc = service(&state);
+    let mut parts = Vec::with_capacity(body.game_ids.len());
+    for id in &body.game_ids {
+        let game = svc.get(&user, *id).await.map_err(game_error_response)?;
+        if let Some(pgn) = game.pgn.as_deref() {
+            let trimmed = pgn.trim();
+            if !trimmed.is_empty() {
+                parts.push(trimmed.to_string());
+            }
+        }
+    }
+    if parts.is_empty() {
+        return Err(error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "none of the selected games have a stored PGN",
+        ));
+    }
+    Ok(pgn_attachment("games-export.pgn", parts.join("\n\n")))
 }
 
 /// Study metadata returned by the game↔analysis endpoints — the same shape the
