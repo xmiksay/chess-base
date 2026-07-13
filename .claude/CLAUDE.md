@@ -109,7 +109,11 @@ src/
                    weapon/hope-chess + only-move gap (engine as adjudicator);
                    spine.rs (#139) PGN-repertoire walk: per opponent position runs
                    analyse_multi (movetime/variation) → reachability/trap/only-move
-                   /attack → a tagged DangerTree (Weapon/Caution/Off-book);
+                   /attack → a tagged DangerTree (Weapon/Caution/Off-book); the
+                   trap test's "tempting reply" (PV2) is weighted by its DB
+                   frequency among human replies and the mate-only/single-line
+                   case is explicit (#176, ADR-0026 update; thresholds still
+                   unmeasured — FE overlay labelled "experimental");
                    attack.rs (#142) pure pawn-storm-toward-king detector reusing
                    plans.rs → Caution;
                    danger_generate.rs (#140) orchestrator: spine walk → fold to a

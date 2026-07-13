@@ -139,13 +139,18 @@ async fn offbook_reply_tagged_onbook_reply_recurses() {
 async fn weapon_trap_tagged_on_our_move() {
     // After 1.e4, Black's best (c5) keeps Black only −10 (our downside bounded),
     // but the tempting e5 drops Black to −300 (our baited upside): a weapon.
+    // Humans actually play e5 30% of the time, clearing the bait-frequency gate
+    // (#176) — a real trap, not just an engine-only proxy.
     let mut an = HashMap::new();
     an.insert(
         fen_after(&["e4"]),
         vec![line("c7c5", -10), line("e7e5", -300)],
     );
     let mut stats = HashMap::new();
-    stats.insert(fen_after(&["e4"]), vec![report("c5", 0.5)]);
+    stats.insert(
+        fen_after(&["e4"]),
+        vec![report("c5", 0.5), report("e5", 0.3)],
+    );
 
     let tree = walk_danger_spine(
         &FakeAnalyzer(an),
@@ -182,7 +187,10 @@ async fn weapon_refuted_one_ply_deeper_downgrades_to_caution() {
     );
     an.insert(fen_after(&["e4", "c5"]), vec![line("g1f3", -350)]);
     let mut stats = HashMap::new();
-    stats.insert(fen_after(&["e4"]), vec![report("c5", 0.5)]);
+    stats.insert(
+        fen_after(&["e4"]),
+        vec![report("c5", 0.5), report("e5", 0.3)],
+    );
 
     let tree = walk_danger_spine(
         &FakeAnalyzer(an),
@@ -209,14 +217,18 @@ async fn weapon_refuted_one_ply_deeper_downgrades_to_caution() {
 #[tokio::test]
 async fn refuted_bait_tagged_caution() {
     // Black's best (c5) refutes us hard (Black +200 ⇒ our −200, below the floor),
-    // yet the second line still baits: hope-chess → Caution, never recommended.
+    // yet the second line still baits and humans do play it: hope-chess →
+    // Caution, never recommended.
     let mut an = HashMap::new();
     an.insert(
         fen_after(&["e4"]),
         vec![line("c7c5", 200), line("e7e5", -200)],
     );
     let mut stats = HashMap::new();
-    stats.insert(fen_after(&["e4"]), vec![report("c5", 0.5)]);
+    stats.insert(
+        fen_after(&["e4"]),
+        vec![report("c5", 0.5), report("e5", 0.3)],
+    );
 
     let tree = walk_danger_spine(
         &FakeAnalyzer(an),
@@ -234,6 +246,109 @@ async fn refuted_bait_tagged_caution() {
     assert_eq!(tag.kind, DangerKind::Trap);
     assert_eq!(tag.role, DangerRole::Caution);
     assert_eq!(tag.trap, Some(TrapVerdict::HopeChess));
+}
+
+#[tokio::test]
+async fn bait_nobody_plays_is_not_a_weapon() {
+    // Same shape as a would-be weapon (downside bounded at −50, tempting reply
+    // baits well past the upside floor) but the gap (110cp) stays under the
+    // only-move threshold, so nothing else would tag this move — and nobody in
+    // the DB has ever played the tempting reply. PV2 is just an engine proxy for
+    // "tempting"; without a human ever choosing it, it is not a practical trap
+    // (#176), so the verdict is downgraded to Quiet and the move goes untagged.
+    let mut an = HashMap::new();
+    an.insert(
+        fen_after(&["e4"]),
+        vec![line("c7c5", -50), line("e7e5", -160)],
+    );
+    let mut stats = HashMap::new();
+    // c5 (the actually-played best reply) is on the board; e5 never appears.
+    stats.insert(fen_after(&["e4"]), vec![report("c5", 0.9)]);
+
+    let tree = walk_danger_spine(
+        &FakeAnalyzer(an),
+        &FakeStats(stats),
+        &white_spine(),
+        STARTPOS_FEN,
+        &cfg(),
+        STD,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        node_by_san(&tree, "e4").tag.is_none(),
+        "a bait no human plays must not be reported as a trap"
+    );
+}
+
+#[tokio::test]
+async fn rare_bait_clearing_min_frequency_still_counts() {
+    // Same eval shape as `bait_nobody_plays_is_not_a_weapon`, but the tempting
+    // reply is on record at exactly `min_frequency` (2%, the default floor for
+    // "a human plays this at all") — enough to count as a real, if rare, bait.
+    let mut an = HashMap::new();
+    an.insert(
+        fen_after(&["e4"]),
+        vec![line("c7c5", -50), line("e7e5", -160)],
+    );
+    let mut stats = HashMap::new();
+    stats.insert(
+        fen_after(&["e4"]),
+        vec![report("c5", 0.9), report("e5", 0.02)],
+    );
+
+    let tree = walk_danger_spine(
+        &FakeAnalyzer(an),
+        &FakeStats(stats),
+        &white_spine(),
+        STARTPOS_FEN,
+        &cfg(),
+        STD,
+    )
+    .await
+    .unwrap();
+
+    let tag = node_by_san(&tree, "e4").tag.as_ref().expect("e4 is tagged");
+    assert_eq!(tag.kind, DangerKind::Trap);
+    assert_eq!(tag.trap, Some(TrapVerdict::Weapon));
+}
+
+#[tokio::test]
+async fn single_reply_position_yields_no_trap_verdict() {
+    // The engine finds only one reasonable reply (a forced mate search that
+    // stops expanding past the mating line, or a literal one-legal-move
+    // position) — no second line for the opponent to be tempted by. The
+    // asymmetric refutation test needs two candidates to compare, so this must
+    // not be misread as an unbaited Quiet trap; it simply carries no trap
+    // verdict at all (#176). With no only-move gap or attack signal available
+    // either, the move goes untagged rather than defaulting to some verdict.
+    let mut an = HashMap::new();
+    an.insert(
+        fen_after(&["e4"]),
+        vec![Analysis {
+            bestmove: "c7c5".to_string(),
+            ponder: None,
+            score: Some(Score::Mate { value: -3 }), // forced mate against Black
+            depth: None,
+            pv: vec!["c7c5".to_string()],
+        }],
+    );
+    let mut stats = HashMap::new();
+    stats.insert(fen_after(&["e4"]), vec![report("c5", 1.0)]);
+
+    let tree = walk_danger_spine(
+        &FakeAnalyzer(an),
+        &FakeStats(stats),
+        &white_spine(),
+        STARTPOS_FEN,
+        &cfg(),
+        STD,
+    )
+    .await
+    .unwrap();
+
+    assert!(node_by_san(&tree, "e4").tag.is_none());
 }
 
 #[tokio::test]
