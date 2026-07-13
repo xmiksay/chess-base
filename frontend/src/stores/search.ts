@@ -80,6 +80,12 @@ export const useSearchStore = defineStore('search', () => {
   const line = ref<string[]>([]) // SAN moves from the start position
   const tree = ref<MoveStat[]>([]) // MoveStat rows for the current position
   const games = ref<GameRow[]>([]) // GameHit rows reaching the current position
+  // The MoveStat row for the move that reached the current line's final
+  // position, captured at the moment it was played (issue #173: the explorer's
+  // "N games, W/D/L" for that position, offered as an "Add line to study"
+  // comment). `null` at the start position or after navigating away from the
+  // move it was captured for (back/reset).
+  const lastMoveStat = ref<MoveStat | null>(null)
   const explorerLoading = ref(false)
   const explorerError = ref<string | null>(null)
   // Player/color/date filter narrowing which games' continuations count
@@ -123,6 +129,7 @@ export const useSearchStore = defineStore('search', () => {
 
   /** Descend the tree by one SAN continuation (from a tree row). */
   function playSan(san: string) {
+    lastMoveStat.value = tree.value.find((m) => m.san === san) ?? null
     line.value = [...line.value, san]
     return loadPosition()
   }
@@ -139,12 +146,14 @@ export const useSearchStore = defineStore('search', () => {
   function back() {
     if (line.value.length === 0) return
     line.value = line.value.slice(0, -1)
+    lastMoveStat.value = null
     return loadPosition()
   }
 
   /** Return to the start position. */
   function resetBoard() {
     line.value = []
+    lastMoveStat.value = null
     return loadPosition()
   }
 
@@ -166,6 +175,7 @@ export const useSearchStore = defineStore('search', () => {
     line,
     tree,
     games,
+    lastMoveStat,
     explorerLoading,
     explorerError,
     filter,

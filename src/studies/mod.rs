@@ -14,6 +14,8 @@ use sea_orm::{
     Set,
 };
 
+pub mod add_line;
+pub mod add_line_route;
 pub mod analyse;
 pub mod danger_route;
 pub mod mark_transpositions;

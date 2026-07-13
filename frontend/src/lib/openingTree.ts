@@ -119,3 +119,13 @@ export function frequency(stat: MoveStat, total: number): number {
   if (!total) return 0
   return Math.round((100 * (stat.count ?? 0)) / total)
 }
+
+/**
+ * A compact "N games, WW/DD/LL" stat string for a move, e.g. for the "Add line
+ * to study" comment (issue #173).
+ */
+export function formatMoveStat(stat: MoveStat): string {
+  const games = stat.count ?? 0
+  const plural = games === 1 ? 'game' : 'games'
+  return `${games} ${plural}, ${stat.white ?? 0}W/${stat.draws ?? 0}D/${stat.black ?? 0}L`
+}

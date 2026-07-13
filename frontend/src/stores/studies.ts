@@ -7,7 +7,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api } from '../api'
-import type { DangerMapBody, GenerateBody, Study, StudySummary } from '../types'
+import type { AddLineBody, DangerMapBody, GenerateBody, Study, StudySummary } from '../types'
 
 export const useStudiesStore = defineStore('studies', () => {
   const list = ref<StudySummary[]>([])
@@ -97,6 +97,18 @@ export const useStudiesStore = defineStore('studies', () => {
     return study
   }
 
+  /**
+   * Graft a SAN line into a study (issue #173, position explorer): `study_id`
+   * set ⇒ graft into that study, otherwise create a new one. Refreshes the list
+   * on success so a newly-created study shows up.
+   */
+  async function addLine(body: AddLineBody) {
+    const study = await _run(() => api.studies.addLine(body))
+    if (current.value?.id === study.id) current.value = study
+    await refresh()
+    return study
+  }
+
   /** Delete a study; clears `current` if it was the open one. */
   async function remove(id: number) {
     await _run(() => api.studies.remove(id))
@@ -118,6 +130,7 @@ export const useStudiesStore = defineStore('studies', () => {
     exportPgn,
     rename,
     setFolder,
+    addLine,
     remove,
   }
 })

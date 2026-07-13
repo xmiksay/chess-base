@@ -1,6 +1,7 @@
 // Thin client for the chess-base backend JSON API.
 
 import type {
+  AddLineBody,
   AddMoveResult,
   Annotation,
   ApiSettings,
@@ -224,6 +225,10 @@ export const api = {
       name?: string
       folder_id?: number | null
     }) => send<Study>('POST', '/api/studies/merge-games', body),
+    // Add a SAN line to a study (issue #173, position explorer): grafts as
+    // deduped, legality-checked variations. `study_id` set ⇒ graft into that
+    // study; otherwise a new study is created (`database_id`/`name` required).
+    addLine: (body: AddLineBody) => send<Study>('POST', '/api/studies/add-line', body),
   },
 
   // Ownable databases (issue #6): collections to search/import into. `list`

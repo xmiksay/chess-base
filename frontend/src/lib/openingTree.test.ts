@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { MoveStat } from '../types'
 import {
   START_FEN,
+  formatMoveStat,
   frequency,
   lineFen,
   moveToSan,
@@ -117,5 +118,17 @@ describe('totalCount / frequency', () => {
 
   it('is zero when the total is zero', () => {
     expect(frequency({ count: 5 } as MoveStat, 0)).toBe(0)
+  })
+})
+
+describe('formatMoveStat', () => {
+  it('formats a compact "N games, WW/DD/LL" string', () => {
+    const stat = { san: 'e4', count: 12, white: 8, draws: 2, black: 2 } as MoveStat
+    expect(formatMoveStat(stat)).toBe('12 games, 8W/2D/2L')
+  })
+
+  it('uses the singular "game" for a count of one', () => {
+    const stat = { san: 'e4', count: 1, white: 1, draws: 0, black: 0 } as MoveStat
+    expect(formatMoveStat(stat)).toBe('1 game, 1W/0D/0L')
   })
 })
