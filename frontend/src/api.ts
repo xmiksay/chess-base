@@ -291,18 +291,22 @@ export const api = {
   // Game search (issues #6/#7). Header/metadata search (`headers`) is keyset-
   // paginated and returns one JSON page `{ games, next_cursor }`; pass the
   // previous page's `next_cursor` as `cursor` to advance. Position search
-  // (`tree`/`games`) takes a FEN and streams NDJSON rows. `headers` takes the
-  // query params built by lib/headerQuery.toParams.
+  // (`tree`/`games`) takes a FEN and streams NDJSON rows; both also accept an
+  // optional player/color/date filter (already-mapped snake_case params, issue
+  // #172 — pass lib/positionFilter.toParams(filter)). `headers` takes the query
+  // params built by lib/headerQuery.toParams.
   search: {
     headers: (params: Record<string, string> = {}) =>
       getJson<HeaderPage>(`/api/search/headers?${new URLSearchParams(params).toString()}`),
-    tree: (fen: string) => getNdjson<MoveStat>(`/api/search/tree?fen=${encodeURIComponent(fen)}`),
+    tree: (fen: string, filterParams: Record<string, string> = {}) =>
+      getNdjson<MoveStat>(`/api/search/tree?${new URLSearchParams({ fen, ...filterParams }).toString()}`),
     // Threatened-piece arrows for the side to move (issue #123, Threats overlay).
     threats: (fen: string) => getJson<Shape[]>(`/api/threats?fen=${encodeURIComponent(fen)}`),
-    games: (fen: string, limit?: number) =>
-      getNdjson<GameRow>(
-        `/api/search/games?fen=${encodeURIComponent(fen)}` + (limit ? `&limit=${limit}` : ''),
-      ),
+    games: (fen: string, limit?: number, filterParams: Record<string, string> = {}) => {
+      const params = new URLSearchParams({ fen, ...filterParams })
+      if (limit) params.set('limit', String(limit))
+      return getNdjson<GameRow>(`/api/search/games?${params.toString()}`)
+    },
   },
 
   // Game import (issue #70): trigger a Lichess / Chess.com sync, or upload a

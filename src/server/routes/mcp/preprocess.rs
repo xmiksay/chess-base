@@ -25,6 +25,7 @@ use super::{Tool, ToolOutcome, ToolRegistry};
 use crate::engine::{Limits, MAX_DEPTH, MAX_MOVETIME_MS};
 use crate::pgn_tree::pgn::from_pgn_with_start;
 use crate::position::{CastlingMode, STARTPOS_FEN};
+use crate::search::position::PositionFilter;
 use crate::search::report::PositionReportService;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
@@ -84,8 +85,9 @@ fn opening_tree_tool() -> Tool {
          threats) you can carry straight into a study. Pass `save_as` to persist \
          the tree straight into a study server-side and get back just an id (no \
          tree JSON, no client-side PGN assembly) — then layer prose with \
-         `study_annotate`. Scoped to your databases and the global ones. Requires \
-         an engine configured.",
+         `study_annotate`. Scoped to your databases and the global ones. \
+         Optionally narrow continuations to one player's games (`player`/`color`) \
+         or a date range. Requires an engine configured.",
         json!({
             "type": "object",
             "properties": {
@@ -109,6 +111,22 @@ fn opening_tree_tool() -> Tool {
                 "threats": {
                     "type": "boolean",
                     "description": "Pin the static hanging-piece `threat` arrows on every node (default false)."
+                },
+                "player": {
+                    "type": "string",
+                    "description": "Restrict continuations to games featuring this player (substring match on name); either side unless `color` narrows it."
+                },
+                "color": {
+                    "type": "string", "enum": ["white", "black"],
+                    "description": "Restrict `player`'s games to one side; ignored without `player`."
+                },
+                "date_from": {
+                    "type": "string",
+                    "description": "Only games on/after this PGN date (inclusive)."
+                },
+                "date_to": {
+                    "type": "string",
+                    "description": "Only games on/before this PGN date (inclusive)."
                 },
                 "save_as": save_as_schema()
             }
@@ -152,6 +170,31 @@ async fn opening_tree(app: AppState, user: CurrentUser, args: Value) -> ToolOutc
         .get("threats")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let color = match args.get("color").and_then(Value::as_str) {
+        None => None,
+        Some("white") => Some(crate::search::position::Color::White),
+        Some("black") => Some(crate::search::position::Color::Black),
+        Some(other) => {
+            return ToolOutcome::error(format!(
+                "Invalid arguments: color must be 'white' or 'black', got '{other}'"
+            ))
+        }
+    };
+    let filter = PositionFilter {
+        player: args
+            .get("player")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        color,
+        date_from: args
+            .get("date_from")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        date_to: args
+            .get("date_to")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    };
     let reports = PositionReportService::new(app.db.clone());
 
     let mut tree = match build_variation_tree(
@@ -160,6 +203,7 @@ async fn opening_tree(app: AppState, user: CurrentUser, args: Value) -> ToolOutc
         &user,
         &start_fen,
         &config,
+        &filter,
         limits.clone(),
         MODE,
     )
@@ -494,6 +538,21 @@ mod tests {
         assert_eq!(props["plan_lines"]["type"], "integer");
         assert_eq!(props["plan_lines"]["maximum"], MAX_PLAN_LINES);
         assert_eq!(props["threats"]["type"], "boolean");
+    }
+
+    #[test]
+    fn opening_tree_advertises_filter_args() {
+        let list = registry().list();
+        let tools = list["tools"].as_array().unwrap();
+        let props = tools
+            .iter()
+            .find(|t| t["name"] == "opening_tree")
+            .map(|t| &t["inputSchema"]["properties"])
+            .expect("opening_tree tool");
+        assert_eq!(props["player"]["type"], "string");
+        assert_eq!(props["color"]["enum"], json!(["white", "black"]));
+        assert_eq!(props["date_from"]["type"], "string");
+        assert_eq!(props["date_to"]["type"], "string");
     }
 
     #[test]

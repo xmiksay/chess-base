@@ -7,8 +7,9 @@ import { defineStore } from 'pinia'
 import { computed, reactive, ref } from 'vue'
 import { api } from '../api'
 import { emptyQuery, isEmptyQuery, toParams } from '../lib/headerQuery'
+import { emptyFilter, toParams as toFilterParams } from '../lib/positionFilter'
 import { lineFen, moveToSan, replayLine } from '../lib/openingTree'
-import type { BoardMove, GameRow, HeaderQuery, MoveStat } from '../types'
+import type { BoardMove, GameRow, HeaderQuery, MoveStat, PositionFilter } from '../types'
 
 export const useSearchStore = defineStore('search', () => {
   // --- Header search --------------------------------------------------------
@@ -76,6 +77,9 @@ export const useSearchStore = defineStore('search', () => {
   const games = ref<GameRow[]>([]) // GameHit rows reaching the current position
   const explorerLoading = ref(false)
   const explorerError = ref<string | null>(null)
+  // Player/color/date filter narrowing which games' continuations count
+  // (issue #172); blank ⇒ unfiltered, mirroring the header-search convention.
+  const filter = reactive<PositionFilter>(emptyFilter())
 
   // Board state derived purely from the line (no separate chess instance to
   // keep in sync). `position` carries fen/dests/lastMove/turnColor.
@@ -86,10 +90,11 @@ export const useSearchStore = defineStore('search', () => {
     explorerLoading.value = true
     explorerError.value = null
     const target = lineFen(line.value)
+    const params = toFilterParams(filter)
     try {
       const [t, g] = await Promise.all([
-        api.search.tree(target),
-        api.search.games(target, 50),
+        api.search.tree(target, params),
+        api.search.games(target, 50, params),
       ])
       // Guard against an out-of-order response after a rapid click.
       if (target === lineFen(line.value)) {
@@ -103,6 +108,12 @@ export const useSearchStore = defineStore('search', () => {
     } finally {
       explorerLoading.value = false
     }
+  }
+
+  /** Clear the explorer filter and reload the current position. */
+  function resetFilter() {
+    Object.assign(filter, emptyFilter())
+    return loadPosition()
   }
 
   /** Descend the tree by one SAN continuation (from a tree row). */
@@ -151,6 +162,8 @@ export const useSearchStore = defineStore('search', () => {
     games,
     explorerLoading,
     explorerError,
+    filter,
+    resetFilter,
     position,
     fen,
     loadPosition,

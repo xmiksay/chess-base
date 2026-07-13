@@ -79,6 +79,33 @@ describe('GenerateStudyDialog', () => {
     )
   })
 
+  it('includes trimmed player/color/date filter fields when set', async () => {
+    const studies = useStudiesStore()
+    const generate = vi
+      .spyOn(studies, 'generate')
+      .mockResolvedValue({ id: 9, database_id: 2, name: 'Najdorf', global: false, node_count: 12, rejected: 0 })
+
+    const wrapper = mount(GenerateStudyDialog, { props: { llmEnabled: true } })
+    await flushPromises()
+
+    await wrapper.find('[data-test="name"]').setValue('Najdorf')
+    await wrapper.find('[data-test="player"]').setValue('  Carlsen  ')
+    await wrapper.find('[data-test="color"]').setValue('white')
+    await wrapper.find('[data-test="date-from"]').setValue('2020.01.01')
+    await wrapper.find('[data-test="date-to"]').setValue('2021.01.01')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        player: 'Carlsen',
+        color: 'white',
+        date_from: '2020.01.01',
+        date_to: '2021.01.01',
+      }),
+    )
+  })
+
   it('emits open with the generated study id', async () => {
     const studies = useStudiesStore()
     vi.spyOn(studies, 'generate').mockResolvedValue({

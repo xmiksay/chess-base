@@ -26,6 +26,7 @@ use async_trait::async_trait;
 use crate::engine::{Analysis, EngineService, Limits, Score};
 use crate::pgn_tree::MoveTree;
 use crate::position::CastlingMode;
+use crate::search::position::PositionFilter;
 use crate::search::report::{MoveReport, PositionReportService};
 use crate::server::identity::CurrentUser;
 
@@ -90,36 +91,51 @@ impl Evaluator for EngineEvaluator<'_> {
 pub struct ReportContinuations<'a> {
     reports: &'a PositionReportService,
     user: &'a CurrentUser,
+    filter: PositionFilter,
 }
 
 impl<'a> ReportContinuations<'a> {
-    pub fn new(reports: &'a PositionReportService, user: &'a CurrentUser) -> Self {
-        Self { reports, user }
+    pub fn new(
+        reports: &'a PositionReportService,
+        user: &'a CurrentUser,
+        filter: PositionFilter,
+    ) -> Self {
+        Self {
+            reports,
+            user,
+            filter,
+        }
     }
 }
 
 #[async_trait]
 impl ContinuationSource for ReportContinuations<'_> {
     async fn continuations(&self, fen: &str) -> Result<Vec<MoveReport>> {
-        let report = self.reports.position_report(self.user, fen).await?;
+        let report = self
+            .reports
+            .position_report(self.user, fen, &self.filter)
+            .await?;
         Ok(report.moves)
     }
 }
 
 /// Build a variation tree from `start_fen` using the live engine and DB layer,
 /// scoped to `user`. A thin convenience over [`build_tree`] with the concrete
-/// adapters; `engine_limits` bounds each per-position search.
+/// adapters; `engine_limits` bounds each per-position search. `filter` narrows
+/// which of `user`'s games feed the continuations (issue #172).
+#[allow(clippy::too_many_arguments)]
 pub async fn build_variation_tree(
     engine: &EngineService,
     reports: &PositionReportService,
     user: &CurrentUser,
     start_fen: &str,
     config: &TreeConfig,
+    filter: &PositionFilter,
     engine_limits: Limits,
     castling: CastlingMode,
 ) -> Result<VariationTree, TreeError> {
     let evaluator = EngineEvaluator::new(engine, engine_limits);
-    let continuations = ReportContinuations::new(reports, user);
+    let continuations = ReportContinuations::new(reports, user, filter.clone());
     build_tree(&evaluator, &continuations, start_fen, config, castling).await
 }
 
@@ -205,7 +221,9 @@ pub async fn walk_danger_spine_live(
     multipv: u16,
 ) -> Result<DangerTree, SpineError> {
     let analyzer = EngineMultiAnalyzer::new(engine, movetime_ms, multipv);
-    let continuations = ReportContinuations::new(reports, user);
+    // Danger-map generation is out of scope for the #172 filter (per the ADR):
+    // the walk always sees every scoped game.
+    let continuations = ReportContinuations::new(reports, user, PositionFilter::default());
     walk_danger_spine(
         &analyzer,
         &continuations,

@@ -32,6 +32,18 @@ const maxChildren = ref(3)
 // static hanging-piece "threats" onto every node (#123/#60). Off by default.
 const planLines = ref(0)
 const threats = ref(false)
+// Player/color/date filter narrowing which games the tree-builder draws
+// continuations from (issue #172); blank ⇒ unfiltered.
+const player = ref('')
+const color = ref('')
+const dateFrom = ref('')
+const dateTo = ref('')
+
+const COLORS = [
+  { value: '', label: 'Either side' },
+  { value: 'white', label: 'as White' },
+  { value: 'black', label: 'as Black' },
+]
 
 const running = ref(false)
 const error = ref<string | null>(null)
@@ -55,6 +67,13 @@ async function onSubmit() {
     plan_lines: planLines.value,
     threats: threats.value,
   }
+  const trimmedPlayer = player.value.trim()
+  if (trimmedPlayer) body.player = trimmedPlayer
+  if (color.value) body.color = color.value
+  const trimmedFrom = dateFrom.value.trim()
+  if (trimmedFrom) body.date_from = trimmedFrom
+  const trimmedTo = dateTo.value.trim()
+  if (trimmedTo) body.date_to = trimmedTo
   try {
     result.value = await studies.generate(body)
   } catch (e) {
@@ -197,6 +216,53 @@ onMounted(async () => {
               data-test="max-children"
               type="number"
               min="1"
+              class="rounded border border-border px-2 py-1"
+            >
+          </label>
+        </div>
+
+        <!-- Restrict continuations to one player's games (issue #172). -->
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <label class="flex flex-col gap-1">
+            Player
+            <input
+              v-model="player"
+              data-test="player"
+              placeholder="e.g. Carlsen"
+              class="rounded border border-border px-2 py-1"
+            >
+          </label>
+          <label class="flex flex-col gap-1">
+            Color
+            <select
+              v-model="color"
+              data-test="color"
+              class="rounded border border-border px-2 py-1"
+            >
+              <option
+                v-for="c in COLORS"
+                :key="c.value"
+                :value="c.value"
+              >
+                {{ c.label }}
+              </option>
+            </select>
+          </label>
+          <label class="flex flex-col gap-1">
+            Date from
+            <input
+              v-model="dateFrom"
+              data-test="date-from"
+              placeholder="YYYY.MM.DD"
+              class="rounded border border-border px-2 py-1"
+            >
+          </label>
+          <label class="flex flex-col gap-1">
+            Date to
+            <input
+              v-model="dateTo"
+              data-test="date-to"
+              placeholder="YYYY.MM.DD"
               class="rounded border border-border px-2 py-1"
             >
           </label>

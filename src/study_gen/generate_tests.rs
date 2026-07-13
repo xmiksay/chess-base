@@ -188,6 +188,7 @@ fn params(database_id: i32, start_fen: &str) -> GenerateParams {
         model: None,
         plan_lines: 0,
         threats: false,
+        filter: PositionFilter::default(),
     }
 }
 

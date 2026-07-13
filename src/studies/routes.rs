@@ -20,6 +20,7 @@ use crate::engine::Limits;
 use crate::pgn_tree::pgn::PgnError;
 use crate::pgn_tree::{MoveTree, Shape};
 use crate::position::STARTPOS_FEN;
+use crate::search::position::{Color, PositionFilter};
 use crate::search::report::PositionReportService;
 use crate::server::download::pgn_attachment;
 use crate::server::error::error_response;
@@ -174,6 +175,20 @@ struct GenerateBody {
     /// Pin the static "threats" (hanging-piece) arrows on every node.
     #[serde(default)]
     threats: Option<bool>,
+    /// Restrict continuations to one player's games (issue #172); either side
+    /// unless `color` narrows it.
+    #[serde(default)]
+    player: Option<String>,
+    /// Restrict `player`'s games to one side (`"white"`/`"black"`); ignored
+    /// without `player`.
+    #[serde(default)]
+    color: Option<String>,
+    /// Only games on/after this PGN date (inclusive, string comparison).
+    #[serde(default)]
+    date_from: Option<String>,
+    /// Only games on/before this PGN date (inclusive, string comparison).
+    #[serde(default)]
+    date_to: Option<String>,
 }
 
 /// Summary returned by `generate`: the created study plus what the verification
@@ -288,6 +303,38 @@ async fn generate(
             .into_response()
     })?;
 
+    let color = match body
+        .color
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        None => None,
+        Some("white") => Some(Color::White),
+        Some("black") => Some(Color::Black),
+        Some(other) => {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                format!("color must be 'white' or 'black', got '{other}'"),
+            ))
+        }
+    };
+    let filter = PositionFilter {
+        player: body
+            .player
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        color,
+        date_from: body
+            .date_from
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        date_to: body
+            .date_to
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+    };
+
     let params = GenerateParams {
         database_id: body.database_id,
         name: body.name,
@@ -297,6 +344,7 @@ async fn generate(
         model: body.model,
         plan_lines: body.plan_lines.unwrap_or(0).min(MAX_PLAN_LINES),
         threats: body.threats.unwrap_or(false),
+        filter,
     };
     let limits = Limits::depth(body.engine_depth.unwrap_or(DEFAULT_GENERATE_DEPTH)).clamped();
     let reports = PositionReportService::new(state.db.clone());

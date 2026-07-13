@@ -12,5 +12,5 @@ pub mod report;
 pub mod routes;
 
 pub use headers::{HeaderPage, HeaderQuery, HeaderSearchError, HeaderSearchService};
-pub use position::{GameHit, MoveStat, PositionSearchService, SearchError};
+pub use position::{Color, GameHit, MoveStat, PositionFilter, PositionSearchService, SearchError};
 pub use report::{EcoInfo, MoveReport, PositionReport, PositionReportService, Transposition};
