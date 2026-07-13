@@ -414,7 +414,7 @@ export interface SpineConfig {
   our_side?: 'White' | 'Black' // which side the repertoire plays (default White)
   max_depth?: number // plies from the root (default 8)
   min_frequency?: number // drop replies rarer than this share (default 0.02)
-  max_replies?: number // opponent replies expanded per position (default 4)
+  max_replies?: number // opponent replies expanded per position (default 6)
   min_miss_rate?: number // humans must miss the only move this often (default 0.3)
 }
 

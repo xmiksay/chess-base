@@ -135,7 +135,8 @@ fn white_spine() -> MoveTree {
 
 /// After 1.e4 the engine sees Black's best (c5) hold only −10 (our downside
 /// bounded), but the tempting e5 collapses to −300 (our baited upside): a weapon
-/// trap tagged on e4. c5 is on-book; nothing else is offered.
+/// trap tagged on e4. c5 is on-book; e5 is on record at a real DB frequency so
+/// it clears the bait-frequency floor (#176); nothing else is offered.
 fn weapon_fixture() -> (FakeAnalyzer, FakeStats) {
     let mut an = HashMap::new();
     an.insert(
@@ -143,7 +144,10 @@ fn weapon_fixture() -> (FakeAnalyzer, FakeStats) {
         vec![line("c7c5", -10), line("e7e5", -300)],
     );
     let mut stats = HashMap::new();
-    stats.insert(fen_after(&["e4"]), vec![report("c5", 0.5)]);
+    stats.insert(
+        fen_after(&["e4"]),
+        vec![report("c5", 0.5), report("e5", 0.3)],
+    );
     (FakeAnalyzer(an), FakeStats(stats))
 }
 

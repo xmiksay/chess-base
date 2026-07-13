@@ -108,6 +108,10 @@ async function onRowClick(row: DangerRoleRow) {
         Danger map
       </h3>
       <span class="text-xs text-muted">engine only — no AI key needed</span>
+      <span
+        class="rounded border border-warn/50 bg-warn/10 px-1 text-xs text-warn"
+        title="Trap/only-move thresholds are unmeasured placeholders (ADR-0026, issue #176) — treat flags as a hint, not ground truth"
+      >experimental</span>
       <button
         v-if="danger.tree"
         type="button"

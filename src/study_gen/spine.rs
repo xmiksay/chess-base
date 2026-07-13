@@ -13,7 +13,9 @@
 //!   the repertoire: an **Off-book** node (the move order we have no answer to);
 //! - **trap** — the asymmetric refutation test on *our* move that created the
 //!   position: bounded downside (opponent's best reply) vs baited upside
-//!   (opponent's tempting second line) → **Weapon** or, when refuted, **Caution**;
+//!   (opponent's tempting second line, weighted by its real DB frequency — a
+//!   reply no human plays cannot bait anyone, issue #176) → **Weapon** or, when
+//!   refuted, **Caution**;
 //! - **only-move** — a wide MultiPV gap weighted by how often humans miss the
 //!   unique reply in the DB → a **Weapon** narrow path.
 //!
@@ -84,7 +86,9 @@ impl Default for SpineConfig {
             our_side: Side::White,
             max_depth: 8,
             min_frequency: 0.02,
-            max_replies: 4,
+            // 1.e4 c5 alone has 4+ mainstream replies; 4 dropped some before the
+            // walk ever got to judge them (#176).
+            max_replies: 6,
             min_miss_rate: 0.3,
             danger: DangerConfig::default(),
             attack: AttackConfig::default(),
@@ -305,7 +309,7 @@ where
     // move to judge, so it is never searched.
     if nodes[frame.danger].san.is_some() {
         let lines = analyzer.analyse_multi(&frame.fen).await?;
-        let trap = resolve_trap(&lines, analyzer, &frame.fen, &config.danger, mode).await?;
+        let trap = resolve_trap(&lines, analyzer, &frame.fen, &replies, config, mode).await?;
         nodes[frame.danger].tag = classify(&lines, &replies, &frame.fen, config, mode, trap);
     }
 
@@ -379,19 +383,37 @@ where
 /// `−PV1` (opponent's best reply), baited upside `−PV2` (opponent's tempting
 /// second line), both negated to our perspective.
 ///
-/// A `Weapon` candidate is not trusted on that shallow root eval alone — it is
-/// confirmed one ply deeper (issue #175): the PV's first move *is* the
-/// opponent's best reply, so applying it and running one more `analyse_multi`
-/// gives our own eval, our perspective, at the position actually reached.
-/// [`confirm_weapon`] downgrades to `HopeChess` when that follow-up is itself
-/// below `follow_up_floor_cp` — a refutation the root search's movetime budget
-/// missed. `None` (no second line, no PV, or the follow-up position doesn't
-/// parse) skips confirmation and returns the shallow verdict unchanged.
+/// `lines` has fewer than two entries whenever the engine finds only one
+/// reasonable candidate — the literal one-legal-move case, or a MultiPV search
+/// that stops expanding once it finds a forced mate. Either way there is no
+/// second reply for the opponent to be *tempted* by, so the asymmetric
+/// refutation test does not apply: this returns `Ok(None)`, not a verdict, and
+/// [`classify`]'s `only_move`/`attack` signals are what may still tag the move
+/// (issue #176).
+///
+/// PV2 alone is a weak proxy for "tempting": it is the engine's second-best
+/// line, not what a human is actually drawn to. `replies` — the same DB
+/// continuation stats the walk already fetches for reachability/miss-rate — is
+/// used to weight it: a `Weapon`/`HopeChess` verdict is downgraded to `Quiet`
+/// when the tempting move's DB frequency is below `config.min_frequency` (issue
+/// #176). A reply no human in the corpus ever played cannot practically bait
+/// anyone, however good the engine thinks it looks.
+///
+/// A `Weapon` candidate that survives the frequency check is not trusted on
+/// the shallow root eval alone either — it is confirmed one ply deeper (issue
+/// #175): the PV's first move *is* the opponent's best reply, so applying it
+/// and running one more `analyse_multi` gives our own eval, our perspective, at
+/// the position actually reached. [`confirm_weapon`] downgrades to `HopeChess`
+/// when that follow-up is itself below `follow_up_floor_cp` — a refutation the
+/// root search's movetime budget missed. `None` (no PV, or the follow-up
+/// position doesn't parse) skips confirmation and returns the verdict
+/// unchanged.
 async fn resolve_trap<A>(
     lines: &[Analysis],
     analyzer: &A,
     fen: &str,
-    config: &DangerConfig,
+    replies: &[crate::search::report::MoveReport],
+    config: &SpineConfig,
     mode: CastlingMode,
 ) -> Result<Option<TrapVerdict>, SpineError>
 where
@@ -400,11 +422,32 @@ where
     let Some(best) = lines.first() else {
         return Ok(None);
     };
-    let Some(second) = lines.get(1).and_then(|l| l.score) else {
+    let Some(second) = lines.get(1) else {
+        return Ok(None);
+    };
+    let Some(second_score) = second.score else {
         return Ok(None);
     };
 
-    let verdict = trap_verdict(-score_to_cp(best.score), -score_to_cp(Some(second)), config);
+    let verdict = trap_verdict(
+        -score_to_cp(best.score),
+        -score_to_cp(Some(second_score)),
+        &config.danger,
+    );
+    if verdict == TrapVerdict::Quiet {
+        return Ok(Some(verdict));
+    }
+
+    let bait_frequency = second
+        .pv
+        .first()
+        .and_then(|uci| uci_to_san(fen, uci, mode).ok())
+        .and_then(|san| replies.iter().find(|r| r.san == san).map(|r| r.frequency))
+        .unwrap_or(0.0);
+    if bait_frequency < config.min_frequency {
+        return Ok(Some(TrapVerdict::Quiet));
+    }
+
     if verdict != TrapVerdict::Weapon {
         return Ok(Some(verdict));
     }
@@ -418,7 +461,7 @@ where
     let follow_up_lines = analyzer.analyse_multi(&follow_up_fen).await?;
     let follow_up_cp = follow_up_lines.first().map(|l| score_to_cp(l.score));
 
-    Ok(Some(confirm_weapon(verdict, follow_up_cp, config)))
+    Ok(Some(confirm_weapon(verdict, follow_up_cp, &config.danger)))
 }
 
 /// Fold the multi-PV lines + DB replies for one opponent position into a tag for
