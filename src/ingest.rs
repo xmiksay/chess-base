@@ -102,7 +102,7 @@ fn game_hash(headers: &Headers, mainline: &[String]) -> String {
     }
     for san in mainline {
         hasher.update(san.as_bytes());
-        hasher.update([b' ']);
+        hasher.update(b" ");
     }
     format!("sha256:{:x}", hasher.finalize())
 }
