@@ -26,3 +26,6 @@
 # Env / editor
 .env
 .DS_Store
+
+# k8s manifest with the real DB password lives only locally (copy of deploy.example.yml)
+deploy.yml

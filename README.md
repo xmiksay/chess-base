@@ -124,10 +124,16 @@ image a **GPLv3 artifact** (see the licensing note above). See
 Version tags (`v*`) build the image via `.github/workflows/docker.yml` and
 publish it to **`ghcr.io/xmiksay/chess-base`** (a **public** GHCR package —
 make it public in the GitHub package settings after the first push) tagged
-with the semver, the short commit SHA and `latest`. `deploy.yml` is a
+with the semver, the short commit SHA and `latest`. The deployment is a
 single-file manifest (Secret, ConfigMap, Deployment, Service, Ingress)
 targeting the `services` namespace with the shared Postgres; it pins the
-image by tag — bump the tag there to roll a new release:
+image by tag — bump the tag there to roll a new release. `deploy.yml` itself
+is **gitignored** (it carries the real DB password) — bootstrap it once from
+the committed template:
+
+```sh
+cp deploy.example.yml deploy.yml   # then set the real DATABASE_URL password
+```
 
 ```sh
 # one-time: create the DB in the shared Postgres

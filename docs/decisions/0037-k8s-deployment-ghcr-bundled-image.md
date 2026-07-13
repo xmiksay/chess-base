@@ -30,7 +30,8 @@ a single-file manifest per app in the `services` namespace, shared Postgres
    the licensing answer: bundling Stockfish makes the image **GPLv3**, so it
    must be distributable anyway.
 3. **Deployment is one plain manifest** (`deploy.yml`, no Helm): Secret
-   (DATABASE_URL, placeholder — real value managed out-of-band), ConfigMap
+   (DATABASE_URL — the file is gitignored and bootstrapped from the committed
+   `deploy.example.yml`, so the real password never enters git), ConfigMap
    (RUST_LOG), Deployment, Service (80→3030), Ingress
    (`chessbase.mmik.cz`, TLS via cert-manager). Probes hit `GET /api/health`;
    a generous startupProbe covers first-boot migrations + engine extraction.
