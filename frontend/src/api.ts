@@ -84,19 +84,36 @@ async function getText(path: string): Promise<string> {
   return res.text()
 }
 
+// The `{ error }` envelope a failed response carries (falls back to the bare
+// status when the body isn't JSON, e.g. a proxy error page).
+async function errorMessage(path: string, res: Response): Promise<string> {
+  let detail = ''
+  try {
+    detail = ((await res.json()) as { error?: string })?.error ?? ''
+  } catch {
+    // non-JSON error body; the status is enough.
+  }
+  return detail || `${path} → ${res.status}`
+}
+
+// POST a JSON body and read back a plain-text response (the bulk `.pgn` export
+// download, issue #171 — the single-game export is a GET, but a list of ids
+// needs a body rather than a query string).
+async function postText(path: string, body: unknown): Promise<string> {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: withAuth({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await errorMessage(path, res))
+  return res.text()
+}
+
 // The search endpoints stream NDJSON (one JSON object per line); parse it into
 // an array. Blank lines are skipped so a trailing newline is harmless.
 async function getNdjson<T>(path: string): Promise<T[]> {
   const res = await fetch(path, { headers: withAuth() })
-  if (!res.ok) {
-    let detail = ''
-    try {
-      detail = ((await res.json()) as { error?: string })?.error ?? ''
-    } catch {
-      // non-JSON error body; the status is enough.
-    }
-    throw new Error(detail || `${path} → ${res.status}`)
-  }
+  if (!res.ok) throw new Error(await errorMessage(path, res))
   const text = await res.text()
   return text
     .split('\n')
@@ -110,15 +127,7 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
     headers: withAuth(body === undefined ? {} : { 'Content-Type': 'application/json' }),
     body: body === undefined ? undefined : JSON.stringify(body),
   })
-  if (!res.ok) {
-    let detail = ''
-    try {
-      detail = ((await res.json()) as { error?: string })?.error ?? ''
-    } catch {
-      // non-JSON error body; the status is enough.
-    }
-    throw new Error(detail || `${path} → ${res.status}`)
-  }
+  if (!res.ok) throw new Error(await errorMessage(path, res))
   return (res.status === 204 ? null : await res.json()) as T
 }
 
@@ -273,6 +282,9 @@ export const api = {
     ) => send<StudySummary>('POST', `/api/games/${id}/save-as-study`, body),
     // The analyses (studies) linked to a game (issue #164).
     linkedStudies: (id: number) => getJson<StudySummary[]>(`/api/games/${id}/studies`),
+    // Download several games as one concatenated `.pgn` file (issue #171 bulk
+    // export from header search). An id the caller can't see fails the request.
+    exportSelected: (gameIds: number[]) => postText('/api/games/export', { game_ids: gameIds }),
   },
 
   // Study folders (issue #164): a hierarchy to file studies under. `list` returns
