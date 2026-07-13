@@ -16,6 +16,7 @@ pub mod lichess;
 pub mod merge;
 pub mod pgn;
 pub mod shapes;
+pub mod transpositions;
 
 /// An engine evaluation pinned to a node, serialized as a `[%eval …]` command in
 /// the PGN comment (issue #120). Always from **White's** perspective, the PGN

@@ -1027,3 +1027,85 @@ async fn merge_games_builds_a_frequency_ordered_repertoire_study() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+/// `POST /api/studies/{id}/mark-transpositions` (issue #174) tags a variation
+/// that transposes into the mainline via a Zobrist collision — here the classic
+/// Queen's-pawn/English reorder (1.d4 d5 2.c4 vs 1.c4 d5 2.d4) — and leaves it
+/// untouched on a re-run over an unrelated user's study (ownership) or a
+/// nonexistent one (404).
+#[tokio::test]
+async fn mark_transpositions_tags_a_transposing_line() {
+    let app = server_app().await;
+    let bob = register(&app, "bob").await;
+    let carol = register(&app, "carol").await;
+    let db_id = make_database(&app, &bob).await;
+
+    let (status, study) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/import",
+            &bob,
+            json!({
+                "database_id": db_id,
+                "name": "Queen's Pawn",
+                "pgn": "1. d4 (1. c4 d5 2. d4) 1... d5 2. c4 *",
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let study_id = study["id"].as_i64().unwrap();
+
+    let (status, marked) = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("/api/studies/{study_id}/mark-transpositions"),
+            &bob,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let nodes = marked["tree"]["nodes"].as_array().unwrap();
+    let root = nodes.iter().find(|n| n["san"].is_null()).unwrap();
+    let c4_first = root["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| &nodes[id.as_u64().unwrap() as usize])
+        .find(|n| n["san"] == "c4")
+        .expect("the reversed-order c4 branch survives the import");
+    let v_d5 = &nodes[c4_first["children"][0].as_u64().unwrap() as usize];
+    let transposed = &nodes[v_d5["children"][0].as_u64().unwrap() as usize];
+    assert_eq!(transposed["san"], "d4");
+    assert_eq!(
+        transposed["comment"],
+        "Transposes to the main line after 2.c4"
+    );
+
+    // Another user can't touch Bob's study; an unknown id is a clean 404.
+    let (status, _) = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("/api/studies/{study_id}/mark-transpositions"),
+            &carol,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/999999/mark-transpositions",
+            &bob,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

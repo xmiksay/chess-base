@@ -40,3 +40,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0032 | Merge a danger map into an existing study (pure `graft_subtree`, move-only) |
 | 0033 | Merge multiple games into one frequency-ordered repertoire study |
 | 0034 | Position search gains a player/color/date filter |
+| 0035 | Annotate transpositions in merged repertoire trees (Zobrist) |

@@ -25,7 +25,11 @@ src/
                    graft_subtree(at, src) grafts a MoveTree's moves in as deduped,
                    legality-checked variations (ADR-0032); merge.rs merge_games folds
                    many mainlines in, frequency-orders continuations + pins per-branch
-                   "N games, X%" stats (#170, ADR-0033) ← unit-tested
+                   "N games, X%" stats (#170, ADR-0033); transpositions.rs mark_transpositions
+                   (#174, ADR-0035, merge_games' final step) walks the tree mainline-first
+                   tagging a node whose Zobrist was already reached earlier with "Transposes
+                   to the main line after 2.c4" (appends to, never clobbers, a stats/user
+                   comment; idempotent) ← unit-tested
   openings.rs      pure: ECO classification (embedded lichess dataset)     ← unit-tested
   plans.rs         pure: engine-PV → per-piece trajectories (ADR 0017)      ← unit-tested
   features.rs      pure: position feature tags (material/phase/check, #33)    ← unit-tested
@@ -69,8 +73,13 @@ src/
                    merge.rs merge_games (#170, ADR-0033): fold many games' mainlines
                    into one repertoire study via pure MoveTree::merge_games (SAN-follow
                    dedup → frequency-order children → pin "N games, X% (labels)" stats
-                   on branch points; standard-start only), into a new study or an
-                   existing one, POST /api/studies/merge-games ← unit-tested
+                   on branch points → mark_transpositions, #174, ADR-0035; standard-start
+                   only), into a new study or an existing one, POST /api/studies/merge-games;
+                   mark_transpositions.rs (#174, ADR-0035): standalone
+                   StudyService::mark_transpositions re-runs the same pure pass on a study
+                   built/edited some other way, POST /api/studies/{id}/mark-transpositions
+                   (own router in mark_transpositions_route.rs, like danger_route.rs, since
+                   routes.rs/mod.rs are already over the file-size cap) ← unit-tested
   ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
   ai/providers.rs  ProviderService over llm_providers table (#20): admin-managed providers
                    (key server-side); default row builds the provider at startup, else env
