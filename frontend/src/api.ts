@@ -206,6 +206,15 @@ export const api = {
     // null ⇒ graft from the root. Returns the refreshed study.
     mergeDanger: (id: number, tree: DangerTree, atNodeId: number | null = null) =>
       send<Study>('POST', `/api/studies/${id}/merge-danger`, { tree, at_node_id: atNodeId }),
+    // Merge many games' mainlines into one repertoire study (issue #170): frequency
+    // orders the continuations and pins per-branch stats. `studyId` set ⇒ graft into
+    // that study; otherwise a new study is created (`name` required) from the start.
+    mergeGames: (body: {
+      game_ids: number[]
+      study_id?: number
+      name?: string
+      folder_id?: number | null
+    }) => send<Study>('POST', '/api/studies/merge-games', body),
   },
 
   // Ownable databases (issue #6): collections to search/import into. `list`

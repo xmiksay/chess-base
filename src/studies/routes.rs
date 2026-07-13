@@ -47,6 +47,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/studies", get(list).post(create))
         .route("/api/studies/import", post(import))
+        .route("/api/studies/merge-games", post(merge_games))
         .route("/api/studies/generate", post(generate))
         .route(
             "/api/studies/{id}",
@@ -468,6 +469,48 @@ async fn add_move(
         Json(json!({ "new_node_id": new_node_id, "study": view })),
     )
         .into_response())
+}
+
+/// Body for `POST /api/studies/merge-games`: fold a set of games' mainlines into
+/// one repertoire study. `study_id` set ⇒ graft into that existing study; otherwise
+/// a new study is created (`name` required) from the standard start, filed into
+/// `folder_id` (optional).
+#[derive(Deserialize)]
+struct MergeGamesBody {
+    game_ids: Vec<i32>,
+    #[serde(default)]
+    study_id: Option<i32>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    folder_id: Option<i32>,
+}
+
+/// Merge many games into one repertoire study (`POST /api/studies/merge-games`).
+/// Thin caller over [`StudyService::merge_games`]; returns the resulting
+/// [`StudyView`] — `201` when a new study was created, `200` when grafting into an
+/// existing one — so the client re-renders the merged tree from one response.
+async fn merge_games(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(body): Json<MergeGamesBody>,
+) -> Result<Response, StudyError> {
+    let created = body.study_id.is_none();
+    let model = service(&state)
+        .merge_games(
+            &user,
+            &body.game_ids,
+            body.study_id,
+            body.name,
+            body.folder_id,
+        )
+        .await?;
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(StudyView::try_from(model)?)).into_response())
 }
 
 /// Body for `POST /api/studies/{id}/merge-danger`: graft an engine-walked

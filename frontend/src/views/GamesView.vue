@@ -4,6 +4,7 @@
 // click moves/variations in the tree, or play an off-line move to branch. The
 // engine review (analyze/export, eval graph, why-note) lives in GameReviewPanel.
 import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import Board from '../components/Board.vue'
 import BoardControls from '../components/BoardControls.vue'
 import MoveTree from '../components/MoveTree.vue'
@@ -20,6 +21,39 @@ import type { BoardMove, Database, GameRow } from '../types'
 const games = useGamesStore()
 const review = useReviewStore()
 const settings = useSettingsStore()
+const router = useRouter()
+
+// Multi-select for merging games into one repertoire study (issue #170). Ids stay
+// valid across the current database's pages, so a selection survives paging.
+const selected = ref<Set<number>>(new Set())
+const merging = ref(false)
+const mergeError = ref<string | null>(null)
+
+/** Toggle a game's membership in the merge selection. */
+function toggleSelected(id: number) {
+  const next = new Set(selected.value)
+  if (!next.delete(id)) next.add(id)
+  selected.value = next
+}
+
+/** Merge the selected games into a new repertoire study, then open the editor. */
+async function mergeSelected() {
+  const gameIds = [...selected.value]
+  if (gameIds.length < 2) return
+  const name = window.prompt(`Name for the repertoire study (${gameIds.length} games):`)
+  if (name == null || !name.trim()) return
+  merging.value = true
+  mergeError.value = null
+  try {
+    await api.studies.mergeGames({ game_ids: gameIds, name: name.trim() })
+    selected.value = new Set()
+    await router.push({ name: 'studies' })
+  } catch (e) {
+    mergeError.value = String((e as Error)?.message ?? e)
+  } finally {
+    merging.value = false
+  }
+}
 
 const databases = ref<Database[]>([])
 const selectedDb = ref<number | null>(null)
@@ -72,6 +106,7 @@ watch(
 
 async function onSelectDatabase() {
   if (selectedDb.value == null) return
+  selected.value = new Set()
   await games.selectDatabase(selectedDb.value)
 }
 
@@ -143,12 +178,41 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       {{ loadError }}
     </p>
 
+    <!-- Merge selection bar (issue #170): fold the ticked games into one study. -->
+    <div
+      v-if="selected.size"
+      class="mb-3 flex items-center gap-3 rounded border border-border bg-surface-2 px-3 py-2 text-sm"
+    >
+      <span class="text-muted">{{ selected.size }} selected</span>
+      <button
+        type="button"
+        data-test="merge-games"
+        class="rounded bg-accent px-3 py-1 font-medium text-surface hover:opacity-90 disabled:opacity-50"
+        :disabled="selected.size < 2 || merging"
+        @click="mergeSelected"
+      >
+        {{ merging ? 'Merging…' : 'Merge into repertoire study…' }}
+      </button>
+      <button
+        type="button"
+        class="rounded border border-border px-2 py-1"
+        @click="selected = new Set()"
+      >
+        Clear
+      </button>
+      <span
+        v-if="mergeError"
+        class="text-bad"
+      >{{ mergeError }}</span>
+    </div>
+
     <div class="flex flex-col gap-6 lg:flex-row">
       <!-- Game list -->
       <section class="lg:w-1/2">
         <table class="w-full text-sm">
           <thead class="text-left text-muted">
             <tr>
+              <th class="py-1 pr-2" />
               <th class="py-1 pr-2">
                 Players
               </th>
@@ -181,6 +245,18 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
               :class="{ 'bg-surface-2': games.openGame?.id === g.id }"
               @click="games.open(g.id)"
             >
+              <td
+                class="py-1 pr-2"
+                @click.stop
+              >
+                <input
+                  type="checkbox"
+                  data-test="select-game"
+                  :aria-label="`Select ${players(g)} for merge`"
+                  :checked="selected.has(g.id)"
+                  @change="toggleSelected(g.id)"
+                >
+              </td>
               <td class="py-1 pr-2">
                 {{ players(g) }}
               </td>

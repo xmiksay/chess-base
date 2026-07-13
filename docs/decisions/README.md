@@ -36,3 +36,6 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0028 | Set-up position studies: `start_fen` on the move tree (no migration) |
 | 0029 | Plan & threat arrows baked into generated studies: one pass, opt-in, HTTP + `opening_tree` |
 | 0030 | Study folder hierarchy (adjacency-list) + game-linked analyses, app-enforced cascade |
+| 0031 | Semantic design tokens + class-based dark mode in the SPA |
+| 0032 | Merge a danger map into an existing study (pure `graft_subtree`, move-only) |
+| 0033 | Merge multiple games into one frequency-ordered repertoire study |
