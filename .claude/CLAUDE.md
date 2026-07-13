@@ -23,7 +23,9 @@ src/
   pgn_tree.rs      pure: study move-tree (variations/comments/NAGs/shapes/[%eval] +
                    set-up start_fen, ADR-0028: [FEN] header honoured on import/export);
                    graft_subtree(at, src) grafts a MoveTree's moves in as deduped,
-                   legality-checked variations (ADR-0032) ← unit-tested
+                   legality-checked variations (ADR-0032); merge.rs merge_games folds
+                   many mainlines in, frequency-orders continuations + pins per-branch
+                   "N games, X%" stats (#170, ADR-0033) ← unit-tested
   openings.rs      pure: ECO classification (embedded lichess dataset)     ← unit-tested
   plans.rs         pure: engine-PV → per-piece trajectories (ADR 0017)      ← unit-tested
   features.rs      pure: position feature tags (material/phase/check, #33)    ← unit-tested
@@ -63,7 +65,12 @@ src/
                    merge_danger (ADR-0032): graft an engine-walked DangerTree into an
                    existing study as deduped variations (folds via danger_generate::
                    to_variation_tree → move_tree_from, then MoveTree::graft_subtree;
-                   move-only, no LLM), POST /api/studies/{id}/merge-danger ← unit-tested
+                   move-only, no LLM), POST /api/studies/{id}/merge-danger;
+                   merge.rs merge_games (#170, ADR-0033): fold many games' mainlines
+                   into one repertoire study via pure MoveTree::merge_games (SAN-follow
+                   dedup → frequency-order children → pin "N games, X% (labels)" stats
+                   on branch points; standard-start only), into a new study or an
+                   existing one, POST /api/studies/merge-games ← unit-tested
   ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
   ai/providers.rs  ProviderService over llm_providers table (#20): admin-managed providers
                    (key server-side); default row builds the provider at startup, else env

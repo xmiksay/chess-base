@@ -13,6 +13,7 @@ const MODE: CastlingMode = CastlingMode::Standard;
 
 pub mod eval;
 pub mod lichess;
+pub mod merge;
 pub mod pgn;
 pub mod shapes;
 

@@ -12,16 +12,25 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use chess_base::db::{connect, DbConfig};
+use chess_base::ingest::ingest_pgn;
 use chess_base::server::{build_router, AppState, Mode};
+use sea_orm::DatabaseConnection;
 
 async fn server_app() -> Router {
+    server_app_with_db().await.0
+}
+
+/// Like [`server_app`] but also hands back the DB connection so a test can seed
+/// games directly (the merge-games route folds stored games).
+async fn server_app_with_db() -> (Router, DatabaseConnection) {
     let db = connect(&DbConfig::in_memory()).await.unwrap();
-    build_router(AppState {
-        db,
+    let app = build_router(AppState {
+        db: db.clone(),
         mode: Mode::Server,
         engine_service: None,
         llm_provider: None,
-    })
+    });
+    (app, db)
 }
 
 async fn send(app: &Router, req: Request<Body>) -> (StatusCode, Value) {
@@ -952,4 +961,69 @@ async fn merge_danger_grafts_variations_and_dedups() {
         merged2["tree"]["nodes"].as_array().unwrap().len(),
         count_after_first
     );
+}
+
+#[tokio::test]
+async fn merge_games_builds_a_frequency_ordered_repertoire_study() {
+    let (app, db) = server_app_with_db().await;
+    let _admin = register(&app, "alice").await; // first user → admin
+    let bob = register(&app, "bob").await;
+    let db_id = make_database(&app, &bob).await as i32;
+
+    // Two Bob games open 1.e4, one opens 1.d4.
+    for pgn in [
+        "[White \"Carlsen, M\"]\n[Black \"Nepo, I\"]\n[Date \"2023.01.01\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 *\n",
+        "[White \"Carlsen, M\"]\n[Black \"So, W\"]\n[Date \"2022.06.01\"]\n[Result \"1-0\"]\n\n1. e4 c5 2. Nf3 *\n",
+        "[White \"Carlsen, M\"]\n[Black \"Ding, L\"]\n[Date \"2021.03.01\"]\n[Result \"1/2-1/2\"]\n\n1. d4 d5 *\n",
+    ] {
+        ingest_pgn(&db, db_id, pgn).await.unwrap();
+    }
+    let (_, list) = send(
+        &app,
+        get_req(&format!("/api/games?database_id={db_id}"), &bob),
+    )
+    .await;
+    let ids: Vec<i64> = list["games"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(ids.len(), 3);
+
+    // Merge all three into a new study → 201 with the merged tree.
+    let (status, study) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/merge-games",
+            &bob,
+            json!({ "game_ids": ids, "name": "Carlsen repertoire" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(study["name"], "Carlsen repertoire");
+    assert_eq!(study["origin_game_id"], Value::Null);
+
+    // e4 (2 games) is the mainline over d4 (1); both first moves survive.
+    let nodes = study["tree"]["nodes"].as_array().unwrap();
+    let root = nodes.iter().find(|n| n["san"].is_null()).unwrap();
+    let first_children = root["children"].as_array().unwrap();
+    let mainline_san = &nodes[first_children[0].as_u64().unwrap() as usize]["san"];
+    assert_eq!(mainline_san, "e4");
+    assert_eq!(first_children.len(), 2);
+
+    // An empty request is a clean 400, not a corrupt study.
+    let (status, _) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/merge-games",
+            &bob,
+            json!({ "game_ids": [], "name": "Empty" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
