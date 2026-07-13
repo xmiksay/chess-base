@@ -2,7 +2,10 @@
 //! (issue #170): fold each source game's mainline in as a deduped, legality-checked
 //! line (the SAN-follow dedup [`MoveTree::graft_subtree`] uses), then order every
 //! node's continuations by how often the merged games played them and pin per-node
-//! stats onto the branch points.
+//! stats onto the branch points. A final Zobrist pass (issue #174,
+//! [`super::transpositions`]) tags any branch that transposes into an
+//! already-merged line, so the same tabiya reached via a different move order
+//! doesn't read as two unrelated continuations.
 //!
 //! Pure and I/O-free: the caller resolves each game to SAN moves + a display label
 //! + a White-perspective score, so this stays unit-testable without a DB or engine.
@@ -91,8 +94,9 @@ impl NodeStat {
 
 impl MoveTree {
     /// Fold each game's mainline into this tree as a deduped, legality-checked line,
-    /// then order continuations by frequency and annotate the branch points with
-    /// per-node stats (issue #170). Returns the number of **newly added** nodes.
+    /// then order continuations by frequency, annotate the branch points with
+    /// per-node stats, and tag any resulting transposition (issue #170 / #174).
+    /// Returns the number of **newly added** nodes.
     ///
     /// Each game is walked from the root: a move that matches an existing child
     /// (ignoring a trailing check/mate marker) follows it, so a re-merge of the same
@@ -127,6 +131,7 @@ impl MoveTree {
         }
         self.order_by_frequency(&stats);
         self.annotate_branches(&stats);
+        self.mark_transpositions();
         added
     }
 

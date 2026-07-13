@@ -101,9 +101,11 @@ impl From<studies::Model> for StudySummary {
 }
 
 /// A study with its full parsed move tree, returned by `get` and every mutation
-/// so the editor can re-render without a second request.
+/// so the editor can re-render without a second request. `pub(crate)` so the
+/// transposition route (split into its own file, `mark_transpositions_route.rs`,
+/// for the same over-cap reason as `danger_route.rs`) can return it too.
 #[derive(Serialize)]
-struct StudyView {
+pub(crate) struct StudyView {
     #[serde(flatten)]
     summary: StudySummary,
     tree: MoveTree,

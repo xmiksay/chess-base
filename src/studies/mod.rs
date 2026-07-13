@@ -16,6 +16,8 @@ use sea_orm::{
 
 pub mod analyse;
 pub mod danger_route;
+pub mod mark_transpositions;
+pub mod mark_transpositions_route;
 pub mod merge;
 pub mod routes;
 
