@@ -14,12 +14,52 @@ use crate::studies::{MoveInput, StudyError, StudyService};
 
 /// Register the study tools into `registry`.
 pub fn register(registry: &mut ToolRegistry) {
+    registry.register(study_list_tool());
     registry.register(study_create_tool());
     registry.register(study_get_tool());
     registry.register(study_import_pgn_tool());
     registry.register(study_add_move_tool());
     registry.register(study_annotate_tool());
     registry.register(study_export_tool());
+}
+
+/// List every study visible to the caller (own ∪ global), so an agent can
+/// discover a `study_id` without knowing it ahead of time.
+fn study_list_tool() -> Tool {
+    Tool::new(
+        "study_list",
+        "List the studies you can see — your own plus the global ones — each \
+         with its id, database id, name, folder id and (if built from a game) the \
+         origin game id. Use this to discover the `study_id` the other study \
+         tools need, or to check whether one already exists before creating a new \
+         one.",
+        json!({ "type": "object", "properties": {} }),
+        |app, user, _args| async move { study_list(app, user).await },
+    )
+}
+
+async fn study_list(app: AppState, user: CurrentUser) -> ToolOutcome {
+    let service = StudyService::new(app.db.clone());
+    match service.list(&user).await {
+        Ok(rows) => {
+            let views: Vec<Value> = rows
+                .into_iter()
+                .map(|s| {
+                    json!({
+                        "id": s.id,
+                        "database_id": s.database_id,
+                        "owner_id": s.owner_id,
+                        "name": s.name,
+                        "global": s.owner_id.is_none(),
+                        "folder_id": s.folder_id,
+                        "origin_game_id": s.origin_game_id,
+                    })
+                })
+                .collect();
+            json_outcome(&views)
+        }
+        Err(e) => study_error(e),
+    }
 }
 
 /// Create an empty study owned by the caller (or a global one, admin-only).
@@ -345,6 +385,7 @@ mod tests {
         let list = registry().list();
         let tools = list["tools"].as_array().expect("tools array");
         for expected in [
+            "study_list",
             "study_create",
             "study_get",
             "study_import_pgn",

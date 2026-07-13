@@ -146,14 +146,24 @@ src/
   auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
   server/          Axum app: routes, state, embedded SPA, browser launch,
                    MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016).
-                   routes/mcp/ tools: engine_analyse + analyse_position/analyse_game
-                   (#125), study_* (create/get/import_pgn/add_move/annotate/export,
-                   #125), list_databases/db_list_games/db_read_game (#125),
+                   routes/mcp/ tools (39, #125 then #183/ADR-0036 — symmetrical to
+                   the HTTP API, one carve-out list in symmetry.rs): engine_analyse +
+                   analyse_position/analyse_game; study_tools.rs study_list/create/
+                   get/import_pgn/add_move/annotate/export; study_node_tools.rs
+                   set_folder/set_shapes/promote_node/reorder_node;
+                   study_repertoire_tools.rs merge_games/merge_danger/analyse;
+                   db_tools.rs list_databases/db_list_games/db_read_game (+
+                   `annotated` flag, #120)/db_position_report/db_reference_games;
+                   db_export_tools.rs db_export_games (bulk PGN, #171);
+                   game_tools.rs save_as_study/studies/tree/delete; folder_tools.rs
+                   list/create/update/delete (#164); search_tools.rs search_headers/
+                   position_threats; import_tools.rs import_pgn/import_sync;
                    preprocess.rs data tools opening_tree/danger_map/position_concepts
                    (ADR-0027, no internal LLM); opening_tree/danger_map take an
                    optional `save_as` to seed a study server-side (#155, study_gen::seed,
                    returns {study_id,node_count}, no tree JSON) — all thin callers of
-                   the shared services.
+                   the shared services. Mutating tools are gated behind the assistant's
+                   approval flow (`ai::assistant::GATED_TOOLS`, ADR-0025).
                    routes/assistant.rs: AI assistant chat + provider registry (#20)
   bin/chess-base.rs  CLI entry (clap)
 frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
