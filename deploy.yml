@@ -1,0 +1,141 @@
+# k8s deployment for chess-base (ADR 0037): Secret + ConfigMap + Deployment +
+# Service + Ingress in the `services` namespace, image from GHCR (public
+# package, bundled Stockfish).
+#
+#   make deploy           # kubectl apply -f deploy.yml
+#   make deploy-restart   # roll the pods onto the freshly pushed :main image
+#
+# The Secret below is a placeholder — set the real DATABASE_URL out-of-band
+# (kubectl apply overwrites it, so edit before applying or manage the secret
+# separately). The database lives in the shared `postgres` service; bootstrap:
+#   kubectl -n services exec deploy/postgres -- psql -U postgres -c \
+#     "CREATE ROLE chessbase LOGIN PASSWORD '<pw>'; CREATE DATABASE chessbase OWNER chessbase;"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: chess-base
+  namespace: services
+type: Opaque
+stringData:
+  DATABASE_URL: "postgres://chessbase:CHANGE_ME@postgres:5432/chessbase"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chess-base
+  namespace: services
+data:
+  RUST_LOG: "info"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-base
+  namespace: services
+  labels:
+    app: chess-base
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chess-base
+  template:
+    metadata:
+      labels:
+        app: chess-base
+    spec:
+      containers:
+        - name: chess-base
+          image: ghcr.io/xmiksay/chess-base:main
+          imagePullPolicy: Always
+          # The bundled engine outranks auto-download in the resolution order;
+          # --no-engine-download keeps the pod from ever fetching engines.
+          args:
+            - "--server"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "3030"
+            - "--no-engine-download"
+          ports:
+            - containerPort: 3030
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: chess-base
+                  key: DATABASE_URL
+            - name: RUST_LOG
+              valueFrom:
+                configMapKeyRef:
+                  name: chess-base
+                  key: RUST_LOG
+          # First boot runs migrations and extracts the ~70 MB bundled engine.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 3030
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3030
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3030
+            periodSeconds: 30
+            timeoutSeconds: 5
+          # The CPU limit is the real guard against heavy Stockfish analysis
+          # starving the node (users can raise engine threads in settings).
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-base
+  namespace: services
+spec:
+  selector:
+    app: chess-base
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3030
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chess-base
+  namespace: services
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  tls:
+    - hosts:
+        - chessbase.mmik.cz
+      secretName: chessbase.mmik.cz
+  rules:
+    - host: chessbase.mmik.cz
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: chess-base
+                port:
+                  number: 80

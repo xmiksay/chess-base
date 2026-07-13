@@ -2,11 +2,16 @@
 #
 # Multi-stage build for the chess-base server.
 #   1. node    — build the Vue SPA into frontend/dist.
-#   2. rust    — cargo build --release with the SPA embedded (rust-embed).
+#   2. rust    — cargo build --release with the SPA + Stockfish embedded
+#                (rust-embed, `bundled-stockfish` feature).
 #   3. runtime — slim Debian image with just the binary + CA certs.
 #
 # The result runs in **server mode** (Postgres, multi-user); migrations run
-# automatically on startup. See docker-compose.yml for the full stack.
+# automatically on startup. See docker-compose.yml for the full stack and
+# deploy.yml for the k8s deployment (ADR 0037).
+#
+# LICENSING: Stockfish is GPLv3, so this image is a GPLv3 artifact
+# (ADR 0005 amendment) — it must stay publicly distributable.
 
 # ---- 1. Frontend ------------------------------------------------------------
 FROM node:22-slim AS frontend
@@ -20,17 +25,24 @@ RUN npm run build
 # ---- 2. Backend -------------------------------------------------------------
 FROM rust:1-slim-bookworm AS backend
 # zstd-sys (and other -sys crates) compile C, so a toolchain is required.
+# curl + make fetch the bundled Stockfish via the repo's own Makefile target.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential pkg-config \
+    && apt-get install -y --no-install-recommends \
+        build-essential pkg-config curl make ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV CARGO_BUILD_JOBS=4
+# Fetch Stockfish first — the download layer caches across source changes.
+# `make bundle-stockfish` writes engines-bundled/<target>/stockfish + .sha256;
+# build.rs verifies that checksum at compile time.
+COPY Makefile ./
+RUN make bundle-stockfish
 # Cache the dependency build: compile against a stub main, then the real source.
 COPY Cargo.toml Cargo.lock build.rs ./
 RUN mkdir -p src/bin frontend/dist \
     && echo "fn main() {}" > src/bin/chess-base.rs \
     && echo "" > src/lib.rs \
-    && cargo build --release --locked --bin chess-base \
+    && cargo build --release --locked --features bundled-stockfish --bin chess-base \
     ; rm -rf src
 # Real sources + the built SPA (embedded at compile time by rust-embed).
 COPY src ./src
@@ -38,10 +50,12 @@ COPY assets ./assets
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 # Bust the stub's cached crate so the real binary is rebuilt.
 RUN touch src/bin/chess-base.rs src/lib.rs \
-    && cargo build --release --locked --bin chess-base
+    && cargo build --release --locked --features bundled-stockfish --bin chess-base
 
 # ---- 3. Runtime -------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
+LABEL org.opencontainers.image.licenses="GPL-3.0" \
+      org.opencontainers.image.source="https://github.com/xmiksay/chess-base"
 # CA certs are needed for outbound TLS (Lichess / Chess.com collectors).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \

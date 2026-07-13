@@ -113,11 +113,34 @@ docker compose up --build
 This builds the SPA, compiles the release binary with it embedded, starts
 Postgres, **runs migrations automatically** on startup, and serves the app at
 `http://localhost:${APP_PORT}` (default `3030`). Game data persists in the
-`pgdata` volume. For live engine analysis the app auto-downloads Stockfish on
-first start (persist it by mounting a volume at the container's `engines/`), or
-mount your own UCI engine and set `CHESS_BASE_ENGINE`; with nothing available the
-analysis route returns `503`. See
-[ADR-0016](docs/decisions/0016-server-deployment-docker-compose.md).
+`pgdata` volume. The image **bundles Stockfish** (`bundled-stockfish` feature),
+so live analysis works out of the box with no download — which also makes the
+image a **GPLv3 artifact** (see the licensing note above). See
+[ADR-0016](docs/decisions/0016-server-deployment-docker-compose.md) and
+[ADR-0037](docs/decisions/0037-k8s-deployment-ghcr-bundled-image.md).
+
+## Deploy (k8s)
+
+Pushes to `main` (and `v*` tags) build the image via
+`.github/workflows/docker.yml` and publish it to
+**`ghcr.io/xmiksay/chess-base`** (a **public** GHCR package — make it public in
+the GitHub package settings after the first push). `deploy.yml` is a single-file
+manifest (Secret, ConfigMap, Deployment, Service, Ingress) targeting the
+`services` namespace with the shared Postgres:
+
+```sh
+# one-time: create the DB in the shared Postgres
+kubectl -n services exec deploy/postgres -- psql -U postgres -c \
+  "CREATE ROLE chessbase LOGIN PASSWORD '<pw>'; CREATE DATABASE chessbase OWNER chessbase;"
+# set the real DATABASE_URL in deploy.yml's Secret (placeholder is CHANGE_ME), then:
+make deploy            # kubectl apply -f deploy.yml
+make deploy-restart    # later: roll pods onto the freshly pushed :main image
+```
+
+The app serves at `https://chessbase.mmik.cz` (nginx ingress + cert-manager).
+The pod's **CPU limit (2)** is the guard against heavy Stockfish analysis
+starving the node. See
+[ADR-0037](docs/decisions/0037-k8s-deployment-ghcr-bundled-image.md).
 
 ## Development
 

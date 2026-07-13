@@ -73,6 +73,17 @@ dev: ## Run backend (:3030) + Vite dev server with hot reload
 	cargo run -- --port 3030 --no-open & \
 	cd frontend && $(NVM) npm run dev
 
+## --- Deploy (k8s, ADR 0037) ---
+
+.PHONY: deploy
+deploy: ## Apply the k8s manifest (Secret/ConfigMap/Deployment/Service/Ingress)
+	kubectl apply -f deploy.yml
+
+.PHONY: deploy-restart
+deploy-restart: ## Roll the pods onto the freshly pushed :main image
+	kubectl -n services rollout restart deploy/chess-base
+	kubectl -n services rollout status deploy/chess-base
+
 ## --- Quality ---
 
 .PHONY: test

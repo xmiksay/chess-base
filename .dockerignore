@@ -12,6 +12,9 @@ frontend/coverage
 *.db-shm
 *.db-wal
 engines
+# The image fetches its own Stockfish (make bundle-stockfish) — never copy a
+# host-target binary in.
+engines-bundled
 
 # VCS / env / editor / docs not needed in the image
 .git
