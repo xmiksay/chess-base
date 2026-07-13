@@ -89,3 +89,17 @@ budget, and partial `SpineConfig`/`DangerConfig`/`AttackConfig` overrides (all
 > now exposed as the data-only `danger_map` MCP tool, with annotation done by the
 > client; the `generate_danger_study_live` orchestrator stays behind
 > `POST /api/studies/generate-danger-map`.
+
+> **Update (issue #175).** The trap test's `if_refuted` was only ever the
+> **shallow root eval** after the opponent's best reply — never a check that
+> *our* position, once that reply is actually played, still holds. A refuted
+> trap could pass the `downside_floor_cp` floor on a movetime-limited search and
+> still get recommended as a **Weapon**, the single most dangerous false
+> positive the mode can produce ("Weapon" reads as safe-to-play). Fixed by
+> confirming every `Weapon` candidate one ply deeper: `spine.rs`'s
+> `resolve_trap` applies the PV's first move (the opponent's best reply) and
+> runs one more `analyse_multi`, then `danger.rs`'s `confirm_weapon` downgrades
+> to `HopeChess`/Caution when that follow-up eval is below a new
+> `follow_up_floor_cp` (default `-200`, aligned with `BLUNDER_CP`). A missing
+> follow-up (no PV, unparseable position, or the search returns nothing) leaves
+> the shallow verdict unchanged — nothing on hand to reveal a refutation.

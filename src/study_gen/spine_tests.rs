@@ -167,6 +167,46 @@ async fn weapon_trap_tagged_on_our_move() {
 }
 
 #[tokio::test]
+async fn weapon_refuted_one_ply_deeper_downgrades_to_caution() {
+    // After 1.e4, Black's best (c5) keeps Black only −10 (our downside bounded
+    // by the shallow root eval) and the tempting e5 drops Black to −300 (our
+    // baited upside): the shallow test alone would call this a Weapon. But once
+    // Black actually plays 1...c5, our own follow-up is −350 — well past the
+    // refutation floor — so the trap is refuted one ply deeper than the root
+    // search looked (issue #175) and must downgrade to Caution, not read as
+    // safe-to-play.
+    let mut an = HashMap::new();
+    an.insert(
+        fen_after(&["e4"]),
+        vec![line("c7c5", -10), line("e7e5", -300)],
+    );
+    an.insert(fen_after(&["e4", "c5"]), vec![line("g1f3", -350)]);
+    let mut stats = HashMap::new();
+    stats.insert(fen_after(&["e4"]), vec![report("c5", 0.5)]);
+
+    let tree = walk_danger_spine(
+        &FakeAnalyzer(an),
+        &FakeStats(stats),
+        &white_spine(),
+        STARTPOS_FEN,
+        &cfg(),
+        STD,
+    )
+    .await
+    .unwrap();
+
+    let e4 = node_by_san(&tree, "e4");
+    let tag = e4.tag.as_ref().expect("e4 is tagged");
+    assert_eq!(tag.kind, DangerKind::Trap);
+    assert_eq!(
+        tag.role,
+        DangerRole::Caution,
+        "a refuted trap must never read as a recommended Weapon"
+    );
+    assert_eq!(tag.trap, Some(TrapVerdict::HopeChess));
+}
+
+#[tokio::test]
 async fn refuted_bait_tagged_caution() {
     // Black's best (c5) refutes us hard (Black +200 ⇒ our −200, below the floor),
     // yet the second line still baits: hope-chess → Caution, never recommended.

@@ -27,10 +27,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::Analysis;
 use crate::pgn_tree::MoveTree;
-use crate::position::{apply_san, black_to_move, uci_to_san, CastlingMode};
+use crate::position::{apply_san, apply_uci, black_to_move, uci_to_san, CastlingMode};
 
 use super::attack::{pawn_storm, AttackConfig, AttackSignal};
-use super::danger::{is_only_move, only_move_gap, trap_verdict, DangerConfig, TrapVerdict};
+use super::danger::{
+    confirm_weapon, is_only_move, only_move_gap, trap_verdict, DangerConfig, TrapVerdict,
+};
 use super::tree::{score_to_cp, ContinuationSource};
 
 /// Multi-PV engine seam: up to *N* principal variations for a position, best
@@ -303,7 +305,8 @@ where
     // move to judge, so it is never searched.
     if nodes[frame.danger].san.is_some() {
         let lines = analyzer.analyse_multi(&frame.fen).await?;
-        nodes[frame.danger].tag = classify(&lines, &replies, &frame.fen, config, mode);
+        let trap = resolve_trap(&lines, analyzer, &frame.fen, &config.danger, mode).await?;
+        nodes[frame.danger].tag = classify(&lines, &replies, &frame.fen, config, mode, trap);
     }
 
     // Expected opponent moves we have a line against, by SAN.
@@ -371,23 +374,71 @@ where
     Ok(())
 }
 
-/// Fold the multi-PV lines + DB replies for one opponent position into a tag for
-/// the move that created it. Pure: all the engine-as-adjudicator logic lives here.
+/// Resolve the trap verdict on our prior move from one opponent position's
+/// multi-PV `lines` (best first, opponent's perspective): bounded downside is
+/// `−PV1` (opponent's best reply), baited upside `−PV2` (opponent's tempting
+/// second line), both negated to our perspective.
 ///
-/// `lines` are from the **opponent's** perspective (best first). The trap test is
-/// on *our* prior move, so its evals are negated to our perspective: bounded
-/// downside is `−PV1` (opponent's best reply), baited upside `−PV2` (opponent's
-/// tempting second line). Only-move reads the same gap, weighted by how often the
-/// DB shows humans missing the engine's best reply. Attack (issue #142) scans the
-/// opponent's best line for a pawn storm marching toward our king — a practical
-/// danger this move concedes — and is the lowest-priority signal, surfaced as a
-/// **Caution** only when no trap or narrow path already fired.
+/// A `Weapon` candidate is not trusted on that shallow root eval alone — it is
+/// confirmed one ply deeper (issue #175): the PV's first move *is* the
+/// opponent's best reply, so applying it and running one more `analyse_multi`
+/// gives our own eval, our perspective, at the position actually reached.
+/// [`confirm_weapon`] downgrades to `HopeChess` when that follow-up is itself
+/// below `follow_up_floor_cp` — a refutation the root search's movetime budget
+/// missed. `None` (no second line, no PV, or the follow-up position doesn't
+/// parse) skips confirmation and returns the shallow verdict unchanged.
+async fn resolve_trap<A>(
+    lines: &[Analysis],
+    analyzer: &A,
+    fen: &str,
+    config: &DangerConfig,
+    mode: CastlingMode,
+) -> Result<Option<TrapVerdict>, SpineError>
+where
+    A: MultiAnalyzer + Sync,
+{
+    let Some(best) = lines.first() else {
+        return Ok(None);
+    };
+    let Some(second) = lines.get(1).and_then(|l| l.score) else {
+        return Ok(None);
+    };
+
+    let verdict = trap_verdict(-score_to_cp(best.score), -score_to_cp(Some(second)), config);
+    if verdict != TrapVerdict::Weapon {
+        return Ok(Some(verdict));
+    }
+
+    let Some(reply_uci) = best.pv.first() else {
+        return Ok(Some(verdict));
+    };
+    let Ok((follow_up_fen, _)) = apply_uci(fen, reply_uci, mode) else {
+        return Ok(Some(verdict));
+    };
+    let follow_up_lines = analyzer.analyse_multi(&follow_up_fen).await?;
+    let follow_up_cp = follow_up_lines.first().map(|l| score_to_cp(l.score));
+
+    Ok(Some(confirm_weapon(verdict, follow_up_cp, config)))
+}
+
+/// Fold the multi-PV lines + DB replies for one opponent position into a tag for
+/// the move that created it. Pure: all the engine-as-adjudicator logic lives here,
+/// bar the trap verdict — already resolved (and, for a `Weapon` candidate,
+/// confirmed one ply deeper) by [`resolve_trap`].
+///
+/// `lines` are from the **opponent's** perspective (best first). Only-move reads
+/// the `PV1 − PV2` gap, weighted by how often the DB shows humans missing the
+/// engine's best reply. Attack (issue #142) scans the opponent's best line for a
+/// pawn storm marching toward our king — a practical danger this move concedes —
+/// and is the lowest-priority signal, surfaced as a **Caution** only when no trap
+/// or narrow path already fired.
 fn classify(
     lines: &[Analysis],
     replies: &[crate::search::report::MoveReport],
     fen: &str,
     config: &SpineConfig,
     mode: CastlingMode,
+    trap: Option<TrapVerdict>,
 ) -> Option<DangerTag> {
     let best = lines.first()?;
     let s1 = best.score;
@@ -395,10 +446,6 @@ fn classify(
 
     let gap = only_move_gap(s1, s2);
     let miss = miss_rate(best, replies, fen, mode);
-
-    // Trap: our move's worst case vs its baited case, both our perspective.
-    let trap =
-        s2.map(|second| trap_verdict(-score_to_cp(s1), -score_to_cp(Some(second)), &config.danger));
 
     let only = is_only_move(s1, s2, &config.danger) && miss.unwrap_or(0.0) >= config.min_miss_rate;
 
