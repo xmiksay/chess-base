@@ -2,8 +2,9 @@
 // Position / opening-tree explorer (issue #7 UI): a board whose position drives
 // the move-stats tree. Drag a piece or click a tree row to descend; "back"/"start"
 // walk the line. Navigation + stat math are pure (lib/openingTree); this renders.
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import Board from './Board.vue'
+import AddLineToStudyDialog from './AddLineToStudyDialog.vue'
 import { useSearchStore } from '../stores/search'
 import { useSettingsStore } from '../stores/settings'
 import { frequency, scoreBar, totalCount } from '../lib/openingTree'
@@ -15,6 +16,7 @@ const settings = useSettingsStore()
 
 const total = computed(() => totalCount(search.tree))
 const filterIsEmpty = computed(() => isEmptyFilter(search.filter))
+const showAddLine = ref(false)
 
 const COLORS = [
   { value: '', label: 'Either side' },
@@ -58,6 +60,15 @@ onMounted(() => {
           @click="search.back()"
         >
           ← Back
+        </button>
+        <button
+          type="button"
+          data-test="add-line-to-study"
+          class="rounded border border-border px-3 py-1 text-sm disabled:opacity-50"
+          :disabled="search.line.length === 0"
+          @click="showAddLine = true"
+        >
+          Add line to study…
         </button>
       </div>
       <p class="font-mono text-sm text-muted">
@@ -243,5 +254,12 @@ onMounted(() => {
         </li>
       </ul>
     </section>
+
+    <AddLineToStudyDialog
+      v-if="showAddLine"
+      :sans="search.line"
+      :stat="search.lastMoveStat"
+      @close="showAddLine = false"
+    />
   </div>
 </template>

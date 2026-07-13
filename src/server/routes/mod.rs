@@ -43,6 +43,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::studies::mark_transpositions_route::router(
             state.clone(),
         ))
+        .merge(crate::studies::add_line_route::router(state.clone()))
         .merge(assistant::router(state.clone()))
         .merge(oauth::router(state.clone()))
         .merge(mcp::router(state))

@@ -79,7 +79,13 @@ src/
                    StudyService::mark_transpositions re-runs the same pure pass on a study
                    built/edited some other way, POST /api/studies/{id}/mark-transpositions
                    (own router in mark_transpositions_route.rs, like danger_route.rs, since
-                   routes.rs/mod.rs are already over the file-size cap) ← unit-tested
+                   routes.rs/mod.rs are already over the file-size cap) ← unit-tested;
+                   add_line.rs add_line (#173, ADR-0032): the position-explorer "Add
+                   line to study" action — builds a linear MoveTree from a flat SAN
+                   list (games/export::linear_tree) and grafts it via
+                   MoveTree::graft_subtree/resolve_line (dedup + an optional stats
+                   comment on the line's final node), into a new study or an existing
+                   one, POST /api/studies/add-line (add_line_route.rs) ← unit-tested
   ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
   ai/providers.rs  ProviderService over llm_providers table (#20): admin-managed providers
                    (key server-side); default row builds the provider at startup, else env

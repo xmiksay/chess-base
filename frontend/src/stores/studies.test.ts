@@ -13,6 +13,7 @@ vi.mock('../api', () => ({
       exportPgn: vi.fn(),
       rename: vi.fn(),
       remove: vi.fn(),
+      addLine: vi.fn(),
     },
   },
 }))
@@ -160,6 +161,31 @@ describe('studies store', () => {
     await store.remove(5)
     expect(store.list).toHaveLength(0)
     expect(store.current).toBeNull()
+  })
+
+  it('addLine calls the api, refreshes the list and syncs current', async () => {
+    const study: Study = {
+      id: 9,
+      database_id: 1,
+      name: 'From the explorer',
+      global: false,
+      owner_id: null,
+      folder_id: null,
+      origin_game_id: null,
+      tree: { root: 0, nodes: [] },
+    }
+    vi.mocked(api.studies.addLine).mockResolvedValue(study)
+    vi.mocked(api.studies.list).mockResolvedValue([study])
+    const store = useStudiesStore()
+    store.current = study
+
+    const body = { sans: ['e4', 'e5'], study_id: 9 }
+    const result = await store.addLine(body)
+
+    expect(api.studies.addLine).toHaveBeenCalledWith(body)
+    expect(result).toEqual(study)
+    expect(store.current).toEqual(study)
+    expect(store.list).toHaveLength(1)
   })
 
   it('surfaces failures on error and resets loading', async () => {

@@ -192,6 +192,41 @@ describe('opening-tree navigation', () => {
     expect(store.explorerError).toBe('offline')
     expect(store.tree).toEqual([])
   })
+
+  it('playSan captures the stat row for the played move (issue #173)', async () => {
+    vi.mocked(api.search.tree)
+      .mockResolvedValueOnce([{ san: 'e4', count: 5, white: 3, draws: 1, black: 1 }])
+      .mockResolvedValueOnce([])
+    const store = useSearchStore()
+    await store.loadPosition() // populate tree.value with the root's continuations
+
+    await store.playSan('e4')
+
+    expect(store.lastMoveStat).toEqual({ san: 'e4', count: 5, white: 3, draws: 1, black: 1 })
+  })
+
+  it('lastMoveStat is null for a move not in the current tree', async () => {
+    const store = useSearchStore()
+    await store.playSan('e4')
+    expect(store.lastMoveStat).toBeNull()
+  })
+
+  it('back() and resetBoard() clear lastMoveStat', async () => {
+    vi.mocked(api.search.tree).mockResolvedValueOnce([
+      { san: 'e4', count: 5, white: 3, draws: 1, black: 1 },
+    ])
+    const store = useSearchStore()
+    await store.loadPosition()
+    await store.playSan('e4')
+    expect(store.lastMoveStat).not.toBeNull()
+
+    await store.back()
+    expect(store.lastMoveStat).toBeNull()
+
+    await store.playSan('e4')
+    await store.resetBoard()
+    expect(store.lastMoveStat).toBeNull()
+  })
 })
 
 describe('position filter', () => {

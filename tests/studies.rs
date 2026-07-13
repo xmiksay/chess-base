@@ -1109,3 +1109,82 @@ async fn mark_transpositions_tags_a_transposing_line() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// `POST /api/studies/add-line` (issue #173, the position-explorer "Add line to
+/// study" action): mounted end-to-end — creates a new study from a SAN line with
+/// a stats comment, grafts a further line into it idempotently, and rejects a
+/// database-less new-study request as a clean 400.
+#[tokio::test]
+async fn add_line_creates_and_grafts_a_study() {
+    let (app, _db) = server_app_with_db().await;
+    let bob = register(&app, "bob").await;
+    let db_id = make_database(&app, &bob).await as i32;
+
+    // No study_id ⇒ create a new study from the line, with a stats comment on
+    // the final node.
+    let (status, study) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/add-line",
+            &bob,
+            json!({
+                "sans": ["e4", "e5", "Nf3"],
+                "database_id": db_id,
+                "name": "From the explorer",
+                "comment": "12 games, 8W/2D/2L",
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(study["name"], "From the explorer");
+    let nodes = study["tree"]["nodes"].as_array().unwrap();
+    let leaf = nodes.iter().find(|n| n["san"] == "Nf3").unwrap();
+    assert_eq!(leaf["comment"], "12 games, 8W/2D/2L");
+    let study_id = study["id"].as_i64().unwrap();
+
+    // study_id set ⇒ graft a sibling variation into the existing study.
+    let (status, grafted) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/add-line",
+            &bob,
+            json!({ "sans": ["e4", "c5"], "study_id": study_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let root_children = grafted["tree"]["nodes"].as_array().unwrap()[0]["children"]
+        .as_array()
+        .unwrap();
+    assert_eq!(root_children.len(), 1, "e4 stays the only first move");
+
+    // Re-adding the same line is idempotent (no duplicate branch).
+    let (status, again) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/add-line",
+            &bob,
+            json!({ "sans": ["e4", "c5"], "study_id": study_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["tree"], grafted["tree"]);
+
+    // A new study without a database is a clean 400, not a panic.
+    let (status, _) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/add-line",
+            &bob,
+            json!({ "sans": ["d4"], "name": "No database" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

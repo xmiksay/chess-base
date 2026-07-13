@@ -322,6 +322,19 @@ impl MoveTree {
         added
     }
 
+    /// The node reached by following `sans` from `from` via existing children,
+    /// matched the same way [`graft_subtree`](Self::graft_subtree) dedups (SAN
+    /// ignoring a trailing check/mate marker) — or `None` if any move doesn't
+    /// match a child at that point. Lets a caller locate the final position of a
+    /// just-grafted line, e.g. to attach a stats comment to it (issue #173).
+    pub fn resolve_line(&self, from: usize, sans: &[String]) -> Option<usize> {
+        let mut cur = from;
+        for san in sans {
+            cur = self.child_by_san(cur, san)?;
+        }
+        Some(cur)
+    }
+
     /// The first child of `parent` whose move matches `san` (ignoring a trailing
     /// check/mate marker), if any. Used to dedup the graft onto existing lines.
     fn child_by_san(&self, parent: usize, san: &str) -> Option<usize> {
@@ -609,6 +622,26 @@ mod tests {
         assert_eq!(dst.nodes[e4].children.len(), 1);
         let c5 = dst.nodes[e4].children[0];
         assert_eq!(dst.nodes[c5].san.as_deref(), Some("c5"));
+    }
+
+    #[test]
+    fn resolve_line_finds_the_final_node_of_a_grafted_line() {
+        let mut dst = MoveTree::new();
+        let mut src = MoveTree::new();
+        let e4 = src.add_move(src.root, "e4");
+        src.add_move(e4, "e5");
+        dst.graft_subtree(dst.root, &src);
+
+        let leaf = dst
+            .resolve_line(dst.root, &["e4".to_string(), "e5".to_string()])
+            .expect("line was grafted");
+        assert_eq!(dst.nodes[leaf].san.as_deref(), Some("e5"));
+
+        // A line that doesn't match the grafted tree resolves to nothing.
+        assert_eq!(
+            dst.resolve_line(dst.root, &["e4".to_string(), "c5".to_string()]),
+            None
+        );
     }
 
     #[test]

@@ -186,6 +186,21 @@ export interface Study extends StudySummary {
   tree: MoveTree
 }
 
+/**
+ * Request body for `POST /api/studies/add-line` (issue #173): graft a SAN line
+ * from the standard start into a study. `study_id` set ⇒ graft into that study;
+ * omitted ⇒ create a new one (`database_id`/`name` both required in that case).
+ */
+export interface AddLineBody {
+  sans: string[]
+  study_id?: number
+  database_id?: number
+  name?: string
+  folder_id?: number | null
+  /** Attached to the line's final node — e.g. a "N games, W/D/L" stat. */
+  comment?: string
+}
+
 /** Result of appending a move: the new node id plus the refreshed study. */
 export interface AddMoveResult {
   new_node_id: number
