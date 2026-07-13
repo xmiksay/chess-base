@@ -9,9 +9,18 @@
 //! tool builders themselves live in [`tools`].
 
 mod analysis;
+mod db_export_tools;
 mod db_tools;
+mod folder_tools;
+mod game_tools;
+mod import_tools;
 mod preprocess;
+mod search_tools;
+mod study_node_tools;
+mod study_repertoire_tools;
 mod study_tools;
+#[cfg(test)]
+mod symmetry;
 mod tools;
 
 use std::future::Future;

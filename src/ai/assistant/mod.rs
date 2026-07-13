@@ -41,6 +41,20 @@ const GATED_TOOLS: &[&str] = &[
     "study_import_pgn",
     "study_add_move",
     "study_annotate",
+    "study_set_folder",
+    "study_set_shapes",
+    "study_promote_node",
+    "study_reorder_node",
+    "study_merge_games",
+    "study_merge_danger",
+    "study_analyse",
+    "game_save_as_study",
+    "game_delete",
+    "folder_create",
+    "folder_update",
+    "folder_delete",
+    "import_pgn",
+    "import_sync",
 ];
 
 /// Does running this tool need explicit user approval? (mutating tools do).

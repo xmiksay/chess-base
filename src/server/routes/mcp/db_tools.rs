@@ -11,9 +11,13 @@ use super::{Tool, ToolOutcome, ToolRegistry};
 use crate::databases::{DatabaseError, DatabaseService};
 use crate::engine::{Limits, MAX_DEPTH, MAX_MOVETIME_MS};
 use crate::games::{
-    GameError, GameListParams, GameService, GameSort, SortDir, DEFAULT_LIMIT as DEFAULT_GAME_LIMIT,
-    MAX_LIMIT as MAX_GAME_LIMIT,
+    export, GameError, GameListParams, GameService, GameSort, SortDir,
+    DEFAULT_LIMIT as DEFAULT_GAME_LIMIT, MAX_LIMIT as MAX_GAME_LIMIT,
 };
+use crate::ingest::parse_pgn;
+use crate::pgn_tree::pgn;
+use crate::position::STARTPOS_FEN;
+use crate::review::{review_game, ReviewError};
 use crate::search::position::PositionFilter;
 use crate::search::report::PositionReportService;
 use crate::search::SearchError;
@@ -26,6 +30,10 @@ const DEFAULT_REFERENCE_LIMIT: u64 = 20;
 /// Cap on `db_reference_games`' `limit`: a huge value would scan/serialise an
 /// unbounded result set (issue #93).
 const MAX_REFERENCE_LIMIT: u64 = 200;
+
+/// Default per-ply search depth for `db_read_game`'s `annotated` review,
+/// mirroring the HTTP export route's default (issue #120).
+const DEFAULT_EXPORT_DEPTH: u32 = 16;
 
 /// Register the pre-chewed DB query tools into `registry`.
 pub fn register(registry: &mut ToolRegistry) {
@@ -132,17 +140,31 @@ async fn list_games(app: AppState, user: CurrentUser, args: Value) -> ToolOutcom
     }
 }
 
-/// `db_read_game`: a single game by id, with its PGN movetext.
+/// `db_read_game`: a single game by id, with its PGN movetext — optionally
+/// engine-annotated (issue #120, mirrors `GET /api/games/{id}/export?annotated=`).
 fn read_game_tool() -> Tool {
     Tool::new(
         "db_read_game",
         "Fetch one game by id, with its full PGN movetext and header roster \
          (players, result, ECO, variant, start FEN). Scoped to your databases and \
-         the global ones. Discover game ids via `db_list_games`.",
+         the global ones. Discover game ids via `db_list_games`. Set `annotated: \
+         true` to also run the engine review and return `annotated_pgn` — the same \
+         movetext with `[%eval]` + NAGs + why-notes embedded (requires an engine \
+         configured).",
         json!({
             "type": "object",
             "properties": {
-                "game_id": { "type": "integer", "description": "Game to fetch." }
+                "game_id": { "type": "integer", "description": "Game to fetch." },
+                "annotated": {
+                    "type": "boolean",
+                    "description": "Also return an engine-annotated PGN (default false)."
+                },
+                "depth": {
+                    "type": "integer", "minimum": 1, "maximum": MAX_DEPTH,
+                    "description": format!(
+                        "Per-ply engine search depth when `annotated` is set (default {DEFAULT_EXPORT_DEPTH}); capped server-side."
+                    )
+                }
             },
             "required": ["game_id"]
         }),
@@ -155,10 +177,68 @@ async fn read_game(app: AppState, user: CurrentUser, args: Value) -> ToolOutcome
         return ToolOutcome::error("Invalid arguments: missing integer field `game_id`.");
     };
     let service = GameService::new(app.db.clone());
-    match service.get(&user, game_id as i32).await {
-        Ok(game) => json_outcome(&game),
-        Err(e) => game_error(e),
+    let game = match service.get(&user, game_id as i32).await {
+        Ok(game) => game,
+        Err(e) => return game_error(e),
+    };
+
+    let annotated_pgn = if args
+        .get("annotated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let engine = match &app.engine_service {
+            Some(engine) => engine.clone(),
+            None => {
+                return ToolOutcome::error(
+                    "No engine configured: start chess-base with --engine / CHESS_BASE_ENGINE.",
+                )
+            }
+        };
+        let depth = match opt_bounded_u64(&args, "depth", MAX_DEPTH as u64) {
+            Ok(depth) => depth.map(|d| d as u32).unwrap_or(DEFAULT_EXPORT_DEPTH),
+            Err(msg) => return ToolOutcome::error(msg),
+        };
+        match annotate_game_pgn(&engine, &game, depth).await {
+            Ok(pgn) => Some(pgn),
+            Err(e) => return e,
+        }
+    } else {
+        None
+    };
+
+    let mut value = match serde_json::to_value(&game) {
+        Ok(value) => value,
+        Err(_) => return ToolOutcome::error("failed to serialise game"),
+    };
+    if let Some(pgn) = annotated_pgn {
+        value["annotated_pgn"] = json!(pgn);
     }
+    json_outcome(&value)
+}
+
+/// Run the #119 engine review over a stored game and return the annotated PGN
+/// movetext — the same composition `GET /api/games/{id}/export?annotated=true`
+/// runs inline. Shared so `db_read_game` doesn't duplicate the review→export
+/// pipeline.
+async fn annotate_game_pgn(
+    engine: &crate::engine::EngineService,
+    game: &crate::games::GameDetail,
+    depth: u32,
+) -> Result<String, ToolOutcome> {
+    let stored = game
+        .pgn
+        .as_deref()
+        .filter(|p| !p.trim().is_empty())
+        .ok_or_else(|| ToolOutcome::error("game has no moves"))?;
+    let parsed =
+        parse_pgn(stored).map_err(|e| ToolOutcome::error(format!("could not parse game: {e}")))?;
+    let start_fen = game.start_fen.as_deref().unwrap_or(STARTPOS_FEN);
+    let review = review_game(engine, start_fen, &game.variant, &parsed.mainline, depth)
+        .await
+        .map_err(review_error)?;
+    let tree = export::annotated_tree(&parsed.mainline, &review);
+    pgn::to_pgn(&tree).map_err(|e| ToolOutcome::error(format!("failed to serialise PGN: {e}")))
 }
 
 /// Map a [`DatabaseError`] to a tool outcome without leaking DB internals.
@@ -169,12 +249,22 @@ fn database_error(error: DatabaseError) -> ToolOutcome {
     }
 }
 
-/// Map a [`GameError`] to a tool outcome without leaking DB internals.
-fn game_error(error: GameError) -> ToolOutcome {
+/// Map a [`GameError`] to a tool outcome without leaking DB internals. Shared
+/// with the game-document tools (`game_tools.rs`).
+pub(super) fn game_error(error: GameError) -> ToolOutcome {
     match error {
         GameError::NotFound => ToolOutcome::error("game not found"),
         GameError::Forbidden => ToolOutcome::error("not permitted"),
         GameError::Db(_) => ToolOutcome::error("database query failed"),
+    }
+}
+
+/// Map a [`ReviewError`] onto a tool outcome: a bad game is a client error with
+/// a safe message; an engine failure is masked so no engine internals leak.
+fn review_error(error: ReviewError) -> ToolOutcome {
+    match error {
+        ReviewError::BadGame(msg) => ToolOutcome::error(format!("could not review game: {msg}")),
+        ReviewError::Engine(_) => ToolOutcome::error("engine analysis failed"),
     }
 }
 

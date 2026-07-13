@@ -17,15 +17,27 @@ use crate::server::state::AppState;
 /// interactive `analyse_position` tool (#33) bundles engine + DB + features into
 /// one grounded snapshot; the study-preprocessing tools (ADR-0027) expose the
 /// engine/DB tree + concept stages as plain data (no internal LLM — the model
-/// that annotates them is the MCP client, not a tool).
+/// that annotates them is the MCP client, not a tool). Issue #183 (ADR-0036)
+/// rounds the surface out to match the HTTP API: study node structure
+/// (`study_node_tools`) and repertoire building (`study_repertoire_tools`), the
+/// game-document tools (`game_tools`) and bulk export (`db_export_tools`),
+/// folders (`folder_tools`), header search + threats (`search_tools`), and
+/// collection import (`import_tools`).
 pub fn default_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(echo_tool());
     registry.register(engine_analyse_tool());
     super::study_tools::register(&mut registry);
+    super::study_node_tools::register(&mut registry);
+    super::study_repertoire_tools::register(&mut registry);
     super::db_tools::register(&mut registry);
+    super::db_export_tools::register(&mut registry);
+    super::game_tools::register(&mut registry);
     super::analysis::register(&mut registry);
     super::preprocess::register(&mut registry);
+    super::folder_tools::register(&mut registry);
+    super::search_tools::register(&mut registry);
+    super::import_tools::register(&mut registry);
     registry
 }
 
@@ -136,15 +148,36 @@ mod tests {
             "opening_tree",
             "danger_map",
             "position_concepts",
+            "study_list",
             "study_create",
             "study_get",
             "study_import_pgn",
             "study_add_move",
             "study_annotate",
             "study_export",
+            "study_set_folder",
+            "study_set_shapes",
+            "study_promote_node",
+            "study_reorder_node",
+            "study_merge_games",
+            "study_merge_danger",
+            "study_analyse",
             "list_databases",
             "db_list_games",
             "db_read_game",
+            "db_export_games",
+            "game_save_as_study",
+            "game_studies",
+            "game_tree",
+            "game_delete",
+            "folder_list",
+            "folder_create",
+            "folder_update",
+            "folder_delete",
+            "search_headers",
+            "position_threats",
+            "import_pgn",
+            "import_sync",
             "analyse_position",
             "analyse_game",
         ] {

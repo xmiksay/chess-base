@@ -41,3 +41,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0033 | Merge multiple games into one frequency-ordered repertoire study |
 | 0034 | Position search gains a player/color/date filter |
 | 0035 | Annotate transpositions in merged repertoire trees (Zobrist) |
+| 0036 | The MCP tool surface is symmetrical to the HTTP API |
