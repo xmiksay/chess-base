@@ -21,6 +21,8 @@ pub mod danger_route;
 pub mod mark_transpositions;
 pub mod mark_transpositions_route;
 pub mod merge;
+pub mod merge_danger;
+pub mod merge_danger_route;
 pub mod routes;
 
 use std::collections::BTreeMap;
@@ -38,9 +40,6 @@ use crate::position::{
 };
 use crate::review::{review_game, ReviewError};
 use crate::server::identity::{assert_admin, assert_can_write, scope, CurrentUser};
-use crate::study_gen::annotate::move_tree_from;
-use crate::study_gen::danger_generate::to_variation_tree;
-use crate::study_gen::spine::DangerTree;
 
 /// Studies are standard chess; castling rights parse the normal way.
 const MODE: CastlingMode = CastlingMode::Standard;
@@ -544,33 +543,6 @@ impl StudyService {
 
         self.persist(study, &tree).await?;
         self.get(user, id).await
-    }
-
-    /// Graft an engine-walked [`DangerTree`] into a study the caller may write,
-    /// as deduped variations under `at_node_id` (defaults to the root), and return
-    /// the refreshed study (ADR-0032). The danger tree is folded into a
-    /// [`VariationTree`](crate::study_gen::tree::VariationTree) (the same fold the
-    /// danger-map generator uses) → a [`MoveTree`], then grafted via
-    /// [`MoveTree::graft_subtree`] so existing lines are followed (no duplicates)
-    /// and new ones appended. **Move-only**: roles/eval/comments are not carried —
-    /// the engine-only walk has no prose, so the graft adds just the moves.
-    pub async fn merge_danger(
-        &self,
-        user: &CurrentUser,
-        study_id: i32,
-        danger: DangerTree,
-        at_node_id: Option<usize>,
-    ) -> Result<studies::Model, StudyError> {
-        let study = self.load_writable(user, study_id).await?;
-        let mut tree: MoveTree = serde_json::from_str(&study.tree_json)?;
-        let at = at_node_id.unwrap_or(tree.root);
-        if tree.line_to(at).is_none() {
-            return Err(StudyError::InvalidNode(at));
-        }
-        let src = move_tree_from(&to_variation_tree(&danger));
-        tree.graft_subtree(at, &src);
-        self.persist(study, &tree).await?;
-        self.get(user, study_id).await
     }
 
     /// Promote a variation to the mainline (move it to the front of its parent's

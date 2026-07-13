@@ -93,15 +93,17 @@ fn danger_walk_body_accepts_partial_spine_overrides() {
 
 #[test]
 fn roles_digest_keeps_only_tagged_nodes_in_walk_order() {
-    use crate::study_gen::spine::{DangerKind, DangerNode, DangerRole, DangerTag, DangerTree};
+    use crate::pgn_tree::Eval;
+    use crate::study_gen::{DangerKind, DangerNode, DangerRole, DangerTag, DangerTree};
 
-    let tag = |kind, role| DangerTag {
+    let tag = |kind, role, eval| DangerTag {
         kind,
         role,
         trap: None,
         only_move_gap: None,
         miss_rate: None,
         attack: None,
+        eval,
     };
     let node = |id: usize, san: Option<&str>, tag: Option<DangerTag>| DangerNode {
         id,
@@ -120,12 +122,16 @@ fn roles_digest_keeps_only_tagged_nodes_in_walk_order() {
             node(
                 2,
                 Some("Qh5"),
-                Some(tag(DangerKind::Trap, DangerRole::Caution)),
+                Some(tag(
+                    DangerKind::Trap,
+                    DangerRole::Caution,
+                    Some(Eval::Cp(-40)),
+                )),
             ),
             node(
                 3,
                 Some("Nf6"),
-                Some(tag(DangerKind::OnlyMove, DangerRole::Weapon)),
+                Some(tag(DangerKind::OnlyMove, DangerRole::Weapon, None)),
             ),
         ],
         root: 0,
@@ -137,5 +143,7 @@ fn roles_digest_keeps_only_tagged_nodes_in_walk_order() {
     assert_eq!(roles[0].san.as_deref(), Some("Qh5"));
     assert_eq!(roles[0].kind, "Trap");
     assert_eq!(roles[0].role, "Caution");
+    assert_eq!(roles[0].eval, Some(Eval::Cp(-40)));
     assert_eq!(roles[1].role, "Weapon");
+    assert_eq!(roles[1].eval, None);
 }

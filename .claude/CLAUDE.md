@@ -66,10 +66,17 @@ src/
                    create_from_game (mainline → MoveTree, optional engine review via
                    the #120/#162 annotated_tree seam) back PUT /api/studies/{id}/folder,
                    POST /api/games/{id}/save-as-study, GET /api/games/{id}/studies;
-                   merge_danger (ADR-0032): graft an engine-walked DangerTree into an
-                   existing study as deduped variations (folds via danger_generate::
-                   to_variation_tree → move_tree_from, then MoveTree::graft_subtree;
-                   move-only, no LLM), POST /api/studies/{id}/merge-danger;
+                   merge_danger.rs merge_danger (ADR-0032, eval/roles update #177):
+                   graft an engine-walked DangerTree into an existing study as
+                   deduped variations (folds via danger_generate::to_variation_tree
+                   → move_tree_from, then MoveTree::graft_subtree, which now returns
+                   the newly-added (src_id, dst_id) pairs); every node the graft
+                   actually creates — never one it only follows — is annotated from
+                   its DangerTag: [%eval], a short role comment quoting the verdict's
+                   figures, and a !/?! NAG (no LLM); own router in
+                   merge_danger_route.rs (routes.rs is over the file-size cap), POST
+                   /api/studies/{id}/merge-danger returns the refreshed study plus
+                   added_nodes/weapons/cautions ← unit-tested;
                    merge.rs merge_games (#170, ADR-0033): fold many games' mainlines
                    into one repertoire study via pure MoveTree::merge_games (SAN-follow
                    dedup → frequency-order children → pin "N games, X% (labels)" stats
@@ -107,6 +114,14 @@ src/
                    the MCP `opening_tree` tool;
                    danger.rs (#131, ADR-0026) pure "danger-map" classifier — trap
                    weapon/hope-chess + only-move gap (engine as adjudicator);
+                   danger_tree.rs (#177) pure DangerNode/DangerTree/DangerTag/
+                   DangerKind/DangerRole arena types (split out of spine.rs to stay
+                   under the file-size cap, mirrors VariationTree in tree.rs);
+                   DangerTag.eval carries the tagged node's own White-perspective
+                   [%eval] (tree::white_eval, shared with studies::analyse's #162
+                   seam), flipped from the same PV1 score that already drove the
+                   trap/only-move verdict — no extra engine call — None on an
+                   Off-book node (never searched);
                    spine.rs (#139) PGN-repertoire walk: per opponent position runs
                    analyse_multi (movetime/variation) → reachability/trap/only-move
                    /attack → a tagged DangerTree (Weapon/Caution/Off-book); the

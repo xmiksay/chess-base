@@ -41,6 +41,19 @@ fn score_to_cp_passes_centipawns_and_folds_mate() {
 }
 
 #[test]
+fn white_eval_flips_only_for_black_to_move() {
+    // White to move: the score is already White's perspective.
+    assert_eq!(white_eval(Score::Cp { value: 35 }, true), Eval::Cp(35));
+    assert_eq!(white_eval(Score::Mate { value: 3 }, true), Eval::Mate(3));
+    // Black to move: negate to White's perspective.
+    assert_eq!(white_eval(Score::Cp { value: 35 }, false), Eval::Cp(-35));
+    assert_eq!(white_eval(Score::Mate { value: 2 }, false), Eval::Mate(-2));
+    // Sign is carried through the flip.
+    assert_eq!(white_eval(Score::Cp { value: -120 }, false), Eval::Cp(120));
+    assert_eq!(white_eval(Score::Mate { value: -1 }, false), Eval::Mate(1));
+}
+
+#[test]
 fn pruning_drops_below_frequency_floor() {
     let cands = [
         cand("e4", 0.6, 20),

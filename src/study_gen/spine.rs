@@ -31,11 +31,12 @@ use crate::engine::Analysis;
 use crate::pgn_tree::MoveTree;
 use crate::position::{apply_san, apply_uci, black_to_move, uci_to_san, CastlingMode};
 
-use super::attack::{pawn_storm, AttackConfig, AttackSignal};
+use super::attack::{pawn_storm, AttackConfig};
 use super::danger::{
     confirm_weapon, is_only_move, only_move_gap, trap_verdict, DangerConfig, TrapVerdict,
 };
-use super::tree::{score_to_cp, ContinuationSource};
+use super::danger_tree::{DangerKind, DangerNode, DangerRole, DangerTag, DangerTree};
+use super::tree::{score_to_cp, white_eval, ContinuationSource};
 
 /// Multi-PV engine seam: up to *N* principal variations for a position, best
 /// first (line 0 is the engine's best move). Mirrors
@@ -94,83 +95,6 @@ impl Default for SpineConfig {
             attack: AttackConfig::default(),
         }
     }
-}
-
-/// Why the spine move that created a position is dangerous (or why a position
-/// left the repertoire).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DangerKind {
-    /// Asymmetric refutation test fired (see [`DangerTag::trap`]).
-    Trap,
-    /// Wide MultiPV gap the opponent frequently misses.
-    OnlyMove,
-    /// A pawn storm toward our king in the opponent's best line (issue #142).
-    Attack,
-    /// A human reply with no answer in the spine (reachability break).
-    OffBook,
-}
-
-/// What the user should *do* with a tagged node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DangerRole {
-    /// Recommend: passed the bounded-downside test, or a narrow path the
-    /// opponent misses.
-    Weapon,
-    /// Warn: baits but the best reply refutes it (*do not play a blunder because
-    /// there is a trap*).
-    Caution,
-    /// A move order the repertoire does not yet answer.
-    OffBook,
-}
-
-/// The danger signal attached to one node, with the raw figures behind the
-/// verdict so a later annotation pass can quote them.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DangerTag {
-    pub kind: DangerKind,
-    pub role: DangerRole,
-    /// Trap verdict on the move that reached this position, if computed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trap: Option<TrapVerdict>,
-    /// `PV1 − PV2` gap (opponent's perspective) at the position, if a second line
-    /// existed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub only_move_gap: Option<i32>,
-    /// Share of DB games in which humans did *not* play the engine's best reply
-    /// (`0..=1`), if the position was searched.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub miss_rate: Option<f64>,
-    /// Pawn storm toward our king found in the opponent's best line (issue #142).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub attack: Option<AttackSignal>,
-}
-
-/// One node of the tagged danger tree. Arena-allocated (`id` indexes
-/// [`DangerTree::nodes`]) mirroring [`crate::pgn_tree::MoveTree`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DangerNode {
-    pub id: usize,
-    pub parent: Option<usize>,
-    /// SAN of the move leading here; `None` only at the root. `default` so a
-    /// serialized tree (root omits `san`) round-trips back through deserialize —
-    /// the danger overlay POSTs it to `/api/studies/{id}/merge-danger` (ADR-0032).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub san: Option<String>,
-    pub fen: String,
-    /// Plies from the root.
-    pub ply: usize,
-    /// The danger signal on the move that reached this node, if any. Plain spine
-    /// moves carry `None`. `default` for the same round-trip reason as `san`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tag: Option<DangerTag>,
-    pub children: Vec<usize>,
-}
-
-/// A walked, tagged repertoire tree — the output of the stage.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DangerTree {
-    pub nodes: Vec<DangerNode>,
-    pub root: usize,
 }
 
 /// Why walking the spine failed. Transport-agnostic.
@@ -363,6 +287,8 @@ where
                     only_move_gap: None,
                     miss_rate: None,
                     attack: None,
+                    // Off-book: no search ran on this node's own position.
+                    eval: None,
                 });
                 push_node(
                     nodes,
@@ -474,7 +400,9 @@ where
 /// engine's best reply. Attack (issue #142) scans the opponent's best line for a
 /// pawn storm marching toward our king — a practical danger this move concedes —
 /// and is the lowest-priority signal, surfaced as a **Caution** only when no trap
-/// or narrow path already fired.
+/// or narrow path already fired. The tag also carries the position's own
+/// White-perspective eval (issue #177), flipped from `best.score` with no extra
+/// engine call — the same PV1 number that drove the trap/only-move verdict.
 fn classify(
     lines: &[Analysis],
     replies: &[crate::search::report::MoveReport],
@@ -505,6 +433,16 @@ fn classify(
         _ => return None,
     };
 
+    // `lines` is from the opponent's (side-to-move at `fen`) perspective; flip to
+    // White's for the PGN `[%eval]` convention. A `fen` that fails to parse here
+    // never happens in practice — the walk already replayed it to get here — but
+    // degrades to no eval rather than panicking.
+    let eval = s1.and_then(|score| {
+        black_to_move(fen, mode)
+            .ok()
+            .map(|black| white_eval(score, !black))
+    });
+
     Some(DangerTag {
         kind,
         role,
@@ -512,6 +450,7 @@ fn classify(
         only_move_gap: gap,
         miss_rate: miss,
         attack,
+        eval,
     })
 }
 

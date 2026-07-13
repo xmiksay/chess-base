@@ -1,13 +1,16 @@
 //! Pure helpers for the non-destructive "Analyse study" pass (issue #162): list
-//! every move-bearing node with the FEN it reaches, and flip a side-to-move
-//! engine [`Score`] to the White-perspective [`Eval`] that PGN `[%eval]` stores.
+//! every move-bearing node with the FEN it reaches. The side-to-move → White
+//! `Eval` flip itself ([`white_eval`]) lives in [`crate::study_gen::tree`] and is
+//! re-exported here — the danger-map spine walk needs the same conversion
+//! (issue #177) and `study_gen` cannot depend back on `studies`.
 //!
-//! Both functions are I/O-free — the engine search and persistence live in
-//! [`StudyService::analyse_study`](super::StudyService::analyse_study) — so they
-//! unit-test without an engine, like `review::assemble`.
+//! [`node_fens`] is I/O-free — the engine search and persistence live in
+//! [`StudyService::analyse_study`](super::StudyService::analyse_study) — so it
+//! unit-tests without an engine, like `review::assemble`.
 
-use crate::engine::Score;
-use crate::pgn_tree::{Eval, MoveTree};
+pub use crate::study_gen::tree::white_eval;
+
+use crate::pgn_tree::MoveTree;
 use crate::position::{replay, CastlingMode, PositionError};
 
 /// Studies are standard chess (matches [`super::MODE`]).
@@ -36,32 +39,9 @@ pub fn node_fens(tree: &MoveTree) -> Result<Vec<(usize, String)>, PositionError>
     Ok(out)
 }
 
-/// Flip a side-to-move engine [`Score`] to the White-perspective [`Eval`] PGN
-/// `[%eval]` expects. When White is to move the score is already White's view;
-/// otherwise negate it (mirrors `review::white_view` / `negate`).
-pub fn white_eval(score: Score, white_to_move: bool) -> Eval {
-    match score {
-        Score::Cp { value } => Eval::Cp(if white_to_move { value } else { -value }),
-        Score::Mate { value } => Eval::Mate(if white_to_move { value } else { -value }),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn white_eval_flips_only_for_black_to_move() {
-        // White to move: the score is already White's perspective.
-        assert_eq!(white_eval(Score::Cp { value: 35 }, true), Eval::Cp(35));
-        assert_eq!(white_eval(Score::Mate { value: 3 }, true), Eval::Mate(3));
-        // Black to move: negate to White's perspective.
-        assert_eq!(white_eval(Score::Cp { value: 35 }, false), Eval::Cp(-35));
-        assert_eq!(white_eval(Score::Mate { value: 2 }, false), Eval::Mate(-2));
-        // Sign is carried through the flip.
-        assert_eq!(white_eval(Score::Cp { value: -120 }, false), Eval::Cp(120));
-        assert_eq!(white_eval(Score::Mate { value: -1 }, false), Eval::Mate(1));
-    }
 
     #[test]
     fn node_fens_skips_the_root_and_walks_variations() {

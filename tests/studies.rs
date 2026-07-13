@@ -935,6 +935,7 @@ async fn merge_danger_grafts_variations_and_dedups() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(merged["added_nodes"], 1, "only c5 is new");
     let nodes = merged["tree"]["nodes"].as_array().unwrap();
     // e4's node now branches into e5 (kept) + c5 (grafted).
     let e4 = nodes
@@ -957,6 +958,7 @@ async fn merge_danger_grafts_variations_and_dedups() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(merged2["added_nodes"], 0, "re-merging adds nothing");
     assert_eq!(
         merged2["tree"]["nodes"].as_array().unwrap().len(),
         count_after_first

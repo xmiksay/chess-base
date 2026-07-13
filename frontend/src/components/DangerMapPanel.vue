@@ -11,8 +11,8 @@ import { useDangerStore } from '../stores/danger'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { findNodeByPath } from '../lib/moveTree'
 import { STARTPOS_FEN } from '../lib/fen'
-import type { DangerRoleRow } from '../lib/dangerShapes'
-import type { DangerWalkBody } from '../types'
+import { formatEval, type DangerRoleRow } from '../lib/dangerShapes'
+import type { DangerWalkBody, MergeDangerResult } from '../types'
 
 interface Props {
   /** The danger walk needs an engine (no LLM). Gates the run button + hint. */
@@ -30,6 +30,9 @@ const merging = ref(false)
 // Whether this walk's lines are already grafted into the study. The graft is
 // dedup-safe, but we avoid re-POSTing it on every row click.
 const merged = ref(false)
+// What the last graft actually added, so "Extend this study" reports
+// something better than a silent success (issue #177).
+const mergeSummary = ref<string | null>(null)
 
 const spinePgn = ref('')
 const ourSide = ref<'White' | 'Black'>('White')
@@ -52,6 +55,7 @@ async function useStudyMainline() {
 async function onShow() {
   if (!props.engineEnabled || !spinePgn.value.trim() || danger.loading) return
   merged.value = false // a fresh walk replaces the tree, so it needs re-grafting
+  mergeSummary.value = null
   const body: DangerWalkBody = {
     spine_pgn: spinePgn.value.trim(),
     fen: (props.startFen || STARTPOS_FEN).trim(),
@@ -62,10 +66,20 @@ async function onShow() {
   await danger.load(body)
 }
 
+/** "N new nodes, W Weapons, C Cautions", or "No new lines" on a re-merge. */
+function summarizeMerge(result: MergeDangerResult): string {
+  if (result.added_nodes === 0) return 'No new lines — already merged.'
+  const parts = [`${result.added_nodes} new node${result.added_nodes === 1 ? '' : 's'}`]
+  if (result.weapons) parts.push(`${result.weapons} Weapon${result.weapons === 1 ? '' : 's'}`)
+  if (result.cautions) parts.push(`${result.cautions} Caution${result.cautions === 1 ? '' : 's'}`)
+  return parts.join(', ')
+}
+
 /** Graft the walked danger lines into the study (once) and refresh the editor. */
 async function ensureMerged() {
   if (merged.value || props.studyId == null || !danger.tree) return
-  await api.studies.mergeDanger(props.studyId, danger.tree)
+  const result = await api.studies.mergeDanger(props.studyId, danger.tree)
+  mergeSummary.value = summarizeMerge(result)
   await editor.open(props.studyId)
   merged.value = true
 }
@@ -117,7 +131,7 @@ async function onRowClick(row: DangerRoleRow) {
         type="button"
         data-test="danger-clear"
         class="ml-auto rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
-        @click="danger.clear(); merged = false"
+        @click="danger.clear(); merged = false; mergeSummary = null"
       >
         Clear
       </button>
@@ -238,6 +252,13 @@ async function onRowClick(row: DangerRoleRow) {
         </button>
       </div>
       <p
+        v-if="mergeSummary"
+        data-test="danger-merge-summary"
+        class="mb-2 text-xs text-muted"
+      >
+        {{ mergeSummary }}
+      </p>
+      <p
         v-if="!danger.roles.length"
         data-test="danger-empty"
         class="text-xs text-muted"
@@ -265,6 +286,10 @@ async function onRowClick(row: DangerRoleRow) {
             >
               <span class="font-mono">{{ r.label }}</span>
               <span class="flex items-center gap-2 text-muted">
+                <span
+                  v-if="r.eval"
+                  class="font-mono text-fg"
+                >{{ formatEval(r.eval) }}</span>
                 <span>{{ r.kind }} · {{ r.role }}</span>
                 <span
                   v-if="r.onlyMoveGap != null"

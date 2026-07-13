@@ -354,6 +354,7 @@ async fn danger_map(app: AppState, user: CurrentUser, args: Value) -> ToolOutcom
                             "san": n.san,
                             "kind": format!("{:?}", tag.kind),
                             "role": format!("{:?}", tag.role),
+                            "eval": tag.eval,
                         })
                     })
                 })

@@ -28,6 +28,7 @@ import type {
   HeaderPage,
   ImportResult,
   ImportSource,
+  MergeDangerResult,
   MoveStat,
   MoveTree,
   Shape,
@@ -212,10 +213,15 @@ export const api = {
     dangerMap: (body: DangerWalkBody) =>
       send<DangerWalkResult>('POST', '/api/studies/danger-map', body),
     // Graft a walked DangerTree into this study as variations (deduped), so the
-    // dangerous lines live in the PGN instead of a throwaway list. `atNodeId`
-    // null ⇒ graft from the root. Returns the refreshed study.
+    // dangerous lines live in the PGN instead of a throwaway list — each newly
+    // grafted node carries its eval, a role comment and a !/?! NAG (issue #177).
+    // `atNodeId` null ⇒ graft from the root. Returns the refreshed study plus
+    // what the graft actually added.
     mergeDanger: (id: number, tree: DangerTree, atNodeId: number | null = null) =>
-      send<Study>('POST', `/api/studies/${id}/merge-danger`, { tree, at_node_id: atNodeId }),
+      send<MergeDangerResult>('POST', `/api/studies/${id}/merge-danger`, {
+        tree,
+        at_node_id: atNodeId,
+      }),
     // Merge many games' mainlines into one repertoire study (issue #170): frequency
     // orders the continuations and pins per-branch stats. `studyId` set ⇒ graft into
     // that study; otherwise a new study is created (`name` required) from the start.
