@@ -53,6 +53,7 @@ describe('danger store', () => {
         missRate: 0.5,
         trap: null,
         attack: null,
+        eval: null,
       },
     ])
     expect(s.error).toBeNull()

@@ -20,7 +20,7 @@ use crate::studies::{StudyError, StudyService};
 
 use super::annotate::move_tree_from;
 use super::danger_generate::to_variation_tree;
-use super::spine::DangerTree;
+use super::danger_tree::DangerTree;
 use super::tree::VariationTree;
 
 /// Where to file a seeded study: the same ownership knobs as

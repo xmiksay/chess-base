@@ -267,19 +267,20 @@ impl MoveTree {
     }
 
     /// Graft another tree's moves into this one at node `at`, as deduped
-    /// variations, returning the count of **newly added** nodes (issue: danger-map
-    /// merge, ADR-0032). Walks `src` from its root; for each move it follows an
-    /// existing child with the same SAN when present (so a re-graft adds nothing),
-    /// else appends a new child (a variation). Each move is validated for legality
-    /// in the running position — an illegal or unparseable move (and its subtree)
-    /// is skipped, never panicking. An unknown `at` or a corrupt line to it grafts
-    /// nothing.
-    pub fn graft_subtree(&mut self, at: usize, src: &MoveTree) -> usize {
+    /// variations, returning the **newly added** nodes as `(src_id, dst_id)` pairs
+    /// (issue: danger-map merge, ADR-0032; issue #177 needs the pairing to
+    /// annotate only the nodes the graft actually created). Walks `src` from its
+    /// root; for each move it follows an existing child with the same SAN when
+    /// present (so a re-graft adds nothing), else appends a new child (a
+    /// variation). Each move is validated for legality in the running position —
+    /// an illegal or unparseable move (and its subtree) is skipped, never
+    /// panicking. An unknown `at` or a corrupt line to it grafts nothing.
+    pub fn graft_subtree(&mut self, at: usize, src: &MoveTree) -> Vec<(usize, usize)> {
         let Some(line) = self.line_to(at) else {
-            return 0;
+            return Vec::new();
         };
         let Ok(plies) = replay(self.start_position(), &line, MODE) else {
-            return 0;
+            return Vec::new();
         };
         let fen = plies
             .last()
@@ -296,11 +297,11 @@ impl MoveTree {
         dst_fen: &str,
         src: &MoveTree,
         src_id: usize,
-    ) -> usize {
+    ) -> Vec<(usize, usize)> {
         let Some(src_node) = src.nodes.get(src_id) else {
-            return 0;
+            return Vec::new();
         };
-        let mut added = 0;
+        let mut added = Vec::new();
         for &child in &src_node.children.clone() {
             let Some(san) = src.nodes.get(child).and_then(|n| n.san.clone()) else {
                 continue;
@@ -313,11 +314,12 @@ impl MoveTree {
             let target = match self.child_by_san(dst, &san) {
                 Some(existing) => existing,
                 None => {
-                    added += 1;
-                    self.add_move(dst, san)
+                    let new_id = self.add_move(dst, san);
+                    added.push((child, new_id));
+                    new_id
                 }
             };
-            added += self.graft_children(target, &after_fen, src, child);
+            added.extend(self.graft_children(target, &after_fen, src, child));
         }
         added
     }
@@ -572,7 +574,17 @@ mod tests {
         src.add_move(s_e4, "c5");
 
         let added = dst.graft_subtree(dst.root, &src);
-        assert_eq!(added, 1, "only c5 is new; e4 and e5 already exist");
+        assert_eq!(added.len(), 1, "only c5 is new; e4 and e5 already exist");
+        let c5_src = src.child_by_san(s_e4, "c5").unwrap();
+        assert_eq!(
+            added[0].0, c5_src,
+            "the pair's src_id is the source c5 node"
+        );
+        assert_eq!(
+            dst.nodes[added[0].1].san.as_deref(),
+            Some("c5"),
+            "the pair's dst_id is the grafted c5 node"
+        );
 
         // e4 now branches into e5 (kept) + c5 (grafted as a variation).
         let sans: Vec<String> = dst.nodes[e4]
@@ -584,7 +596,7 @@ mod tests {
         assert!(sans.contains(&"c5".to_string()));
 
         // Re-grafting the same source follows the now-existing children: adds 0.
-        assert_eq!(dst.graft_subtree(dst.root, &src), 0);
+        assert!(dst.graft_subtree(dst.root, &src).is_empty());
     }
 
     #[test]
@@ -600,7 +612,8 @@ mod tests {
 
         let added = dst.graft_subtree(dst.root, &src);
         assert_eq!(
-            added, 1,
+            added.len(),
+            1,
             "only the legal d4 grafts; the Nf6 subtree is skipped"
         );
         assert_eq!(dst.mainline(), vec!["d4"]);
@@ -618,7 +631,7 @@ mod tests {
         src.add_move(src.root, "c5");
 
         let added = dst.graft_subtree(e4, &src);
-        assert_eq!(added, 1);
+        assert_eq!(added.len(), 1);
         assert_eq!(dst.nodes[e4].children.len(), 1);
         let c5 = dst.nodes[e4].children[0];
         assert_eq!(dst.nodes[c5].san.as_deref(), Some("c5"));

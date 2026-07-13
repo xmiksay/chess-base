@@ -6,7 +6,7 @@
 
 import { Chess } from 'chess.js'
 import type { DrawShape, DrawBrush } from 'chessground/draw'
-import type { AttackSignal, DangerTree, TrapVerdict } from '../types'
+import type { AttackSignal, DangerTree, Eval, TrapVerdict } from '../types'
 
 const WEAPON_COLOR = '#15803d' // green-700  — a prepared, recommendable line
 const CAUTION_COLOR = '#dc2626' // red-600    — baits, but the best reply refutes it
@@ -88,6 +88,13 @@ function moveLabel(ply: number, san: string): string {
   return ply % 2 === 1 ? `${moveNo}.${san}` : `${moveNo}…${san}`
 }
 
+/** Format an `Eval` as a signed pawn score (`+0.30`) or mate count (`M3`). */
+export function formatEval(evalScore: Eval): string {
+  if ('mate' in evalScore) return evalScore.mate >= 0 ? `M${evalScore.mate}` : `-M${-evalScore.mate}`
+  const pawns = evalScore.cp / 100
+  return pawns >= 0 ? `+${pawns.toFixed(2)}` : pawns.toFixed(2)
+}
+
 /** One tagged node flattened for the side panel, with the raw figures it carries. */
 export interface DangerRoleRow {
   nodeId: number
@@ -103,6 +110,7 @@ export interface DangerRoleRow {
   missRate: number | null // share of DB games humans missed the best reply (0..1)
   trap: TrapVerdict | null
   attack: AttackSignal | null
+  eval: Eval | null // White-perspective eval of this node's position (issue #177)
 }
 
 /**
@@ -127,6 +135,7 @@ export function dangerRoles(tree: DangerTree | null): DangerRoleRow[] {
         missRate: tag.miss_rate ?? null,
         trap: tag.trap ?? null,
         attack: tag.attack ?? null,
+        eval: tag.eval ?? null,
       }
     })
 }

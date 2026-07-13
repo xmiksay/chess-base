@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::Score;
 use crate::openings::opening_of_zobrist;
-use crate::pgn_tree::Shape;
+use crate::pgn_tree::{Eval, Shape};
 use crate::position::{apply_san, zobrist_of_fen, CastlingMode};
 use crate::search::report::{EcoInfo, MoveReport};
 use crate::study_gen::features::{concepts_of_fen_with, Concepts};
@@ -187,6 +187,17 @@ pub fn score_to_cp(score: Option<Score>) -> i32 {
                 -(MATE_CP - dist)
             }
         }
+    }
+}
+
+/// Flip a side-to-move engine [`Score`] to the White-perspective [`Eval`] PGN
+/// `[%eval]` expects (issue #162's non-destructive-eval convention, reused by the
+/// danger-map spine walk for issue #177). When White is to move the score is
+/// already White's view; otherwise negate it.
+pub fn white_eval(score: Score, white_to_move: bool) -> Eval {
+    match score {
+        Score::Cp { value } => Eval::Cp(if white_to_move { value } else { -value }),
+        Score::Mate { value } => Eval::Mate(if white_to_move { value } else { -value }),
     }
 }
 

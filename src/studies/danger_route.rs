@@ -21,15 +21,17 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::pgn_tree::pgn::from_pgn_with_start;
+use crate::pgn_tree::Eval;
 use crate::position::{CastlingMode, STARTPOS_FEN};
 use crate::search::report::PositionReportService;
 use crate::server::error::error_response;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 use crate::studies::StudyService;
-use crate::study_gen::spine::{DangerTree, SpineConfig, SpineError};
+use crate::study_gen::spine::{SpineConfig, SpineError};
 use crate::study_gen::{
     generate_danger_study_live, walk_danger_spine_live, DangerStudyOutcome, DangerStudyParams,
+    DangerTree,
 };
 
 /// Studies are standard chess (mirrors [`crate::studies`] and the MCP tool); every
@@ -105,6 +107,10 @@ struct RoleView {
     san: Option<String>,
     kind: String,
     role: String,
+    /// White-perspective eval of the position this node reaches (issue #177);
+    /// absent for an Off-book node (no search ran on its own position).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    eval: Option<Eval>,
 }
 
 impl From<&DangerStudyOutcome> for DangerMapView {
@@ -124,6 +130,7 @@ impl From<&DangerStudyOutcome> for DangerMapView {
                     san: r.san.clone(),
                     kind: format!("{:?}", r.kind),
                     role: format!("{:?}", r.role),
+                    eval: r.eval,
                 })
                 .collect(),
         }
@@ -292,6 +299,7 @@ fn roles_digest(tree: &DangerTree) -> Vec<RoleView> {
                 san: n.san.clone(),
                 kind: format!("{:?}", tag.kind),
                 role: format!("{:?}", tag.role),
+                eval: tag.eval,
             })
         })
         .collect()

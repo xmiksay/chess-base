@@ -11,6 +11,7 @@ pub mod annotate;
 pub mod attack;
 pub mod danger;
 pub mod danger_generate;
+pub mod danger_tree;
 pub mod features;
 pub mod generate;
 pub mod plan_shapes;
@@ -40,19 +41,17 @@ pub use danger_generate::{
     generate_danger_study, generate_danger_study_live, DangerStudyError, DangerStudyOutcome,
     DangerStudyParams, TaggedRole,
 };
+pub use danger_tree::{DangerKind, DangerNode, DangerRole, DangerTag, DangerTree};
 pub use features::{concepts_of_fen, concepts_of_fen_with, Concepts, KeySquare};
 pub use generate::{
     generate_study, generate_study_live, GenerateError, GenerateOutcome, GenerateParams,
 };
 pub use plan_shapes::{apply_shapes, ShapeConfig, MAX_PLAN_LINES};
 pub use seed::{seed_study_from_danger, seed_study_from_tree, SeedOutcome, SeedParams};
-pub use spine::{
-    walk_danger_spine, DangerKind, DangerNode, DangerRole, DangerTag, DangerTree, MultiAnalyzer,
-    Side, SpineConfig, SpineError,
-};
+pub use spine::{walk_danger_spine, MultiAnalyzer, Side, SpineConfig, SpineError};
 pub use tree::{
-    build_tree, score_to_cp, select_continuations, Candidate, ContinuationSource, Evaluator,
-    TreeConfig, TreeError, VariationNode, VariationTree,
+    build_tree, score_to_cp, select_continuations, white_eval, Candidate, ContinuationSource,
+    Evaluator, TreeConfig, TreeError, VariationNode, VariationTree,
 };
 
 /// [`Evaluator`] backed by the pooled engine facade. Each `eval` runs one bounded

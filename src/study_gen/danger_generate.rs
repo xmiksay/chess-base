@@ -36,13 +36,12 @@ use crate::server::identity::CurrentUser;
 use crate::studies::{StudyError, StudyService};
 
 use super::annotate::{annotate_tree, AnnotateError, Rejection};
+use super::danger_tree::{DangerKind, DangerRole, DangerTag, DangerTree};
 use super::features::concepts_of_fen_with;
-use super::spine::{
-    walk_danger_spine, DangerKind, DangerRole, DangerTag, DangerTree, MultiAnalyzer, SpineConfig,
-    SpineError,
-};
+use super::spine::{walk_danger_spine, MultiAnalyzer, SpineConfig, SpineError};
 use super::tree::{eco_for, ContinuationSource, VariationNode, VariationTree};
 use super::{EngineMultiAnalyzer, ReportContinuations};
+use crate::pgn_tree::Eval;
 
 /// Studies are standard chess (mirrors [`crate::studies`]); the danger tree's
 /// FENs parse castling rights the normal way.
@@ -80,6 +79,9 @@ pub struct TaggedRole {
     pub san: Option<String>,
     pub kind: DangerKind,
     pub role: DangerRole,
+    /// White-perspective eval of the position this node reaches (issue #177);
+    /// `None` for an Off-book node — no search ran on its own position.
+    pub eval: Option<Eval>,
 }
 
 /// The persisted danger study plus what the pipeline surfaced: the dropped claims
@@ -239,6 +241,7 @@ fn collect_roles(danger: &DangerTree) -> Vec<TaggedRole> {
                 san: n.san.clone(),
                 kind: tag.kind,
                 role: tag.role,
+                eval: tag.eval,
             })
         })
         .collect()

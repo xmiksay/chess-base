@@ -437,6 +437,7 @@ export interface DangerMapRole {
   san: string | null
   kind: string // Trap | OnlyMove | Attack | OffBook
   role: string // Weapon | Caution | OffBook
+  eval?: Eval // White-perspective eval of the node's position (issue #177)
 }
 
 /** Result of a danger-map generation run. */
@@ -473,6 +474,9 @@ export interface DangerTag {
   only_move_gap?: number // PV1 − PV2 gap (opponent's perspective), centipawns
   miss_rate?: number // share of DB games humans missed the best reply (0..1)
   attack?: AttackSignal
+  // White-perspective eval of the position this node reaches (issue #177);
+  // absent for an Off-book node (no search ran on its own position).
+  eval?: Eval
 }
 
 /** One node of the engine-adjudicated danger tree (`src/study_gen/spine.rs`). */
@@ -505,6 +509,17 @@ export interface DangerWalkBody {
 export interface DangerWalkResult {
   tree: DangerTree
   roles: DangerMapRole[]
+}
+
+/**
+ * Result of `POST /api/studies/{id}/merge-danger` (issue #177): the refreshed
+ * study plus what the graft actually added, so "Extend this study" can report
+ * something better than a silent reload — "no new lines" on a re-merge.
+ */
+export interface MergeDangerResult extends Study {
+  added_nodes: number
+  weapons: number
+  cautions: number
 }
 
 // --- settings ---------------------------------------------------------------

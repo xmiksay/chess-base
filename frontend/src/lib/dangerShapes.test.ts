@@ -4,6 +4,7 @@ import {
   dangerBrushes,
   dangerRoles,
   dangerShapesForFen,
+  formatEval,
 } from './dangerShapes'
 import { STARTPOS_FEN } from './fen'
 import type { DangerNode, DangerTree } from '../types'
@@ -31,7 +32,13 @@ function sampleTree(): DangerTree {
         san: 'Qh5',
         fen: 'rnbqkbnr/pppp1ppp/8/4p2Q/4P3/8/PPPP1PPP/RNB1KBNR b KQkq - 1 2',
         ply: 3,
-        tag: { kind: 'Trap', role: 'Caution', only_move_gap: 150, miss_rate: 0.4 },
+        tag: {
+          kind: 'Trap',
+          role: 'Caution',
+          only_move_gap: 150,
+          miss_rate: 0.4,
+          eval: { cp: -40 },
+        },
       }),
     ],
   }
@@ -89,7 +96,16 @@ describe('dangerShapes', () => {
         missRate: 0.4,
         trap: null,
         attack: null,
+        eval: { cp: -40 },
       },
     ])
+  })
+
+  it('formats an eval as a signed pawn score or a mate count', () => {
+    expect(formatEval({ cp: 30 })).toBe('+0.30')
+    expect(formatEval({ cp: -40 })).toBe('-0.40')
+    expect(formatEval({ cp: 0 })).toBe('+0.00')
+    expect(formatEval({ mate: 3 })).toBe('M3')
+    expect(formatEval({ mate: -2 })).toBe('-M2')
   })
 })
