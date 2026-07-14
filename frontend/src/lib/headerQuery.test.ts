@@ -50,6 +50,27 @@ describe('toParams', () => {
     expect(toParams(q)).toEqual({ date_from: '1990.01.01', date_to: '2000.12.31' })
   })
 
+  it('maps database/ELO fields to snake_case params and passes sort through', () => {
+    const q = {
+      ...emptyQuery(),
+      databaseId: '3',
+      eloMin: ' 2400 ',
+      eloMax: '2800',
+      sort: 'elo',
+    }
+    expect(toParams(q)).toEqual({
+      database_id: '3',
+      elo_min: '2400',
+      elo_max: '2800',
+      sort: 'elo',
+    })
+  })
+
+  it('omits an unset database, ELO bound and sort entirely', () => {
+    const q = { ...emptyQuery(), eloMin: '2400' }
+    expect(toParams(q)).toEqual({ elo_min: '2400' })
+  })
+
   it('passes through the full set of fields', () => {
     const q = {
       player: 'A',
@@ -59,6 +80,10 @@ describe('toParams', () => {
       eco: 'B90',
       dateFrom: '2020.01.01',
       dateTo: '2021.01.01',
+      databaseId: '7',
+      eloMin: '2000',
+      eloMax: '2500',
+      sort: 'id',
     }
     expect(toParams(q)).toEqual({
       player: 'A',
@@ -68,6 +93,10 @@ describe('toParams', () => {
       eco: 'B90',
       date_from: '2020.01.01',
       date_to: '2021.01.01',
+      database_id: '7',
+      elo_min: '2000',
+      elo_max: '2500',
+      sort: 'id',
     })
   })
 })

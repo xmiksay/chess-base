@@ -371,8 +371,76 @@ async fn header_search_rejects_bad_cursor_and_params() {
     let (alice, _alice_id) = register(&app, "alice").await;
     let (status, _) = get_json(&app, "/api/search/headers?cursor=not-valid", &alice).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, _) = get_json(&app, "/api/search/headers?sort=elo", &alice).await;
+    let (status, _) = get_json(&app, "/api/search/headers?sort=rating", &alice).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = get_json(
+        &app,
+        "/api/search/headers?elo_min=2600&elo_max=2500",
+        &alice,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// A PGN with explicit ELO tags for the rating filter/sort tests.
+fn rated_game(white: &str, white_elo: &str, black: &str, black_elo: &str) -> String {
+    format!(
+        "[Event \"E\"]\n[White \"{white}\"]\n[Black \"{black}\"]\n[WhiteElo \"{white_elo}\"]\n[BlackElo \"{black_elo}\"]\n[Result \"1-0\"]\n\n1. e4 e5 1-0\n"
+    )
+}
+
+#[tokio::test]
+async fn header_search_filters_by_elo_and_database() {
+    let (app, db) = app_with_db().await;
+    let (_alice, alice_id) = register(&app, "alice").await; // first user → admin
+    let (bob_token, bob_id) = register(&app, "bob").await;
+    let alice_db = seed(&db, &alice_id, &[SCHOLARS_MATE]).await;
+    let bob_db = seed(
+        &db,
+        &bob_id,
+        &[
+            &rated_game("Carlsen", "2850", "Caruana", "2800"),
+            &rated_game("Ding", "2450", "Nakamura", "2400"),
+            SCHOLARS_MATE, // no ELO tags → excluded once a bound is set
+        ],
+    )
+    .await;
+
+    // ELO band + average-rating sort, pinned to bob's own database.
+    let (status, body) = get_json(
+        &app,
+        &format!("/api/search/headers?database_id={bob_db}&elo_min=2500&sort=elo"),
+        &bob_token,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["games"].as_array().unwrap().len(), 1);
+    assert_eq!(body["games"][0]["white"], "Carlsen");
+    assert_eq!(body["games"][0]["white_elo"], 2850);
+
+    // Without bounds, `sort=elo` returns everything, unrated last.
+    let (_, body) = get_json(
+        &app,
+        &format!("/api/search/headers?database_id={bob_db}&sort=elo"),
+        &bob_token,
+    )
+    .await;
+    let whites: Vec<&str> = body["games"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["white"].as_str().unwrap())
+        .collect();
+    assert_eq!(whites, ["Carlsen", "Ding", "Spassky"]);
+
+    // Someone else's database id is hidden as not-found.
+    let (status, _) = get_json(
+        &app,
+        &format!("/api/search/headers?database_id={alice_db}"),
+        &bob_token,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

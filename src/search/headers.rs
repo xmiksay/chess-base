@@ -1,6 +1,7 @@
 //! Transport-agnostic header/metadata search (issue #6): query games by player /
-//! color / event / ECO / date range / result, scoped to the caller's databases ∪
-//! global ones (ADR 0007 / 0011), returned in stable keyset-paginated pages.
+//! color / event / ECO / date range / result / database / ELO range, scoped to
+//! the caller's databases ∪ global ones (ADR 0007 / 0011), returned in stable
+//! keyset-paginated pages.
 //!
 //! Keyset (seek) pagination avoids `OFFSET`'s linear scan: each page is bounded
 //! by the composite sort key of the last row it returned — the primary sort
@@ -35,6 +36,10 @@ pub enum HeaderSearchError {
     /// The supplied pagination cursor was not produced by a prior page.
     #[error("invalid cursor")]
     InvalidCursor,
+    /// The requested `database_id` is not visible to the caller — hidden as
+    /// not-found (mirrors `GameError::NotFound`) so existence never leaks.
+    #[error("database not found")]
+    NotFound,
     /// Serializing a result row / cursor failed (effectively unreachable for the
     /// flat types; kept so the transport never has to `unwrap`).
     #[error("serialization error")]
@@ -51,6 +56,9 @@ pub enum SortField {
     Date,
     /// Insertion order (`games.id`).
     Id,
+    /// Average of the two players' ELOs; games missing either ELO sort last
+    /// regardless of direction (see [`elo_key`]).
+    Elo,
 }
 
 /// Sort direction for the chosen [`SortField`] (and the `id` tiebreaker).
@@ -70,12 +78,15 @@ impl SortDir {
 }
 
 /// The decoded position of the last row of a page: the primary sort value (the
-/// coalesced date for [`SortField::Date`], absent for [`SortField::Id`]) plus the
-/// `id` tiebreaker. Round-trips through base64url-JSON as the opaque cursor.
+/// coalesced date for [`SortField::Date`], the ELO sort key for
+/// [`SortField::Elo`], absent for [`SortField::Id`]) plus the `id` tiebreaker.
+/// Round-trips through base64url-JSON as the opaque cursor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Cursor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     d: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    e: Option<i32>,
     id: i32,
 }
 
@@ -103,6 +114,9 @@ pub struct HeaderParams {
     pub date_from: Option<String>,
     pub date_to: Option<String>,
     pub result: Option<String>,
+    pub database_id: Option<i32>,
+    pub elo_min: Option<i32>,
+    pub elo_max: Option<i32>,
     pub sort: Option<String>,
     pub dir: Option<String>,
     pub limit: Option<u64>,
@@ -120,6 +134,9 @@ pub struct HeaderQuery {
     pub date_from: Option<String>,
     pub date_to: Option<String>,
     pub result: Option<String>,
+    pub database_id: Option<i32>,
+    pub elo_min: Option<i32>,
+    pub elo_max: Option<i32>,
     pub sort: SortField,
     pub dir: SortDir,
     pub limit: u64,
@@ -143,12 +160,20 @@ impl TryFrom<HeaderParams> for HeaderQuery {
         let sort = match norm(p.sort).as_deref() {
             None | Some("date") => SortField::Date,
             Some("id") => SortField::Id,
+            Some("elo") => SortField::Elo,
             Some(other) => {
                 return Err(HeaderSearchError::BadRequest(format!(
-                    "sort must be 'date' or 'id', got '{other}'"
+                    "sort must be 'date', 'id' or 'elo', got '{other}'"
                 )))
             }
         };
+        if let (Some(min), Some(max)) = (p.elo_min, p.elo_max) {
+            if min > max {
+                return Err(HeaderSearchError::BadRequest(format!(
+                    "elo_min ({min}) must not exceed elo_max ({max})"
+                )));
+            }
+        }
         let dir = match norm(p.dir).as_deref() {
             None | Some("desc") => SortDir::Desc,
             Some("asc") => SortDir::Asc,
@@ -171,6 +196,9 @@ impl TryFrom<HeaderParams> for HeaderQuery {
             date_from: norm(p.date_from),
             date_to: norm(p.date_to),
             result: norm(p.result),
+            database_id: p.database_id,
+            elo_min: p.elo_min,
+            elo_max: p.elo_max,
             sort,
             dir,
             limit,
@@ -222,7 +250,27 @@ impl HeaderSearchService {
         if visible.is_empty() {
             return Ok(HeaderPage::empty());
         }
-        let mut cond = Condition::all().add(games::Column::DatabaseId.is_in(visible));
+        let mut cond = Condition::all().add(match query.database_id {
+            // A pinned database must be in scope; an id outside it (someone
+            // else's, or nonexistent) is indistinguishably "not found".
+            Some(id) if !visible.contains(&id) => return Err(HeaderSearchError::NotFound),
+            Some(id) => games::Column::DatabaseId.eq(id),
+            None => games::Column::DatabaseId.is_in(visible),
+        });
+
+        // Each ELO bound applies to BOTH players independently; a NULL ELO
+        // fails the SQL comparison, so games missing either rating drop out
+        // whenever at least one bound is set (user decision).
+        if let Some(min) = query.elo_min {
+            cond = cond
+                .add(games::Column::WhiteElo.gte(min))
+                .add(games::Column::BlackElo.gte(min));
+        }
+        if let Some(max) = query.elo_max {
+            cond = cond
+                .add(games::Column::WhiteElo.lte(max))
+                .add(games::Column::BlackElo.lte(max));
+        }
 
         if let Some(name) = &query.player {
             let ids = crate::search::position::player_ids_matching(&self.db, name)
@@ -271,6 +319,9 @@ impl HeaderSearchService {
             SortField::Date => select
                 .order_by(date_key(), order.clone())
                 .order_by(games::Column::Id, order),
+            SortField::Elo => select
+                .order_by(elo_key(query.dir), order.clone())
+                .order_by(games::Column::Id, order),
         };
         let mut rows = select.limit(query.limit + 1).all(&self.db).await?;
 
@@ -278,7 +329,7 @@ impl HeaderSearchService {
         rows.truncate(query.limit as usize);
         let next_cursor = if has_more {
             match rows.last() {
-                Some(last) => Some(cursor_for(query.sort, last).encode()?),
+                Some(last) => Some(cursor_for(query.sort, query.dir, last).encode()?),
                 None => None,
             }
         } else {
@@ -327,39 +378,73 @@ fn date_key() -> SimpleExpr {
     Func::coalesce([Expr::col(games::Column::Date).into(), Expr::val("").into()]).into()
 }
 
-/// The keyset of `row` under `sort` — the value a `next_cursor` carries.
-fn cursor_for(sort: SortField, row: &games::Model) -> Cursor {
-    match sort {
-        SortField::Id => Cursor {
-            d: None,
-            id: row.id,
-        },
-        SortField::Date => Cursor {
-            d: Some(row.date.clone().unwrap_or_default()),
-            id: row.id,
-        },
+/// The orderable primary key for ELO sorts:
+/// `COALESCE(white_elo + black_elo, <sentinel>)`. The sum orders identically to
+/// the (white+black)/2 average without integer division losing the half-point;
+/// the direction-dependent sentinel sits past every real sum, so games missing
+/// either ELO sort last whichever way the page is ordered (user decision).
+fn elo_key(dir: SortDir) -> SimpleExpr {
+    Func::coalesce([
+        Expr::col(games::Column::WhiteElo).add(Expr::col(games::Column::BlackElo)),
+        Expr::val(elo_missing_key(dir)).into(),
+    ])
+    .into()
+}
+
+/// Where a missing-ELO row sits on the ELO sort axis: beyond any real sum in
+/// the chosen direction, so those rows always trail the rated ones.
+fn elo_missing_key(dir: SortDir) -> i32 {
+    match dir {
+        SortDir::Asc => i32::MAX,
+        SortDir::Desc => i32::MIN,
     }
+}
+
+/// The keyset of `row` under `sort` — the value a `next_cursor` carries.
+fn cursor_for(sort: SortField, dir: SortDir, row: &games::Model) -> Cursor {
+    let (d, e) = match sort {
+        SortField::Id => (None, None),
+        SortField::Date => (Some(row.date.clone().unwrap_or_default()), None),
+        SortField::Elo => {
+            let sum = match (row.white_elo, row.black_elo) {
+                (Some(w), Some(b)) => w + b,
+                _ => elo_missing_key(dir),
+            };
+            (None, Some(sum))
+        }
+    };
+    Cursor { d, e, id: row.id }
 }
 
 /// Seek predicate excluding everything up to and including `cursor`, in the
 /// chosen sort order: strictly past the primary value, or tied on it and past
 /// the `id` tiebreaker.
 fn keyset(sort: SortField, dir: SortDir, cursor: &Cursor) -> Condition {
-    let (past_id, past_primary): (SimpleExpr, fn(SimpleExpr, String) -> SimpleExpr) = match dir {
+    let (past_id, past_primary): (SimpleExpr, fn(SimpleExpr, SimpleExpr) -> SimpleExpr) = match dir
+    {
         SortDir::Asc => (games::Column::Id.gt(cursor.id), |e, v| Expr::expr(e).gt(v)),
         SortDir::Desc => (games::Column::Id.lt(cursor.id), |e, v| Expr::expr(e).lt(v)),
+    };
+    let seek = |key: SimpleExpr, val: SimpleExpr| {
+        Condition::any()
+            .add(past_primary(key.clone(), val.clone()))
+            .add(
+                Condition::all()
+                    .add(Expr::expr(key).eq(val))
+                    .add(past_id.clone()),
+            )
     };
     match sort {
         SortField::Id => past_id.into_condition(),
         SortField::Date => {
             let d = cursor.d.clone().unwrap_or_default();
-            Condition::any()
-                .add(past_primary(date_key(), d.clone()))
-                .add(
-                    Condition::all()
-                        .add(Expr::expr(date_key()).eq(d))
-                        .add(past_id),
-                )
+            seek(date_key(), Expr::val(d).into())
+        }
+        SortField::Elo => {
+            // A cursor minted by a non-elo page carries no `e`; treat it as the
+            // missing-ELO sentinel so the query stays deterministic.
+            let e = cursor.e.unwrap_or(elo_missing_key(dir));
+            seek(elo_key(dir), Expr::val(e).into())
         }
     }
 }

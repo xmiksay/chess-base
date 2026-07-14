@@ -1,22 +1,31 @@
 <script setup lang="ts">
 // Header/metadata search (issue #6): a form over player/color/event/result/ECO/
-// date that renders the matching games. Query state + param mapping live in the
-// store and lib/headerQuery; results are keyset-paginated ("Load more").
+// date — plus a single-database restriction, an ELO range over both players and
+// a sort field (date/id/elo) — that renders the matching games. Query state +
+// param mapping live in the store and lib/headerQuery; results are
+// keyset-paginated ("Load more").
 //
 // Issue #171: results carry a multi-select (+ select-all over what's currently
 // loaded) driving a bulk-action toolbar — merge into a study, export the
 // selection as one `.pgn`, or delete. Selection is local to this component
 // (mirrors GamesView's merge selection, issue #170); ids stay valid across
 // "Load more" pages since the store only ever appends.
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { useSearchStore } from '../stores/search'
+import { useCollectionsStore } from '../stores/collections'
 import { downloadText } from '../lib/download'
 import MergeGamesDialog from './MergeGamesDialog.vue'
 
 const search = useSearchStore()
+const collections = useCollectionsStore()
 const router = useRouter()
+
+// The database filter reuses the collections store's list (own ∪ global). The
+// store records failures on its own `error`; swallow the rejection so an
+// offline/unauthenticated load doesn't surface as an unhandled rejection.
+onMounted(() => collections.refresh().catch(() => {}))
 
 const RESULTS = [
   { value: '', label: 'Any result' },
@@ -30,6 +39,14 @@ const COLORS = [
   { value: '', label: 'Either side' },
   { value: 'white', label: 'as White' },
   { value: 'black', label: 'as Black' },
+]
+
+// Blank = the backend default (date, newest first with the default dir=desc);
+// `elo` orders by the average of both players' ELOs, strongest first.
+const SORTS = [
+  { value: '', label: 'Date (newest first)' },
+  { value: 'id', label: 'ID (import order)' },
+  { value: 'elo', label: 'ELO (strongest first)' },
 ]
 
 function submit() {
@@ -199,6 +216,63 @@ async function deleteSelected() {
           placeholder="YYYY.MM.DD"
           class="rounded border border-border px-2 py-1 bg-surface"
         >
+      </label>
+      <label class="flex flex-col gap-1 text-sm">
+        <span class="text-muted">Database</span>
+        <select
+          v-model="search.query.databaseId"
+          data-test="database-select"
+          class="rounded border border-border px-2 py-1 bg-surface"
+        >
+          <option value="">
+            All databases
+          </option>
+          <option
+            v-for="d in collections.list"
+            :key="d.id"
+            :value="String(d.id)"
+          >
+            {{ d.name }}
+          </option>
+        </select>
+      </label>
+      <label
+        class="flex flex-col gap-1 text-sm"
+        title="Both players must be within the bounds; games missing an ELO are excluded when a bound is set."
+      >
+        <span class="text-muted">ELO (both players)</span>
+        <div class="flex gap-2">
+          <input
+            v-model="search.query.eloMin"
+            data-test="elo-min"
+            type="number"
+            placeholder="min"
+            class="w-full rounded border border-border px-2 py-1 bg-surface"
+          >
+          <input
+            v-model="search.query.eloMax"
+            data-test="elo-max"
+            type="number"
+            placeholder="max"
+            class="w-full rounded border border-border px-2 py-1 bg-surface"
+          >
+        </div>
+      </label>
+      <label class="flex flex-col gap-1 text-sm">
+        <span class="text-muted">Sort by</span>
+        <select
+          v-model="search.query.sort"
+          data-test="sort-select"
+          class="rounded border border-border px-2 py-1 bg-surface"
+        >
+          <option
+            v-for="s in SORTS"
+            :key="s.value"
+            :value="s.value"
+          >
+            {{ s.label }}
+          </option>
+        </select>
       </label>
       <div class="flex items-end gap-2">
         <button

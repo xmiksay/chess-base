@@ -101,7 +101,10 @@ export interface MoveStat {
   black: number
 }
 
-/** Header-search form state (camelCase; mapped to snake_case params in lib). */
+/** Header-search form state (camelCase; mapped to snake_case params in lib).
+ * `databaseId` restricts to one database (blank = all visible); `eloMin`/
+ * `eloMax` bound BOTH players' ELOs (games missing an ELO are excluded when a
+ * bound is set); `sort` is `date` (blank default) / `id` / `elo`. */
 export interface HeaderQuery {
   player: string
   color: string
@@ -110,6 +113,10 @@ export interface HeaderQuery {
   eco: string
   dateFrom: string
   dateTo: string
+  databaseId: string
+  eloMin: string
+  eloMax: string
+  sort: string
 }
 
 /** Position-explorer filter form state (camelCase; mapped to snake_case query

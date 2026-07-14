@@ -3,7 +3,8 @@
 // set?" check, and the mapping to the backend's snake_case query params (blank
 // fields dropped so they don't constrain the search). Mirrors the `/api/search/
 // headers` filter surface (issue #6): a player name + optional color, event, ECO
-// prefix, result and an inclusive PGN date range.
+// prefix, result, an inclusive PGN date range, a single-database restriction, an
+// ELO range over both players, and the sort field (date / id / elo).
 
 import type { HeaderQuery } from '../types'
 
@@ -16,6 +17,10 @@ export const QUERY_FIELDS: (keyof HeaderQuery)[] = [
   'eco',
   'dateFrom',
   'dateTo',
+  'databaseId',
+  'eloMin',
+  'eloMax',
+  'sort',
 ]
 
 /** Camel-case form field → backend query-param name. */
@@ -27,6 +32,10 @@ const PARAM_OF: Record<keyof HeaderQuery, string> = {
   eco: 'eco',
   dateFrom: 'date_from',
   dateTo: 'date_to',
+  databaseId: 'database_id',
+  eloMin: 'elo_min',
+  eloMax: 'elo_max',
+  sort: 'sort',
 }
 
 /** A fresh, all-blank query object. */

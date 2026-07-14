@@ -1,5 +1,9 @@
 //! Tests for [`super`] (header/metadata search). Split out to keep the
-//! module under the project's 500-line file cap.
+//! module under the project's 500-line file cap; the database/ELO filter and
+//! `elo`-sort tests live in the `elo` submodule for the same reason.
+
+#[path = "headers_elo_tests.rs"]
+mod elo;
 
 use std::collections::HashSet;
 
@@ -51,13 +55,25 @@ fn game(white: &str, black: &str, event: &str, eco: &str, date: &str, result: &s
 fn cursor_round_trips_through_base64() {
     let c = Cursor {
         d: Some("1990.01.01".to_string()),
+        e: None,
         id: 42,
     };
     let decoded = Cursor::decode(&c.encode().unwrap()).unwrap();
     assert_eq!(decoded, c);
 
-    let id_only = Cursor { d: None, id: 7 };
+    let id_only = Cursor {
+        d: None,
+        e: None,
+        id: 7,
+    };
     assert_eq!(Cursor::decode(&id_only.encode().unwrap()).unwrap(), id_only);
+
+    let elo = Cursor {
+        d: None,
+        e: Some(5250),
+        id: 3,
+    };
+    assert_eq!(Cursor::decode(&elo.encode().unwrap()).unwrap(), elo);
 }
 
 #[test]
@@ -103,7 +119,12 @@ fn invalid_enum_params_are_rejected() {
             ..params()
         },
         HeaderParams {
-            sort: Some("elo".to_string()),
+            sort: Some("rating".to_string()),
+            ..params()
+        },
+        HeaderParams {
+            elo_min: Some(2600),
+            elo_max: Some(2500),
             ..params()
         },
         HeaderParams {

@@ -157,6 +157,7 @@ impl IntoResponse for HeaderSearchError {
             HeaderSearchError::BadRequest(_) | HeaderSearchError::InvalidCursor => {
                 StatusCode::BAD_REQUEST
             }
+            HeaderSearchError::NotFound => StatusCode::NOT_FOUND,
             HeaderSearchError::Serialize(_) | HeaderSearchError::Db(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }

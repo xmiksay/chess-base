@@ -4,11 +4,15 @@ import { setActivePinia, createPinia } from 'pinia'
 
 // Bulk actions (issue #171) drive api.games.exportSelected/remove and
 // api.studies.mergeGames (inside the stubbed MergeGamesDialog child); the search
-// itself never runs a real fetch, so `headers` is stubbed but unused per test.
+// itself never runs a real fetch, so `headers` is stubbed but unused in the bulk
+// tests. Mounting also refreshes the collections store for the database filter,
+// so whoami/databases.list resolve harmlessly by default.
 vi.mock('../api', () => ({
   api: {
     search: { headers: vi.fn() },
     games: { exportSelected: vi.fn(), remove: vi.fn() },
+    whoami: vi.fn(),
+    databases: { list: vi.fn() },
   },
 }))
 
@@ -45,6 +49,66 @@ function setup() {
   })
   return { search, wrapper }
 }
+
+describe('HeaderSearch database/ELO/sort filters', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    vi.mocked(api.whoami).mockResolvedValue({ id: 'u1', is_admin: false })
+    vi.mocked(api.databases.list).mockResolvedValue([
+      { id: 1, owner_id: 'u1', name: 'My games', kind: 'own', index_depth: null, global: false },
+      { id: 2, owner_id: null, name: 'Masters', kind: 'master', index_depth: null, global: true },
+    ])
+    vi.mocked(api.search.headers).mockResolvedValue({ games: [], next_cursor: null })
+  })
+
+  it('lists the visible databases behind an "All databases" default', async () => {
+    const { wrapper } = setup()
+    await flushPromises()
+
+    const select = wrapper.find('[data-test="database-select"]')
+    expect((select.element as HTMLSelectElement).value).toBe('')
+    expect(select.findAll('option').map((o) => o.text())).toEqual([
+      'All databases',
+      'My games',
+      'Masters',
+    ])
+  })
+
+  it('offers date/id/elo sort options', () => {
+    const { wrapper } = setup()
+    const options = wrapper.find('[data-test="sort-select"]').findAll('option')
+    expect(options.map((o) => o.attributes('value'))).toEqual(['', 'id', 'elo'])
+  })
+
+  it('sends database_id/elo_min/elo_max/sort, omitting blank values', async () => {
+    const { wrapper } = setup()
+    await flushPromises()
+
+    await wrapper.find('[data-test="database-select"]').setValue('2')
+    await wrapper.find('[data-test="elo-min"]').setValue('2400')
+    await wrapper.find('[data-test="sort-select"]').setValue('elo')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    // elo_max stays blank and the default sort/database are '' — all omitted.
+    expect(api.search.headers).toHaveBeenCalledWith({
+      database_id: '2',
+      elo_min: '2400',
+      sort: 'elo',
+    })
+  })
+
+  it('sends no filter params at all for an untouched form', async () => {
+    const { wrapper } = setup()
+    await flushPromises()
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(api.search.headers).toHaveBeenCalledWith({})
+  })
+})
 
 describe('HeaderSearch multi-select + bulk actions', () => {
   beforeEach(() => {
