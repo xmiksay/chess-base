@@ -134,8 +134,11 @@ async fn index_depth_caps_indexed_positions() {
 async fn players_and_event_are_deduplicated_across_games() {
     let (conn, database_id) = db_with_own_collection().await;
 
+    // A second game from the same event between the same players (the `[Round]`
+    // keeps its content hash distinct, so both games are stored).
+    let round_two = SCHOLARS_MATE.replace("[Result ", "[Round \"2\"]\n[Result ");
     ingest_pgn(&conn, database_id, SCHOLARS_MATE).await.unwrap();
-    ingest_pgn(&conn, database_id, SCHOLARS_MATE).await.unwrap();
+    ingest_pgn(&conn, database_id, &round_two).await.unwrap();
 
     assert_eq!(players::Entity::find().all(&conn).await.unwrap().len(), 2);
     assert_eq!(events::Entity::find().all(&conn).await.unwrap().len(), 1);
@@ -205,18 +208,53 @@ async fn same_keyed_game_dedups_per_database_not_across() {
 }
 
 #[tokio::test]
-async fn keyless_games_are_never_deduped() {
+async fn keyless_games_dedup_by_content_hash() {
     let (conn, database_id) = db_with_own_collection().await;
-    // `SCHOLARS_MATE` has `[Site "London"]`, not a permalink ⇒ no `source_ref`, so
-    // re-ingesting it stores a second copy (the existing player/event-dedup case).
+    // `SCHOLARS_MATE` has `[Site "London"]`, not a permalink ⇒ its `source_ref`
+    // falls back to the content hash, so re-ingesting the identical PGN is a
+    // dedup no-op instead of a second copy.
+    let first = ingest_pgn(&conn, database_id, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(ingest_pgn(&conn, database_id, SCHOLARS_MATE)
         .await
         .unwrap()
-        .is_some());
-    assert!(ingest_pgn(&conn, database_id, SCHOLARS_MATE)
+        .is_none());
+    assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 1);
+
+    let stored = games::Entity::find_by_id(first.game_id)
+        .one(&conn)
+        .await
+        .unwrap()
+        .unwrap();
+    let hash = stored
+        .source_ref
+        .expect("content hash stored as source_ref");
+    assert!(hash.starts_with("sha256:"));
+
+    // A different game (extra `[Round]` tag) hashes differently and still lands.
+    let round_two = SCHOLARS_MATE.replace("[Result ", "[Round \"2\"]\n[Result ");
+    assert!(ingest_pgn(&conn, database_id, &round_two)
         .await
         .unwrap()
         .is_some());
+    assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn ingest_all_counts_duplicates() {
+    let (conn, database_id) = db_with_own_collection().await;
+
+    let first = ingest_pgn_all(&conn, database_id, TWO_GAMES).await.unwrap();
+    assert_eq!(first.imported.len(), 2);
+    assert_eq!(first.duplicates, 0);
+
+    // Re-uploading the same blob imports nothing and reports both drops.
+    let second = ingest_pgn_all(&conn, database_id, TWO_GAMES).await.unwrap();
+    assert!(second.imported.is_empty());
+    assert!(second.errors.is_empty());
+    assert_eq!(second.duplicates, 2);
     assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 2);
 }
 

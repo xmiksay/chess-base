@@ -130,7 +130,9 @@ async fn list_returns_games_in_database() {
 async fn list_paginates_with_offset() {
     let (app, db) = app_with_db().await;
     let (alice, alice_id) = register(&app, "alice").await;
-    let db_id = seed(&db, &alice_id, &[SCHOLARS_MATE, QUEENS_DRAW, SCHOLARS_MATE]).await;
+    // A distinct `[Round]` keeps the rematch's content hash apart (ingest dedup).
+    let rematch = format!("[Round \"2\"]\n{SCHOLARS_MATE}");
+    let db_id = seed(&db, &alice_id, &[SCHOLARS_MATE, QUEENS_DRAW, &rematch]).await;
 
     let (_, first) = get(
         &app,

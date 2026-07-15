@@ -83,11 +83,14 @@ fn service(state: &AppState) -> ImportService {
     ImportService::new(state.db.clone())
 }
 
-/// Wire shape shared by both import endpoints: `{ imported, skipped, errors[] }`.
+/// Wire shape shared by both import endpoints:
+/// `{ imported, skipped, duplicates, game_ids[], errors[] }`.
 fn summary_body(summary: &ImportSummary) -> serde_json::Value {
     json!({
         "imported": summary.imported,
         "skipped": summary.skipped,
+        "duplicates": summary.duplicates,
+        "game_ids": summary.game_ids,
         "errors": summary.errors,
     })
 }

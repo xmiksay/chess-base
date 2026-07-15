@@ -36,6 +36,7 @@ export function foldStatus(jobs: ImportJob[]): ImportSummary {
   const succeeded = jobs.filter((j) => j.status === 'success').length
   const failed = jobs.filter((j) => j.status === 'error').length
   const imported = jobs.reduce((sum, j) => sum + (j.imported || 0), 0)
+  const duplicates = jobs.reduce((sum, j) => sum + (j.duplicates || 0), 0)
 
   let state: ImportState
   if (jobs.length === 0) state = 'idle'
@@ -44,7 +45,7 @@ export function foldStatus(jobs: ImportJob[]): ImportSummary {
   else if (succeeded === 0) state = 'error'
   else state = 'partial'
 
-  return { total: jobs.length, running, succeeded, failed, imported, state }
+  return { total: jobs.length, running, succeeded, failed, imported, duplicates, state }
 }
 
 export const useImportStore = defineStore('import', () => {
@@ -77,6 +78,7 @@ export const useImportStore = defineStore('import', () => {
       label,
       status: 'running',
       imported: 0,
+      duplicates: 0,
       error: null,
     })
     jobs.value.unshift(job)
@@ -84,6 +86,7 @@ export const useImportStore = defineStore('import', () => {
       const res = await fn()
       job.status = 'success'
       job.imported = res?.imported ?? 0
+      job.duplicates = res?.duplicates ?? 0
     } catch (e) {
       job.status = 'error'
       job.error = String((e as Error)?.message ?? e)

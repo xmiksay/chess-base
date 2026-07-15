@@ -26,8 +26,9 @@ const canUpload = computed(() => !!targetId.value && !!pgnFile.value)
 const summaryText = computed(() => {
   const s = store.summary
   if (s.state === 'running') return `Importing… ${s.running} running`
+  const duplicates = s.duplicates ? `, ${s.duplicates} duplicate(s) skipped` : ''
   const failed = s.failed ? ` — ${s.failed} failed` : ''
-  return `${s.imported} game(s) imported across ${s.total} job(s)${failed}.`
+  return `${s.imported} game(s) imported${duplicates} across ${s.total} job(s)${failed}.`
 })
 
 function startSync() {
@@ -228,7 +229,7 @@ onMounted(async () => {
             class="text-muted"
             data-test="job-imported"
           >
-            {{ job.imported }} game(s)
+            {{ job.imported }} game(s){{ job.duplicates ? ` · ${job.duplicates} duplicate(s)` : '' }}
           </span>
           <span
             v-else-if="job.status === 'error'"

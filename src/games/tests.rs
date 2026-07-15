@@ -73,8 +73,10 @@ async fn list_returns_games_newest_first_with_total_and_names() {
 #[tokio::test]
 async fn list_paginates_by_offset_and_reports_total() {
     let (conn, db_id) = db_for(Some("alice")).await;
-    for _ in 0..5 {
-        ingest_pgn(&conn, db_id, SCHOLARS_MATE).await.unwrap();
+    // Distinct `[Round]` tags keep the content hashes apart (ingest dedup).
+    for i in 0..5 {
+        let pgn = format!("[Round \"{i}\"]\n{SCHOLARS_MATE}");
+        ingest_pgn(&conn, db_id, &pgn).await.unwrap();
     }
     let svc = GameService::new(conn);
 

@@ -35,7 +35,9 @@ src/
   features.rs      pure: position feature tags (material/phase/check, #33)    ← unit-tested
   threats/         pure: hanging-piece scan → red threat arrows (#123); GET /api/threats ← unit-tested
   db/              SeaORM: config (SQLite/Postgres), entities, migrations
-  ingest.rs        ingest_pgn: parse PGN → store game → replay → position_index   ← shared by collectors
+  ingest.rs        ingest_pgn: parse PGN → store game → replay → position_index;
+                   dedups per-database by source_ref (permalink, else content
+                   hash, ADR-0038); imports report game_ids + duplicates   ← shared by collectors
   collectors/      GameSource trait + Lichess / Chess.com adapters
   engine.rs        UCI engine config + parsing (Stockfish, Lc0/Maia); analyse_multi (top-N MultiPV)
   review/          Mode A (#119): engine-only full-game review — classify (pure
