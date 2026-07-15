@@ -21,10 +21,14 @@ pub fn register(registry: &mut ToolRegistry) {
 fn import_pgn_tool() -> Tool {
     Tool::new(
         "import_pgn",
-        "Ingest a PGN (one or many games) into a database you may write. A bad \
-         game inside a multi-game upload is skipped, not fatal — the response \
-         reports how many games were imported vs skipped, with a reason per \
-         skip. Discover a `database_id` via `list_databases`.",
+        "Ingest a PGN (one or many games) into a database you may write. The \
+         response carries `game_ids` — the new games' ids, in PGN order — for \
+         chaining into `db_read_game`, `analyse_game` or `game_save_as_study`. \
+         A game already present (same permalink or identical content) is \
+         dropped and counted in `duplicates`, so `imported: 0, duplicates: 1` \
+         means the game was already there. A bad game inside a multi-game \
+         upload is skipped, not fatal, with a reason per skip in `errors`. \
+         Discover a `database_id` via `list_databases`.",
         json!({
             "type": "object",
             "properties": {
@@ -100,11 +104,14 @@ async fn import_sync(app: AppState, user: CurrentUser, args: Value) -> ToolOutco
     }
 }
 
-/// Wire shape shared by both import tools: `{ imported, skipped, errors[] }`.
+/// Wire shape shared by both import tools:
+/// `{ imported, skipped, duplicates, game_ids[], errors[] }`.
 fn summary_view(summary: &ImportSummary) -> Value {
     json!({
         "imported": summary.imported,
         "skipped": summary.skipped,
+        "duplicates": summary.duplicates,
+        "game_ids": summary.game_ids,
         "errors": summary.errors,
     })
 }
@@ -137,6 +144,42 @@ mod tests {
                 "missing tool {expected}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn import_pgn_returns_game_ids_and_counts_duplicates() {
+        use sea_orm::{ActiveModelTrait, Set};
+
+        let app = dummy_app().await;
+        let db = crate::db::entities::databases::ActiveModel {
+            owner_id: Set(None),
+            name: Set("Games".to_string()),
+            kind: Set("own".to_string()),
+            ..Default::default()
+        }
+        .insert(&app.db)
+        .await
+        .expect("create database");
+
+        const GAME: &str = "[Event \"Casual\"]\n[White \"A\"]\n[Black \"B\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0\n";
+        let args = json!({ "database_id": db.id, "pgn": GAME });
+
+        // First call creates the game and hands back its id for chaining.
+        let first = import_pgn(app.clone(), CurrentUser::local_admin(), args.clone()).await;
+        assert!(!first.is_error, "unexpected error: {}", first.text);
+        let body: Value = serde_json::from_str(&first.text).expect("json body");
+        assert_eq!(body["imported"], 1);
+        assert_eq!(body["duplicates"], 0);
+        assert!(body["game_ids"][0].as_i64().expect("new game id") > 0);
+
+        // Re-importing the identical PGN is a reported duplicate, not a silent
+        // 0/0 "success".
+        let second = import_pgn(app, CurrentUser::local_admin(), args).await;
+        assert!(!second.is_error);
+        let body: Value = serde_json::from_str(&second.text).expect("json body");
+        assert_eq!(body["imported"], 0);
+        assert_eq!(body["duplicates"], 1);
+        assert!(body["game_ids"].as_array().expect("array").is_empty());
     }
 
     #[tokio::test]

@@ -101,6 +101,8 @@ async fn pgn_upload_ingests_every_game_into_the_target_database() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["imported"], 2);
+    assert_eq!(body["duplicates"], 0);
+    assert_eq!(body["game_ids"].as_array().unwrap().len(), 2);
 
     // The games are now listable from the database.
     let (status, list) = send(
@@ -110,6 +112,41 @@ async fn pgn_upload_ingests_every_game_into_the_target_database() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(list["games"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn pgn_upload_reports_duplicates_instead_of_silent_success() {
+    let app = server_app().await;
+    let alice = register(&app, "alice").await;
+    let id = create_db(&app, &alice, json!({"name": "Mine", "kind": "own"})).await;
+
+    let req = || {
+        json_req(
+            "POST",
+            "/api/import/pgn",
+            &alice,
+            json!({"database_id": id, "pgn": TWO_GAMES}),
+        )
+    };
+    let (status, first) = send(&app, req()).await;
+    assert_eq!(status, StatusCode::OK);
+    let ids = first["game_ids"].as_array().unwrap();
+    assert_eq!(ids.len(), 2);
+
+    // Re-uploading the same blob creates nothing and says why: both games are
+    // reported as duplicates, not a bare 0-imported "success".
+    let (status, second) = send(&app, req()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(second["imported"], 0);
+    assert_eq!(second["duplicates"], 2);
+    assert!(second["game_ids"].as_array().unwrap().is_empty());
+    assert!(second["errors"].as_array().unwrap().is_empty());
+
+    // The first upload's ids stay fetchable — the dedup dropped copies, not data.
+    let game_id = ids[0].as_i64().unwrap();
+    let (status, game) = send(&app, get_req(&format!("/api/games/{game_id}"), &alice)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(game["id"], game_id);
 }
 
 #[tokio::test]

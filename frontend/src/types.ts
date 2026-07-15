@@ -555,6 +555,12 @@ export type ImportSource = 'lichess' | 'chesscom'
 
 export interface ImportResult {
   imported: number
+  // PGN uploads also report the new games' ids (in PGN order) and how many
+  // games were dropped as already present; a provider sync omits ids.
+  duplicates?: number
+  game_ids?: number[]
+  skipped?: number
+  errors?: string[]
 }
 
 export type JobStatus = 'running' | 'success' | 'error'
@@ -565,6 +571,7 @@ export interface ImportJob {
   label: string
   status: JobStatus
   imported: number
+  duplicates: number
   error: string | null
 }
 
@@ -576,6 +583,7 @@ export interface ImportSummary {
   succeeded: number
   failed: number
   imported: number
+  duplicates: number
   state: ImportState
 }
 

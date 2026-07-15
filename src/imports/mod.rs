@@ -68,12 +68,16 @@ impl ImportSource {
 
 /// Outcome reported to clients. A multi-game PGN upload is skip-and-continue, so
 /// a partial success still returns this summary (HTTP 200) rather than aborting:
-/// `imported` games stored, `skipped` games dropped, with one client-safe
-/// `errors` entry per skipped game.
+/// `imported` games stored (their ids in `game_ids`, in PGN order, so a client
+/// can chain the new game into further calls), `duplicates` dropped as already
+/// present, `skipped` games dropped as bad, with one client-safe `errors` entry
+/// per skipped game. A provider sync reports counts only (`game_ids` empty).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportSummary {
     pub imported: usize,
     pub skipped: usize,
+    pub duplicates: usize,
+    pub game_ids: Vec<i32>,
     pub errors: Vec<String>,
 }
 
@@ -106,6 +110,8 @@ impl ImportService {
         Ok(ImportSummary {
             imported: report.imported.len(),
             skipped: report.errors.len(),
+            duplicates: report.duplicates,
+            game_ids: report.imported.iter().map(|g| g.game_id).collect(),
             errors: report
                 .errors
                 .iter()
@@ -159,9 +165,13 @@ impl ImportService {
 
         cursor::save(&self.db, database_id, source.as_str(), &outcome.cursor).await?;
 
+        // Sync is bulk-scale and its cursor-boundary dedup is intended (#95), so
+        // it reports the imported count only.
         Ok(ImportSummary {
             imported: outcome.imported,
             skipped: 0,
+            duplicates: 0,
+            game_ids: Vec::new(),
             errors: Vec::new(),
         })
     }
@@ -232,6 +242,26 @@ mod tests {
         let summary = svc.import_pgn(&user("alice"), id, TWO_GAMES).await.unwrap();
         assert_eq!(summary.imported, 2);
         assert_eq!(summary.skipped, 0);
+        assert_eq!(summary.duplicates, 0);
+        assert!(summary.errors.is_empty());
+
+        // The new games' ids come back (in PGN order) so a client can chain them.
+        let stored = games::Entity::find().all(&svc.db).await.unwrap();
+        assert_eq!(
+            summary.game_ids,
+            stored.iter().map(|g| g.id).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn import_pgn_reports_duplicates_on_reupload() {
+        let (svc, id) = service_with_db(Some("alice")).await;
+        svc.import_pgn(&user("alice"), id, TWO_GAMES).await.unwrap();
+
+        let summary = svc.import_pgn(&user("alice"), id, TWO_GAMES).await.unwrap();
+        assert_eq!(summary.imported, 0);
+        assert_eq!(summary.duplicates, 2);
+        assert!(summary.game_ids.is_empty());
         assert!(summary.errors.is_empty());
         assert_eq!(games::Entity::find().all(&svc.db).await.unwrap().len(), 2);
     }

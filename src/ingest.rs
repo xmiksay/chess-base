@@ -51,14 +51,16 @@ pub struct GameError {
     pub message: String,
 }
 
-/// Outcome of a multi-game ingest under skip-and-continue: the games stored and
-/// the ones skipped with a safe reason. A genuine storage failure aborts the
-/// whole run instead (returned as `Err`), so a transient DB outage is never
-/// silently reported as a pile of skipped games.
+/// Outcome of a multi-game ingest under skip-and-continue: the games stored,
+/// the ones skipped with a safe reason, and how many were dropped as already
+/// present (`duplicates`). A genuine storage failure aborts the whole run
+/// instead (returned as `Err`), so a transient DB outage is never silently
+/// reported as a pile of skipped games.
 #[derive(Debug, Default)]
 pub struct IngestReport {
     pub imported: Vec<Ingested>,
     pub errors: Vec<GameError>,
+    pub duplicates: usize,
 }
 
 impl ParsedGame {
@@ -140,10 +142,11 @@ pub(crate) fn prepare_game(parsed: ParsedGame) -> std::result::Result<PreparedGa
 /// malformed PGN or an illegal move leaves the database untouched.
 ///
 /// Returns `Ok(None)` when the game is a duplicate — a game with the same
-/// provider `source_ref` (permalink) already exists in `database_id` — so a
-/// re-sync revisiting the cursor boundary appends nothing instead of doubling
-/// every game (issue #95). Games without a permalink are always ingested. Bad
-/// game data fails with [`IngestError::BadGame`]; a storage failure with
+/// `source_ref` (provider permalink, or the content hash for permalink-less
+/// games) already exists in `database_id` — so a re-sync revisiting the cursor
+/// boundary appends nothing instead of doubling every game (issue #95), and
+/// re-uploading the same hand-written PGN doesn't duplicate it. Bad game data
+/// fails with [`IngestError::BadGame`]; a storage failure with
 /// [`IngestError::Db`].
 pub async fn ingest_pgn(
     db: &DatabaseConnection,
@@ -153,20 +156,26 @@ pub async fn ingest_pgn(
     let parsed = parse_pgn(pgn).map_err(|e| IngestError::BadGame(e.to_string()))?;
 
     // Dedup before the (more expensive) replay so re-syncing mostly-seen games
-    // stays cheap (issue #95).
-    let source_ref = source_ref(&parsed.headers);
-    if let Some(key) = &source_ref {
-        if game_exists(db, database_id, key).await? {
-            return Ok(None);
-        }
+    // stays cheap (issue #95). Permalink-less games fall back to the content
+    // hash, the same key the bulk importer stores.
+    let source_ref = source_ref(&parsed.headers).unwrap_or_else(|| parsed.content_hash());
+    if game_exists(db, database_id, &source_ref).await? {
+        return Ok(None);
     }
 
     let prepared = prepare_game(parsed).map_err(IngestError::BadGame)?;
     let index_depth = load_index_depth(db, database_id).await?;
 
     let txn = db.begin().await?;
-    let ingested =
-        store_prepared(&txn, database_id, &prepared, pgn, source_ref, index_depth).await?;
+    let ingested = store_prepared(
+        &txn,
+        database_id,
+        &prepared,
+        pgn,
+        Some(source_ref),
+        index_depth,
+    )
+    .await?;
     txn.commit().await?;
 
     Ok(Some(ingested))
@@ -271,7 +280,7 @@ pub(crate) async fn store_prepared<C: ConnectionTrait>(
 /// The stable provider key for a game — the permalink — used to dedup re-syncs
 /// (issue #95). Chess.com carries it in `[Link]`; Lichess puts the game URL in
 /// `[Site]`. A non-URL `Site` (e.g. `"London"`) is not a game key, so it yields
-/// `None` and the game is never deduped.
+/// `None` and [`ingest_pgn`] falls back to the content hash.
 fn source_ref(headers: &Headers) -> Option<String> {
     if let Some(link) = &headers.link {
         return Some(link.clone());
@@ -305,8 +314,8 @@ pub(crate) async fn game_exists(
 /// illegal game is recorded in [`IngestReport::errors`] and the rest still
 /// import; only a genuine storage failure aborts the whole run (returned as
 /// `Err`), so a 500-game upload with one bad game no longer rolls the client into
-/// a re-upload. Games skipped as duplicates (see [`ingest_pgn`]) are silently
-/// omitted from both lists.
+/// a re-upload. Games skipped as duplicates (see [`ingest_pgn`]) are counted in
+/// [`IngestReport::duplicates`].
 pub async fn ingest_pgn_all(
     db: &DatabaseConnection,
     database_id: i32,
@@ -327,8 +336,8 @@ pub async fn ingest_pgn_all(
 }
 
 /// Ingest one game into `report`: a newly stored game is recorded as imported, a
-/// duplicate is silently dropped, a bad game is skipped with a safe message, and
-/// only a real storage failure aborts (`Err`).
+/// duplicate bumps the `duplicates` count, a bad game is skipped with a safe
+/// message, and only a real storage failure aborts (`Err`).
 async fn ingest_into_report(
     db: &DatabaseConnection,
     database_id: i32,
@@ -338,8 +347,9 @@ async fn ingest_into_report(
 ) -> std::result::Result<(), DbErr> {
     match ingest_pgn(db, database_id, pgn).await {
         Ok(Some(ingested)) => report.imported.push(ingested),
-        // A deduped game is neither imported nor an error.
-        Ok(None) => {}
+        // A deduped game is neither imported nor an error, but the client still
+        // learns it was dropped (a silent 0/0 result reads as a failed create).
+        Ok(None) => report.duplicates += 1,
         Err(IngestError::BadGame(message)) => report.errors.push(GameError { index, message }),
         Err(IngestError::Db(e)) => return Err(e),
     }

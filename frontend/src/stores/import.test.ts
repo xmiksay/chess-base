@@ -23,8 +23,8 @@ describe('foldStatus', () => {
 
   it('is running while any job is in flight', () => {
     const s = foldStatus([
-      { id: 1, kind: 'sync', label: 'a', status: 'running', imported: 0, error: null },
-      { id: 2, kind: 'sync', label: 'b', status: 'success', imported: 5, error: null },
+      { id: 1, kind: 'sync', label: 'a', status: 'running', imported: 0, duplicates: 0, error: null },
+      { id: 2, kind: 'sync', label: 'b', status: 'success', imported: 5, duplicates: 0, error: null },
     ])
     expect(s.state).toBe('running')
     expect(s.running).toBe(1)
@@ -32,23 +32,23 @@ describe('foldStatus', () => {
 
   it('is done when every finished job succeeded and sums the import counts', () => {
     const s = foldStatus([
-      { id: 1, kind: 'sync', label: 'a', status: 'success', imported: 5, error: null },
-      { id: 2, kind: 'sync', label: 'b', status: 'success', imported: 3, error: null },
+      { id: 1, kind: 'sync', label: 'a', status: 'success', imported: 5, duplicates: 0, error: null },
+      { id: 2, kind: 'sync', label: 'b', status: 'success', imported: 3, duplicates: 2, error: null },
     ])
-    expect(s).toMatchObject({ state: 'done', succeeded: 2, failed: 0, imported: 8 })
+    expect(s).toMatchObject({ state: 'done', succeeded: 2, failed: 0, imported: 8, duplicates: 2 })
   })
 
   it('is error when all jobs failed', () => {
     const s = foldStatus([
-      { id: 1, kind: 'sync', label: 'a', status: 'error', imported: 0, error: null },
+      { id: 1, kind: 'sync', label: 'a', status: 'error', imported: 0, duplicates: 0, error: null },
     ])
     expect(s).toMatchObject({ state: 'error', failed: 1 })
   })
 
   it('is partial when some succeeded and some failed', () => {
     const s = foldStatus([
-      { id: 1, kind: 'sync', label: 'a', status: 'success', imported: 2, error: null },
-      { id: 2, kind: 'sync', label: 'b', status: 'error', imported: 0, error: null },
+      { id: 1, kind: 'sync', label: 'a', status: 'success', imported: 2, duplicates: 0, error: null },
+      { id: 2, kind: 'sync', label: 'b', status: 'error', imported: 0, duplicates: 0, error: null },
     ])
     expect(s).toMatchObject({ state: 'partial', succeeded: 1, failed: 1, imported: 2 })
   })
@@ -106,6 +106,21 @@ describe('import store', () => {
 
     expect(api.import.uploadPgn).toHaveBeenCalledWith(2, '[Event "x"]\n\n1. e4 *')
     expect(store.jobs[0]).toMatchObject({ kind: 'pgn', label: 'games.pgn', status: 'success', imported: 3 })
+  })
+
+  it('records duplicate drops reported by a PGN upload', async () => {
+    vi.mocked(api.import.uploadPgn).mockResolvedValue({
+      imported: 0,
+      duplicates: 2,
+      game_ids: [],
+    })
+    const store = useImportStore()
+
+    await store.uploadPgn({ databaseId: 2, name: 'again.pgn', pgn: '[Event "x"]\n\n1. e4 *' })
+    await flushPromises()
+
+    expect(store.jobs[0]).toMatchObject({ status: 'success', imported: 0, duplicates: 2 })
+    expect(store.summary).toMatchObject({ state: 'done', imported: 0, duplicates: 2 })
   })
 
   it('keeps the newest job first', async () => {
