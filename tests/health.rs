@@ -17,6 +17,7 @@ async fn health_endpoint_reports_ok_and_mode() {
         engine_service: None,
         llm_provider: None,
         provider_store: None,
+        agent: Default::default(),
     });
 
     let resp = app

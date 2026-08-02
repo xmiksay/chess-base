@@ -208,6 +208,7 @@ mod tests {
             engine_service: None,
             llm_provider: None,
             provider_store: None,
+            agent: Default::default(),
         }
     }
 }

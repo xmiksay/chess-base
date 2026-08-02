@@ -43,6 +43,7 @@ async fn crud_persists_and_default_resolves() {
         engine_service: None,
         llm_provider: None,
         provider_store: None,
+        agent: Default::default(),
     });
 
     // Empty to start.
@@ -100,6 +101,7 @@ async fn crud_persists_and_default_resolves() {
         engine_service: None,
         llm_provider: None,
         provider_store: None,
+        agent: Default::default(),
     });
     let (_, def) = send(&app2, get("/api/engines/default")).await;
     assert_eq!(def["default"], "SF-Windows");
@@ -150,6 +152,7 @@ async fn writes_require_admin_in_server_mode() {
         engine_service: None,
         llm_provider: None,
         provider_store: None,
+        agent: Default::default(),
     });
 
     let (status, _) = send(

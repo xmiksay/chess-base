@@ -1,6 +1,4 @@
-//! Embedded entanglement agent engine (#198). Steps 2–3: constants, the
-//! per-user provider store, permission policy and the MCP tool bridge; the
-//! engine itself lands in later steps.
+//! Embedded entanglement agent engine (#198).
 //!
 //! Holds the pieces that survived the hand-rolled assistant (moved verbatim
 //! from the deleted `ai::assistant`): the system prompt steering the study
@@ -8,14 +6,25 @@
 //! [`provider_store`] implements entanglement's `UserProviderStore` seam over
 //! the `llm_providers` table; [`policy`] its `PermissionResolver`/`GrantStore`
 //! seams over `agent_grants` (m0008); [`tools`] bridges the MCP registry 1:1
-//! into the engine's tool vocabulary.
+//! into the engine's tool vocabulary. Step 4 adds the running stack:
+//! [`persistence`] (the `agent_events` `RecordSink` + log reads), [`sessions`]
+//! (conversation CRUD/lifecycle over `agent_sessions`) and [`engine`] (the
+//! process-wide `Holly` bootstrap on [`AppState`]).
+//!
+//! [`AppState`]: crate::server::state::AppState
 
+pub mod engine;
+pub mod persistence;
 pub mod policy;
 pub mod provider_store;
+pub mod sessions;
 pub mod tools;
 
+pub use engine::AgentEngine;
+pub use persistence::{load_records, DbRecordSink};
 pub use policy::{base_profile, AgentPolicy};
-pub use provider_store::{AgentProviderStore, HOUSE_USER};
+pub use provider_store::{AgentProviderStore, DEFAULT_PIN, HOUSE_USER};
+pub use sessions::{AgentSessionSummary, OpenResult, SessionError, SessionService};
 pub use tools::{bridge_registry, BridgedTool};
 
 /// The tools whose effects mutate the caller's data and therefore require an

@@ -271,6 +271,7 @@ async fn missing_bearer_is_unauthorized_with_resource_metadata() {
         engine_service: None,
         llm_provider: None,
         provider_store: None,
+        agent: Default::default(),
     });
 
     let resp = app
@@ -311,6 +312,7 @@ async fn invalid_bearer_is_unauthorized() {
         engine_service: None,
         llm_provider: None,
         provider_store: None,
+        agent: Default::default(),
     });
 
     let resp = app
@@ -386,6 +388,7 @@ async fn tools_call_rejects_mutating_a_non_owned_study() {
         engine_service: None,
         llm_provider: None,
         provider_store: None,
+        agent: Default::default(),
     });
 
     let resp = app

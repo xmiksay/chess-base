@@ -28,6 +28,15 @@ use crate::db::entities::llm_providers;
 /// not a valid account id, so it can never collide with a real user.
 pub const HOUSE_USER: &str = "~house";
 
+/// Sentinel `(provider, model)` pin carried by the engine's `build` profile.
+/// The session-start model pin is the only per-user binding that lands
+/// *before* a `Spawn`'s queued prompt starts the first turn (a `SetModel` sent
+/// after `Spawn` queues behind it), so the profile pins this sentinel and
+/// [`AgentProviderStore::build_resolver`] maps it to the calling user's
+/// default provider row at resolution time. `~` keeps it out of the space of
+/// real provider names, like [`HOUSE_USER`].
+pub const DEFAULT_PIN: &str = "~default";
+
 /// Requests-per-minute budget applied to every per-user provider entry, so one
 /// user cannot starve the shared endpoint pool.
 const PER_USER_RPM: u32 = 60;
@@ -38,9 +47,21 @@ pub struct AgentProviderStore {
     db: DatabaseConnection,
     /// `ANTHROPIC_API_KEY` captured once at construction; injectable for tests.
     env_key: Option<String>,
+    cache: RwLock<Caches>,
+}
+
+/// The pre-warmed per-owner caches, rebuilt together by
+/// [`AgentProviderStore::rebuild`].
+#[derive(Default)]
+struct Caches {
     /// Owner id (or [`HOUSE_USER`]) → that owner's provider context. Every
     /// present user key maps to `Some`; only the house entry can be `None`.
-    cache: RwLock<HashMap<String, Option<UserProviderContext>>>,
+    contexts: HashMap<String, Option<UserProviderContext>>,
+    /// Owner id (or [`HOUSE_USER`]) → the `(provider, model)` a fresh session
+    /// starts on: the owner's own default row, else the global default, else
+    /// the owner's first row, else the first global row; the house entry falls
+    /// back to the env-key anthropic default. Absent ⇒ nothing resolvable.
+    defaults: HashMap<String, (String, String)>,
 }
 
 impl AgentProviderStore {
@@ -62,7 +83,7 @@ impl AgentProviderStore {
         let store = Arc::new(Self {
             db,
             env_key,
-            cache: RwLock::new(HashMap::new()),
+            cache: RwLock::new(Caches::default()),
         });
         store.rebuild().await?;
         Ok(store)
@@ -76,19 +97,57 @@ impl AgentProviderStore {
     }
 
     /// Wrap entanglement's user resolver so a session without a [`UserId`]
-    /// resolves against the house context instead of hard-erroring.
+    /// resolves against the house context instead of hard-erroring, and so the
+    /// [`DEFAULT_PIN`] sentinel resolves to the calling user's default
+    /// provider/model (the seam the `build` profile's session-start pin uses).
     pub fn build_resolver(self: &Arc<Self>, http: HttpClient) -> ModelResolver {
         let store: Arc<dyn UserProviderStore> = Arc::clone(self) as _;
         let inner = build_user_model_resolver(store, http, None);
+        let this = Arc::clone(self);
         let house = UserId::new(HOUSE_USER);
-        Arc::new(move |user, provider, model| inner(Some(user.unwrap_or(&house)), provider, model))
+        Arc::new(move |user, provider, model| {
+            let user = user.unwrap_or(&house);
+            if provider == DEFAULT_PIN {
+                let (provider, model) = this
+                    .default_for(user)
+                    .ok_or_else(|| "no LLM provider configured".to_string())?;
+                inner(Some(user), &provider, &model)
+            } else {
+                inner(Some(user), provider, model)
+            }
+        })
+    }
+
+    /// The `(provider, model)` a fresh session for `user` starts on — a pure
+    /// cache read (see [`Caches::defaults`]). `None` ⇒ nothing is configured
+    /// anywhere, so a session cannot resolve a backend.
+    pub fn default_for(&self, user: &UserId) -> Option<(String, String)> {
+        let cache = self.cache.read().unwrap_or_else(PoisonError::into_inner);
+        cache
+            .defaults
+            .get(user.0.as_str())
+            .or_else(|| cache.defaults.get(HOUSE_USER))
+            .cloned()
+    }
+
+    /// Whether *any* provider surface exists (a user row, a global row, or the
+    /// env-key house fallback) — the truthful `/api/health` `llm` signal.
+    pub fn has_any_context(&self) -> bool {
+        self.cache
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contexts
+            .values()
+            .any(Option::is_some)
     }
 
     async fn rebuild(&self) -> anyhow::Result<()> {
-        let rows = llm_providers::Entity::find()
+        let mut rows = llm_providers::Entity::find()
             .all(&self.db)
             .await
             .context("loading llm_providers for the agent provider store")?;
+        // `all` carries no ORDER BY; sort so "first row" defaulting is stable.
+        rows.sort_by_key(|r| r.id);
         let builtin = Catalog::builtin();
 
         let mut globals = Vec::new();
@@ -100,16 +159,22 @@ impl AgentProviderStore {
             }
         }
 
-        let mut map = HashMap::new();
-        map.insert(
-            HOUSE_USER.to_string(),
-            house_context(&globals, self.env_key.as_deref(), &builtin),
-        );
+        let mut caches = Caches::default();
+        let house_ctx = house_context(&globals, self.env_key.as_deref(), &builtin);
+        if let Some(pair) = house_default(&globals, house_ctx.as_ref()) {
+            caches.defaults.insert(HOUSE_USER.to_string(), pair);
+        }
+        caches.contexts.insert(HOUSE_USER.to_string(), house_ctx);
         for (owner, own) in by_owner {
-            map.insert(owner, Some(compose_context(&own, &globals, &builtin)));
+            if let Some(pair) = owner_default(&own, &globals) {
+                caches.defaults.insert(owner.clone(), pair);
+            }
+            caches
+                .contexts
+                .insert(owner, Some(compose_context(&own, &globals, &builtin)));
         }
 
-        *self.cache.write().unwrap_or_else(PoisonError::into_inner) = map;
+        *self.cache.write().unwrap_or_else(PoisonError::into_inner) = caches;
         Ok(())
     }
 }
@@ -117,13 +182,48 @@ impl AgentProviderStore {
 impl UserProviderStore for AgentProviderStore {
     fn context(&self, user: &UserId) -> Option<UserProviderContext> {
         let cache = self.cache.read().unwrap_or_else(PoisonError::into_inner);
-        match cache.get(user.0.as_str()) {
+        match cache.contexts.get(user.0.as_str()) {
             Some(ctx) => ctx.clone(),
             // A user with no rows of their own still works via the global
             // (house) configuration.
-            None => cache.get(HOUSE_USER).cloned().flatten(),
+            None => cache.contexts.get(HOUSE_USER).cloned().flatten(),
         }
     }
+}
+
+/// One owner's starting `(provider, model)` — mirrors
+/// [`crate::ai::providers::ProviderService::resolve_default_for`]'s default-flag
+/// precedence, extended with first-row fallbacks so a configured-but-unflagged
+/// catalog still yields a usable pin: own default → global default → own first
+/// → global first.
+fn owner_default(
+    own: &[llm_providers::Model],
+    globals: &[llm_providers::Model],
+) -> Option<(String, String)> {
+    own.iter()
+        .find(|r| r.is_default)
+        .or_else(|| globals.iter().find(|r| r.is_default))
+        .or_else(|| own.first())
+        .or_else(|| globals.first())
+        .map(|r| (r.name.clone(), r.model.clone()))
+}
+
+/// The house's starting `(provider, model)`: the global default row, else the
+/// first global row, else whatever single entry the env-key fallback context
+/// synthesized (the builtin anthropic catalog entry).
+fn house_default(
+    globals: &[llm_providers::Model],
+    ctx: Option<&UserProviderContext>,
+) -> Option<(String, String)> {
+    globals
+        .iter()
+        .find(|r| r.is_default)
+        .or_else(|| globals.first())
+        .map(|r| (r.name.clone(), r.model.clone()))
+        .or_else(|| {
+            ctx.and_then(|c| c.catalog.providers.first())
+                .map(|p| (p.name.clone(), p.default_model.clone()))
+        })
 }
 
 /// The `key_env` label for a row — purely a lookup key inside

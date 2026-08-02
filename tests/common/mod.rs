@@ -36,6 +36,7 @@ pub async fn rpc_with_engine(
         engine_service,
         llm_provider: None,
         provider_store: None,
+        agent: Default::default(),
     });
 
     let resp = app
@@ -69,6 +70,7 @@ pub async fn rpc_raw(body: &'static str) -> (StatusCode, Value) {
         engine_service: None,
         llm_provider: None,
         provider_store: None,
+        agent: Default::default(),
     });
 
     let resp = app
@@ -118,6 +120,7 @@ pub async fn rpc_seeded(pgns: &[&str], body: Value) -> (StatusCode, Value) {
         engine_service: None,
         llm_provider: None,
         provider_store: None,
+        agent: Default::default(),
     });
 
     let resp = app
@@ -222,6 +225,7 @@ pub async fn seeded_session_with_engine(
         engine_service,
         llm_provider: None,
         provider_store: None,
+        agent: Default::default(),
     });
     Session { app, token }
 }

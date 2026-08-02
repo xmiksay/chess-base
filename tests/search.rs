@@ -30,6 +30,7 @@ async fn app_with_db() -> (Router, DatabaseConnection) {
         engine_service: None,
         llm_provider: None,
         provider_store: None,
+        agent: Default::default(),
     });
     (app, db)
 }

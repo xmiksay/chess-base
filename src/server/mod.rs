@@ -76,11 +76,10 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
 
     // One pool backs both facades: the direct batch API and the MCP tool.
     let engine_service = default_engine.map(|c| Arc::new(EngineService::new(c, ENGINE_POOL_SIZE)));
-    // LLM provider wiring is down while the entanglement agent engine lands
-    // (#198): provider resolution returns in a later step. Until then the LLM
-    // paths stay disabled and `/api/health` reports `llm: false`.
     // The per-user provider store pre-warms from `llm_providers` (post-migration)
-    // and is invalidated by provider CRUD; step 4 hands it to the agent engine.
+    // and is invalidated by provider CRUD; the agent engine resolves through it.
+    // (`llm_provider` — the old study-generation seam — is re-wired in a later
+    // #198 step; those paths stay disabled meanwhile.)
     let provider_store = Some(
         crate::ai::agent::AgentProviderStore::new(db.clone())
             .await
@@ -92,7 +91,20 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
         engine_service,
         llm_provider: None,
         provider_store,
+        agent: Arc::new(std::sync::OnceLock::new()),
     };
+    // The embedded agent engine (#198, step 4). A startup failure disables the
+    // assistant (`/api/health` reports `llm: false`) but never takes the server
+    // down — chess-base must run with no LLM configured at all.
+    match crate::ai::agent::AgentEngine::start(state.clone()).await {
+        Ok(engine) => {
+            let _ = state.agent.set(engine);
+        }
+        Err(e) => tracing::error!(
+            error = %format!("{e:#}"),
+            "agent engine failed to start; assistant disabled"
+        ),
+    }
     let app = build_router(state);
 
     let addr = SocketAddr::new(cfg.host, cfg.port);

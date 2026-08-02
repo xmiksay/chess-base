@@ -35,6 +35,7 @@ async fn send(
         engine_service: None,
         llm_provider: None,
         provider_store: None,
+        agent: Default::default(),
     });
     let builder = Request::builder().method(method).uri(uri);
     let request = match body {

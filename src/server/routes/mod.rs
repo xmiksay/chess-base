@@ -70,7 +70,9 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
         // Capability flags so the SPA can enable engine review (Mode A) and gate
         // the LLM study generator (Mode B) without probing the endpoints.
         "engine": state.engine_service.is_some(),
-        "llm": state.llm_provider.is_some(),
+        // The agent engine is up *and* at least one provider surface exists
+        // (a user/global `llm_providers` row or the env-key house fallback).
+        "llm": state.agent().is_some_and(|a| a.providers.has_any_context()),
     }))
 }
 

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::http::request::Parts;
 use sea_orm::DatabaseConnection;
 
-use crate::ai::agent::AgentProviderStore;
+use crate::ai::agent::{AgentEngine, AgentProviderStore};
 use crate::ai::llm::LlmProvider;
 use crate::engine::{EngineRegistry, EngineService};
 use crate::server::config::Mode;
@@ -27,6 +27,11 @@ pub struct AppState {
     /// Built at startup (it only needs the DB); provider CRUD invalidates it.
     /// `None` in tests that don't exercise the agent.
     pub provider_store: Option<Arc<AgentProviderStore>>,
+    /// The embedded agent engine (#198, step 4). A `OnceLock` because the
+    /// engine needs a fully-built `AppState` (its tool bridge closes over it),
+    /// so `serve` sets it right after construction; empty ⇒ the engine failed
+    /// to start (or a test fixture) and the assistant is disabled.
+    pub agent: Arc<std::sync::OnceLock<Arc<AgentEngine>>>,
 }
 
 impl AppState {
@@ -35,6 +40,11 @@ impl AppState {
     /// so engine selection is never duplicated on `AppState`.
     pub fn engines(&self) -> EngineRegistry {
         EngineRegistry::new(self.db.clone())
+    }
+
+    /// The running agent engine, if it started.
+    pub fn agent(&self) -> Option<&Arc<AgentEngine>> {
+        self.agent.get()
     }
 }
 

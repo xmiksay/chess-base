@@ -246,6 +246,123 @@ async fn unknown_wire_needs_a_base_url() {
     assert_eq!(alice.catalog.providers[0].wire, Wire::Openai);
 }
 
+async fn seed_default(db: &DatabaseConnection, owner: Option<&str>, name: &str, model: &str) {
+    llm_providers::ActiveModel {
+        name: Set(name.to_string()),
+        model: Set(model.to_string()),
+        api_key: Set("k".to_string()),
+        is_default: Set(true),
+        owner_id: Set(owner.map(str::to_string)),
+        wire: Set("anthropic".to_string()),
+        base_url: Set(None),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("seed default provider row");
+}
+
+#[tokio::test]
+async fn default_for_prefers_own_default_then_global_then_first_rows() {
+    let db = mem_db().await;
+    seed(
+        &db,
+        Some("alice"),
+        "zai",
+        "openai",
+        "glm-5",
+        "k",
+        Some("https://z/v1"),
+    )
+    .await;
+    seed_default(&db, Some("alice"), "anthropic", "m-own-default").await;
+    seed_default(&db, None, "openai", "m-global-default").await;
+    seed(
+        &db,
+        Some("bob"),
+        "mistral",
+        "openai",
+        "m-bob",
+        "k",
+        Some("https://m/v1"),
+    )
+    .await;
+    let store = AgentProviderStore::new_with_env(db, None)
+        .await
+        .expect("build store");
+
+    // Own default row wins.
+    assert_eq!(
+        store.default_for(&UserId::new("alice")),
+        Some(("anthropic".to_string(), "m-own-default".to_string()))
+    );
+    // No own default: the global default beats bob's own (non-default) row.
+    assert_eq!(
+        store.default_for(&UserId::new("bob")),
+        Some(("openai".to_string(), "m-global-default".to_string()))
+    );
+    // A rowless user falls to the house default (the global default row).
+    assert_eq!(
+        store.default_for(&UserId::new("carol")),
+        Some(("openai".to_string(), "m-global-default".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn default_for_env_house_and_has_any_context() {
+    // Env-only install: the house default is the builtin anthropic entry.
+    let db = mem_db().await;
+    let store = AgentProviderStore::new_with_env(db, Some("sk-env".to_string()))
+        .await
+        .expect("build store");
+    let (provider, model) = store
+        .default_for(&UserId::new("anyone"))
+        .expect("env house default");
+    assert_eq!(provider, "anthropic");
+    assert_eq!(
+        model,
+        Catalog::builtin()
+            .provider("anthropic")
+            .expect("builtin anthropic")
+            .default_model
+    );
+    assert!(store.has_any_context());
+
+    // Nothing anywhere: no default, no context — health reports llm: false.
+    let db = mem_db().await;
+    let store = AgentProviderStore::new_with_env(db, None)
+        .await
+        .expect("build store");
+    assert_eq!(store.default_for(&UserId::new("anyone")), None);
+    assert!(!store.has_any_context());
+}
+
+#[tokio::test]
+async fn resolver_maps_the_default_pin_sentinel_to_the_users_default() {
+    let db = mem_db().await;
+    seed_default(&db, None, "anthropic", "claude-x").await;
+    let store = AgentProviderStore::new_with_env(db, None)
+        .await
+        .expect("build store");
+    let resolver = store.build_resolver(HttpClient::new().expect("http client"));
+
+    let resolved = resolver(None, DEFAULT_PIN, DEFAULT_PIN).expect("sentinel resolution");
+    assert_eq!(resolved.provider, "anthropic");
+    assert_eq!(resolved.model, "claude-x");
+
+    // No configuration at all: the sentinel fails loudly with the typed text.
+    let db = mem_db().await;
+    let empty = AgentProviderStore::new_with_env(db, None)
+        .await
+        .expect("build store");
+    let resolver = empty.build_resolver(HttpClient::new().expect("http client"));
+    let err = match resolver(None, DEFAULT_PIN, DEFAULT_PIN) {
+        Err(err) => err,
+        Ok(_) => panic!("an empty store must not resolve the sentinel"),
+    };
+    assert!(err.contains("no LLM provider configured"));
+}
+
 #[tokio::test]
 async fn resolver_falls_back_to_the_house_user() {
     let db = mem_db().await;
