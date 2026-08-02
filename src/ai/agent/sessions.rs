@@ -109,6 +109,19 @@ impl SessionService {
         }
     }
 
+    /// The connection this service reads/writes — shared with callers that
+    /// re-read the transcript themselves (the WS relay's history replay).
+    pub(crate) fn db(&self) -> &DatabaseConnection {
+        &self.db
+    }
+
+    /// Whether `user` owns the `root` index row. Fails closed: a missing row,
+    /// someone else's row, or a DB error all read as "not owned" — the WS
+    /// relay's inbound gate for sessions the live registry doesn't know.
+    pub async fn owns(&self, user: &CurrentUser, root: &str) -> bool {
+        self.owned_row(user, root).await.is_ok()
+    }
+
     /// The caller's conversations, most recently active first.
     pub async fn list(&self, user: &CurrentUser) -> Result<Vec<AgentSessionSummary>, SessionError> {
         let rows = agent_sessions::Entity::find()
@@ -316,8 +329,9 @@ impl SessionService {
 
 /// Truncate `records` to the prefix strictly before the first `Gap`
 /// tombstone. Returns whether anything was cut — replaying *through* a gap
-/// would fold an incomplete history into a wrong context.
-fn truncate_at_gap(records: &mut Vec<LogRecord>) -> bool {
+/// would fold an incomplete history into a wrong context. Shared with the WS
+/// relay, whose history replay re-reads the log for the `In` prompts.
+pub(crate) fn truncate_at_gap(records: &mut Vec<LogRecord>) -> bool {
     match records
         .iter()
         .position(|r| matches!(r.payload, LogPayload::Gap { .. }))

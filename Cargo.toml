@@ -82,6 +82,11 @@ dirs = { version = "6", optional = true }
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# The assistant WS relay tests drive a real listener end-to-end (a WebSocket
+# upgrade cannot ride tower::oneshot). Same tokio-tungstenite line the
+# entanglement workspace pins.
+tokio-tungstenite = "0.29"
+futures-util = "0.3"
 
 [build-dependencies]
 # build.rs ensures frontend/dist exists so rust-embed always compiles, and (when

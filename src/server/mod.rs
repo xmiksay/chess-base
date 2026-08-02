@@ -1,5 +1,6 @@
 //! HTTP server: wiring the router, state, embedded SPA and lifecycle.
 
+pub mod assistant_ws;
 pub mod auth;
 pub mod browser;
 pub mod config;
