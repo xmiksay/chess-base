@@ -79,6 +79,7 @@ export const useImportStore = defineStore('import', () => {
       status: 'running',
       imported: 0,
       duplicates: 0,
+      syncedAt: null,
       error: null,
     })
     jobs.value.unshift(job)
@@ -87,6 +88,7 @@ export const useImportStore = defineStore('import', () => {
       job.status = 'success'
       job.imported = res?.imported ?? 0
       job.duplicates = res?.duplicates ?? 0
+      job.syncedAt = res?.synced_at ?? null
     } catch (e) {
       job.status = 'error'
       job.error = String((e as Error)?.message ?? e)
@@ -94,20 +96,23 @@ export const useImportStore = defineStore('import', () => {
     return job
   }
 
-  /** Trigger a provider sync into `databaseId`. */
+  /** Trigger a provider sync into `databaseId`. `full` re-syncs the whole
+   * history, ignoring the persisted cursor (issue #197). */
   function syncSource({
     databaseId,
     source,
     username,
     token,
+    full = false,
   }: {
     databaseId: number
     source: ImportSource
     username: string
     token?: string
+    full?: boolean
   }) {
     return _track('sync', `${source} · ${username}`, () =>
-      api.import.sync(databaseId, source, username, token),
+      api.import.sync(databaseId, source, username, token, full),
     )
   }
 

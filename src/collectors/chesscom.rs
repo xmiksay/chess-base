@@ -13,7 +13,7 @@ use anyhow::{anyhow, Context, Result};
 use sea_orm::DatabaseConnection;
 use std::time::Duration;
 
-use super::{backoff_delay, retry_after_secs, GameSource, SyncCursor, SyncOutcome};
+use super::{backoff_delay, retry_after_secs, GameSource, SyncCursor, SyncFailure, SyncOutcome};
 use crate::ingest::ingest_pgn_all;
 
 const API_BASE: &str = "https://api.chess.com/pub";
@@ -30,25 +30,36 @@ const USER_AGENT: &str = concat!("chess-base/", env!("CARGO_PKG_VERSION"));
 
 pub struct ChessCom {
     pub username: String,
+    /// The Published-Data API root. Always `API_BASE` outside tests; overridden
+    /// by [`with_base_url`](Self::with_base_url) to point at a local mock server
+    /// so mid-run-failure behaviour can be exercised deterministically.
+    base_url: String,
 }
 
 impl ChessCom {
     pub fn new(username: impl Into<String>) -> Self {
         Self {
             username: username.into(),
+            base_url: API_BASE.to_string(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into();
+        self
     }
 
     /// Endpoint returning the list of available monthly archive URLs.
     pub fn archives_url(&self) -> String {
-        format!("{API_BASE}/player/{}/games/archives", self.username)
+        format!("{}/player/{}/games/archives", self.base_url, self.username)
     }
 
     /// Multi-game PGN endpoint for one month.
     pub fn month_pgn_url(&self, year: u16, month: u8) -> String {
         format!(
-            "{API_BASE}/player/{}/games/{year:04}/{month:02}/pgn",
-            self.username
+            "{}/player/{}/games/{year:04}/{month:02}/pgn",
+            self.base_url, self.username
         )
     }
 
@@ -58,17 +69,24 @@ impl ChessCom {
     /// ingests its games, returning the cursor advanced to the latest month
     /// synced. The cursor month is re-synced so games added to it after the last
     /// sync are caught; games already stored are deduped by ingest (issue #95),
-    /// so a re-sync never doubles them.
+    /// so a re-sync never doubles them. A mid-run failure (one bad month fetch)
+    /// returns [`SyncFailure`] with the cursor left at the last *fully* synced
+    /// month, so the next run resumes from there instead of restarting (#197).
     pub async fn sync(
         &self,
         db: &DatabaseConnection,
         database_id: i32,
         cursor: SyncCursor,
-    ) -> Result<SyncOutcome> {
+    ) -> Result<SyncOutcome, SyncFailure> {
         let client = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .build()
-            .context("building http client")?;
+            .map_err(|e| SyncFailure {
+                cursor: cursor.clone(),
+                imported: 0,
+                duplicates: 0,
+                error: anyhow::Error::from(e).context("building http client"),
+            })?;
         self.sync_with(&client, db, database_id, cursor).await
     }
 
@@ -80,20 +98,62 @@ impl ChessCom {
         db: &DatabaseConnection,
         database_id: i32,
         mut cursor: SyncCursor,
-    ) -> Result<SyncOutcome> {
-        let archives_body = self.fetch_text(client, &self.archives_url()).await?;
-        let archives = parse_archives(&archives_body)?;
+    ) -> Result<SyncOutcome, SyncFailure> {
+        let archives_body = match self.fetch_text(client, &self.archives_url()).await {
+            Ok(b) => b,
+            Err(e) => {
+                return Err(SyncFailure {
+                    cursor,
+                    imported: 0,
+                    duplicates: 0,
+                    error: e,
+                })
+            }
+        };
+        let archives = match parse_archives(&archives_body) {
+            Ok(a) => a,
+            Err(e) => {
+                return Err(SyncFailure {
+                    cursor,
+                    imported: 0,
+                    duplicates: 0,
+                    error: e,
+                })
+            }
+        };
         let months = months_to_sync(&archives, cursor.last_month.as_deref());
 
         let mut imported = 0usize;
+        let mut duplicates = 0usize;
         for (month, pgn_url) in months {
-            let pgn = self.fetch_text(client, &pgn_url).await?;
+            let pgn = match self.fetch_text(client, &pgn_url).await {
+                Ok(p) => p,
+                Err(e) => {
+                    return Err(SyncFailure {
+                        cursor,
+                        imported,
+                        duplicates,
+                        error: e,
+                    })
+                }
+            };
             // A month archive always has games, but guard against an empty body
             // so a blank month never trips the empty-PGN rejection.
             if !pgn.trim().is_empty() {
-                let report = ingest_pgn_all(db, database_id, &pgn)
+                let report = match ingest_pgn_all(db, database_id, &pgn)
                     .await
-                    .with_context(|| format!("ingesting chess.com month {month}"))?;
+                    .with_context(|| format!("ingesting chess.com month {month}"))
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        return Err(SyncFailure {
+                            cursor,
+                            imported,
+                            duplicates,
+                            error: e,
+                        })
+                    }
+                };
                 if !report.errors.is_empty() {
                     tracing::warn!(
                         month = %month,
@@ -102,11 +162,16 @@ impl ChessCom {
                     );
                 }
                 imported += report.imported.len();
+                duplicates += report.duplicates;
             }
             cursor.last_month = Some(month);
         }
 
-        Ok(SyncOutcome { cursor, imported })
+        Ok(SyncOutcome {
+            cursor,
+            imported,
+            duplicates,
+        })
     }
 
     /// Issue a GET, honouring HTTP 429 with a back-off and a bounded number of
@@ -270,5 +335,142 @@ mod tests {
             backoff_delay(Some(30), MIN_BACKOFF),
             Duration::from_secs(30)
         );
+    }
+
+    // --- mid-run failure / resume, against a local mock server (issue #197) ---
+
+    use crate::db::entities::{databases, games};
+    use crate::db::{connect, DbConfig};
+    use axum::extract::{Path, State};
+    use axum::http::StatusCode;
+    use axum::response::{IntoResponse, Response};
+    use axum::routing::get;
+    use axum::Router;
+    use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    async fn own_database() -> (DatabaseConnection, i32) {
+        let conn = connect(&DbConfig::in_memory()).await.unwrap();
+        let db = databases::ActiveModel {
+            owner_id: Set(Some("alice".to_string())),
+            name: Set("Alice's chess.com".to_string()),
+            kind: Set("chesscom".to_string()),
+            ..Default::default()
+        }
+        .insert(&conn)
+        .await
+        .unwrap();
+        (conn, db.id)
+    }
+
+    fn game_pgn(white: &str) -> String {
+        format!(
+            "[Event \"Casual\"]\n[White \"{white}\"]\n[Black \"Opponent\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0\n"
+        )
+    }
+
+    #[derive(Clone)]
+    struct MockChessCom {
+        archives_json: Arc<String>,
+        // "YYYY/MM" -> Ok(pgn body) or Err(http status).
+        months: Arc<HashMap<String, Result<String, u16>>>,
+    }
+
+    async fn archives_handler(State(state): State<MockChessCom>) -> Response {
+        (*state.archives_json).clone().into_response()
+    }
+
+    async fn month_handler(
+        State(state): State<MockChessCom>,
+        Path((year, month)): Path<(String, String)>,
+    ) -> Response {
+        match state.months.get(&format!("{year}/{month}")) {
+            Some(Ok(pgn)) => pgn.clone().into_response(),
+            Some(Err(status)) => (
+                StatusCode::from_u16(*status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                "mock failure",
+            )
+                .into_response(),
+            None => StatusCode::NOT_FOUND.into_response(),
+        }
+    }
+
+    /// Spawn a local mock Published-Data server exposing `archive_months`
+    /// (ascending) and the fixed `months` responses, returning its base URL
+    /// (to feed [`ChessCom::with_base_url`]).
+    async fn start_mock(
+        archive_months: &[&str],
+        months: HashMap<String, Result<String, u16>>,
+    ) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let archive_urls: Vec<String> = archive_months
+            .iter()
+            .map(|m| format!("{base}/player/mocker/games/{m}"))
+            .collect();
+        let state = MockChessCom {
+            archives_json: Arc::new(serde_json::json!({ "archives": archive_urls }).to_string()),
+            months: Arc::new(months),
+        };
+        let app = Router::new()
+            .route("/player/mocker/games/archives", get(archives_handler))
+            .route(
+                "/player/mocker/games/{year}/{month}/pgn",
+                get(month_handler),
+            )
+            .with_state(state);
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        base
+    }
+
+    #[tokio::test]
+    async fn sync_mid_run_failure_persists_cursor_and_counts_up_to_the_failure() {
+        let (conn, database_id) = own_database().await;
+        let mut months = HashMap::new();
+        months.insert("2024/01".to_string(), Ok(game_pgn("Alpha")));
+        months.insert("2024/02".to_string(), Err(500u16));
+        let base = start_mock(&["2024/01", "2024/02"], months).await;
+
+        let failure = ChessCom::new("mocker")
+            .with_base_url(base)
+            .sync(&conn, database_id, SyncCursor::default())
+            .await
+            .unwrap_err();
+
+        // The cursor/counts reflect the fully-synced 2024/01 only — the failed
+        // month never advanced it — so a retry resumes instead of restarting.
+        assert_eq!(failure.cursor.last_month, Some("2024/01".to_string()));
+        assert_eq!(failure.imported, 1);
+        assert_eq!(failure.duplicates, 0);
+        assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn resumed_sync_does_not_refetch_months_before_the_cursor() {
+        let (conn, database_id) = own_database().await;
+        let mut months = HashMap::new();
+        // Predates the persisted cursor — must never be fetched on resume.
+        months.insert("2023/12".to_string(), Ok(game_pgn("Early")));
+        months.insert("2024/01".to_string(), Ok(game_pgn("Alpha")));
+        months.insert("2024/02".to_string(), Ok(game_pgn("Bravo")));
+        let base = start_mock(&["2023/12", "2024/01", "2024/02"], months).await;
+
+        let cursor = SyncCursor {
+            last_month: Some("2024/01".to_string()),
+            ..Default::default()
+        };
+        let outcome = ChessCom::new("mocker")
+            .with_base_url(base)
+            .sync(&conn, database_id, cursor)
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.cursor.last_month, Some("2024/02".to_string()));
+        // 2024/01 (the cursor month) is re-synced, 2024/02 is new; 2023/12 is
+        // skipped entirely — a resumed sync picks up where it left off instead
+        // of restarting from scratch (#197).
+        assert_eq!(outcome.imported, 2);
+        assert_eq!(games::Entity::find().all(&conn).await.unwrap().len(), 2);
     }
 }

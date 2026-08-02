@@ -9,7 +9,7 @@
 
 use sea_orm::{DatabaseConnection, DbErr, EntityTrait};
 
-use crate::collectors::{chesscom::ChessCom, lichess::Lichess};
+use crate::collectors::{chesscom::ChessCom, lichess::Lichess, SyncCursor};
 use crate::db::entities::databases;
 use crate::ingest::ingest_pgn_all;
 use crate::server::identity::{assert_can_write, CurrentUser};
@@ -71,7 +71,10 @@ impl ImportSource {
 /// `imported` games stored (their ids in `game_ids`, in PGN order, so a client
 /// can chain the new game into further calls), `duplicates` dropped as already
 /// present, `skipped` games dropped as bad, with one client-safe `errors` entry
-/// per skipped game. A provider sync reports counts only (`game_ids` empty).
+/// per skipped game. A provider sync reports real `imported`/`duplicates`
+/// counts and `synced_at` (issue #197); `game_ids` stays empty (cursor-boundary
+/// dedup means "imported" is not a stable list of new ids) and `synced_at` is
+/// `None` for a PGN upload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportSummary {
     pub imported: usize,
@@ -79,6 +82,7 @@ pub struct ImportSummary {
     pub duplicates: usize,
     pub game_ids: Vec<i32>,
     pub errors: Vec<String>,
+    pub synced_at: Option<String>,
 }
 
 /// Import orchestration over the `databases` table + collectors. Holds a
@@ -86,11 +90,26 @@ pub struct ImportSummary {
 #[derive(Clone)]
 pub struct ImportService {
     db: DatabaseConnection,
+    /// Test-only override so `sync`'s Chess.com dispatch can be pointed at a
+    /// local mock server instead of the real API — makes the failure/full-sync
+    /// cursor-persistence paths (#197) exercisable without network access.
+    #[cfg(test)]
+    chesscom_base_url: Option<String>,
 }
 
 impl ImportService {
     pub fn new(db: DatabaseConnection) -> Self {
-        Self { db }
+        Self {
+            db,
+            #[cfg(test)]
+            chesscom_base_url: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_chesscom_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.chesscom_base_url = Some(base_url.into());
+        self
     }
 
     /// Ingest a (possibly multi-game) PGN into a database the caller may write.
@@ -117,14 +136,19 @@ impl ImportService {
                 .iter()
                 .map(|e| format!("game {}: {}", e.index, e.message))
                 .collect(),
+            synced_at: None,
         })
     }
 
     /// Trigger a provider sync into a database the caller may write. A blank
     /// `token` is treated as absent. The sync resumes from the cursor persisted
-    /// per `(database, source)` and saves the advanced cursor afterwards, so a
-    /// re-sync only fetches new games (issue #95); ingest dedup keeps the boundary
-    /// month/second the cursor re-fetches from doubling games.
+    /// per `(database, source, username)`; `full` ignores that stored cursor and
+    /// starts from scratch (issue #197). The advanced cursor — and real
+    /// imported/duplicate counts — are saved whether the run succeeds *or*
+    /// fails partway through, so a history too large to finish in one request
+    /// makes progress across retries instead of restarting from zero every
+    /// time (#197); ingest dedup keeps the boundary month/second the cursor
+    /// re-fetches from doubling games (#95).
     pub async fn sync(
         &self,
         user: &CurrentUser,
@@ -132,6 +156,7 @@ impl ImportService {
         source: ImportSource,
         username: &str,
         token: Option<&str>,
+        full: bool,
     ) -> Result<ImportSummary, ImportError> {
         self.load_writable(user, database_id).await?;
         let username = username.trim();
@@ -140,9 +165,13 @@ impl ImportService {
         }
         let token = token.map(str::trim).filter(|t| !t.is_empty());
 
-        let cursor = cursor::load(&self.db, database_id, source.as_str()).await?;
+        let cursor = if full {
+            SyncCursor::default()
+        } else {
+            cursor::load(&self.db, database_id, source.as_str(), username).await?
+        };
 
-        let outcome = match source {
+        let result = match source {
             ImportSource::Lichess => {
                 let mut src = Lichess::new(username);
                 if let Some(token) = token {
@@ -151,28 +180,53 @@ impl ImportService {
                 src.sync(&self.db, database_id, cursor).await
             }
             ImportSource::ChessCom => {
-                ChessCom::new(username)
-                    .sync(&self.db, database_id, cursor)
-                    .await
+                #[allow(unused_mut)]
+                let mut src = ChessCom::new(username);
+                #[cfg(test)]
+                if let Some(base) = &self.chesscom_base_url {
+                    src = src.with_base_url(base.clone());
+                }
+                src.sync(&self.db, database_id, cursor).await
             }
+        };
+
+        let (outcome_cursor, imported, duplicates, failed) = match result {
+            Ok(outcome) => (outcome.cursor, outcome.imported, outcome.duplicates, false),
+            Err(failure) => {
+                // The provider/anyhow chain can carry reqwest URLs or wrapped
+                // SQL — log it server-side, hand the client a generic message.
+                tracing::warn!(error = ?failure.error, source = ?source, username, "provider sync failed");
+                (failure.cursor, failure.imported, failure.duplicates, true)
+            }
+        };
+
+        // Persist whatever progress was made even on failure (#197) — a
+        // mid-run 429/dropped-stream must not discard an already-advanced
+        // cursor, or a large history never finishes syncing.
+        let synced_at = cursor::save(
+            &self.db,
+            database_id,
+            source.as_str(),
+            username,
+            &outcome_cursor,
+            imported,
+            duplicates,
+        )
+        .await?;
+
+        if failed {
+            return Err(ImportError::Failed(
+                "sync failed — check the username and token, then try again".into(),
+            ));
         }
-        .map_err(|e| {
-            // The provider/anyhow chain can carry reqwest URLs or wrapped SQL —
-            // log it server-side, hand the client a generic, actionable message.
-            tracing::warn!(error = ?e, source = ?source, username, "provider sync failed");
-            ImportError::Failed("sync failed — check the username and token, then try again".into())
-        })?;
 
-        cursor::save(&self.db, database_id, source.as_str(), &outcome.cursor).await?;
-
-        // Sync is bulk-scale and its cursor-boundary dedup is intended (#95), so
-        // it reports the imported count only.
         Ok(ImportSummary {
-            imported: outcome.imported,
+            imported,
             skipped: 0,
-            duplicates: 0,
+            duplicates,
             game_ids: Vec::new(),
             errors: Vec::new(),
+            synced_at: Some(synced_at.and_utc().to_rfc3339()),
         })
     }
 
@@ -193,157 +247,5 @@ impl ImportService {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::entities::games;
-    use crate::db::{connect, DbConfig};
-    use sea_orm::{ActiveModelTrait, Set};
-
-    const TWO_GAMES: &str = "[Event \"Game 1\"]\n[White \"Spassky\"]\n[Black \"Fischer\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0\n\n[Event \"Game 2\"]\n[White \"Carlsen\"]\n[Black \"Caruana\"]\n[Result \"1/2-1/2\"]\n\n1. d4 d5 2. c4 e6 1/2-1/2\n";
-
-    fn user(id: &str) -> CurrentUser {
-        CurrentUser {
-            id: id.to_string(),
-            is_admin: false,
-        }
-    }
-
-    async fn service_with_db(owner: Option<&str>) -> (ImportService, i32) {
-        let conn = connect(&DbConfig::in_memory()).await.unwrap();
-        let db = databases::ActiveModel {
-            owner_id: Set(owner.map(str::to_string)),
-            name: Set("Games".to_string()),
-            kind: Set("own".to_string()),
-            ..Default::default()
-        }
-        .insert(&conn)
-        .await
-        .unwrap();
-        (ImportService::new(conn.clone()), db.id)
-    }
-
-    #[test]
-    fn parses_known_sources_case_insensitively() {
-        assert_eq!(ImportSource::parse("Lichess"), Some(ImportSource::Lichess));
-        assert_eq!(
-            ImportSource::parse("chesscom"),
-            Some(ImportSource::ChessCom)
-        );
-        assert_eq!(
-            ImportSource::parse("chess.com"),
-            Some(ImportSource::ChessCom)
-        );
-        assert_eq!(ImportSource::parse("fics"), None);
-    }
-
-    #[tokio::test]
-    async fn import_pgn_ingests_every_game_into_an_owned_database() {
-        let (svc, id) = service_with_db(Some("alice")).await;
-        let summary = svc.import_pgn(&user("alice"), id, TWO_GAMES).await.unwrap();
-        assert_eq!(summary.imported, 2);
-        assert_eq!(summary.skipped, 0);
-        assert_eq!(summary.duplicates, 0);
-        assert!(summary.errors.is_empty());
-
-        // The new games' ids come back (in PGN order) so a client can chain them.
-        let stored = games::Entity::find().all(&svc.db).await.unwrap();
-        assert_eq!(
-            summary.game_ids,
-            stored.iter().map(|g| g.id).collect::<Vec<_>>()
-        );
-    }
-
-    #[tokio::test]
-    async fn import_pgn_reports_duplicates_on_reupload() {
-        let (svc, id) = service_with_db(Some("alice")).await;
-        svc.import_pgn(&user("alice"), id, TWO_GAMES).await.unwrap();
-
-        let summary = svc.import_pgn(&user("alice"), id, TWO_GAMES).await.unwrap();
-        assert_eq!(summary.imported, 0);
-        assert_eq!(summary.duplicates, 2);
-        assert!(summary.game_ids.is_empty());
-        assert!(summary.errors.is_empty());
-        assert_eq!(games::Entity::find().all(&svc.db).await.unwrap().len(), 2);
-    }
-
-    // One legal game then an illegal one (Black answers 1. e4 with another e4).
-    const ONE_GOOD_ONE_BAD: &str = "[Event \"Good\"]\n[White \"A\"]\n[Black \"B\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0\n\n[Event \"Bad\"]\n[White \"C\"]\n[Black \"D\"]\n[Result \"*\"]\n\n1. e4 e4 *\n";
-
-    #[tokio::test]
-    async fn import_pgn_skips_a_bad_game_and_reports_it() {
-        let (svc, id) = service_with_db(Some("alice")).await;
-        let summary = svc
-            .import_pgn(&user("alice"), id, ONE_GOOD_ONE_BAD)
-            .await
-            .unwrap();
-        // Partial success is not an error: the good game lands, the bad one is
-        // reported with a safe, indexed message (no leaked SQL / provider chain).
-        assert_eq!(summary.imported, 1);
-        assert_eq!(summary.skipped, 1);
-        assert_eq!(summary.errors.len(), 1);
-        assert!(summary.errors[0].starts_with("game 2:"));
-        assert_eq!(games::Entity::find().all(&svc.db).await.unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn import_pgn_rejects_empty_input() {
-        let (svc, id) = service_with_db(Some("alice")).await;
-        assert!(matches!(
-            svc.import_pgn(&user("alice"), id, "  \n ")
-                .await
-                .unwrap_err(),
-            ImportError::InvalidInput(_)
-        ));
-    }
-
-    #[tokio::test]
-    async fn import_pgn_forbids_writing_another_users_database() {
-        let (svc, id) = service_with_db(Some("alice")).await;
-        assert!(matches!(
-            svc.import_pgn(&user("bob"), id, TWO_GAMES)
-                .await
-                .unwrap_err(),
-            ImportError::Forbidden
-        ));
-    }
-
-    #[tokio::test]
-    async fn import_pgn_reports_a_missing_database() {
-        let (svc, _) = service_with_db(Some("alice")).await;
-        assert!(matches!(
-            svc.import_pgn(&user("alice"), 9999, TWO_GAMES)
-                .await
-                .unwrap_err(),
-            ImportError::NotFound
-        ));
-    }
-
-    #[tokio::test]
-    async fn global_database_requires_admin_to_import() {
-        let (svc, id) = service_with_db(None).await; // global (owner_id NULL)
-                                                     // A non-admin is forbidden; the implicit admin succeeds.
-        assert!(matches!(
-            svc.import_pgn(&user("bob"), id, TWO_GAMES)
-                .await
-                .unwrap_err(),
-            ImportError::Forbidden
-        ));
-        let summary = svc
-            .import_pgn(&CurrentUser::local_admin(), id, TWO_GAMES)
-            .await
-            .unwrap();
-        assert_eq!(summary.imported, 2);
-        assert_eq!(summary.skipped, 0);
-    }
-
-    #[tokio::test]
-    async fn sync_requires_a_username_after_the_write_guard() {
-        let (svc, id) = service_with_db(Some("alice")).await;
-        assert!(matches!(
-            svc.sync(&user("alice"), id, ImportSource::Lichess, "  ", None)
-                .await
-                .unwrap_err(),
-            ImportError::InvalidInput(_)
-        ));
-    }
-}
+#[path = "mod_tests.rs"]
+mod tests;

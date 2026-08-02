@@ -41,11 +41,26 @@ pub struct SyncCursor {
 }
 
 /// Result of a sync run: the advanced cursor to persist and how many games were
-/// ingested this run. Shared by every collector ([`lichess`] / [`chesscom`]).
+/// imported vs. dropped as already present this run. Shared by every collector
+/// ([`lichess`] / [`chesscom`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncOutcome {
     pub cursor: SyncCursor,
     pub imported: usize,
+    pub duplicates: usize,
+}
+
+/// A sync run that failed partway through. Carries whatever cursor/counts had
+/// already advanced before the error, so the caller can persist that partial
+/// progress instead of discarding a whole run's work (issue #197) — a history
+/// too large to finish in one request can now make progress across retries
+/// instead of restarting from zero every time.
+#[derive(Debug)]
+pub struct SyncFailure {
+    pub cursor: SyncCursor,
+    pub imported: usize,
+    pub duplicates: usize,
+    pub error: anyhow::Error,
 }
 
 /// A provider of chess games. Implementors expose where games are pulled from;

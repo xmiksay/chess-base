@@ -11,6 +11,7 @@ mod m0005_sync_dedup;
 mod m0006_assistant;
 mod m0007_folders;
 mod m0008_agent_engine;
+mod m0009_sync_cursor_lifecycle;
 
 pub struct Migrator;
 
@@ -26,6 +27,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0006_assistant::Migration),
             Box::new(m0007_folders::Migration),
             Box::new(m0008_agent_engine::Migration),
+            Box::new(m0009_sync_cursor_lifecycle::Migration),
         ]
     }
 }

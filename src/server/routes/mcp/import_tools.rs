@@ -60,16 +60,20 @@ fn import_sync_tool() -> Tool {
     Tool::new(
         "import_sync",
         "Sync games from Lichess or Chess.com into a database you may write. \
-         Resumes from the cursor persisted per (database, source), so a re-sync \
-         only fetches new games. `token` is an optional personal access token \
-         (Lichess; raises rate limits) — leave it out for a public sync.",
+         Resumes from the cursor persisted per (database, source, username), so \
+         a re-sync only fetches new games; a mid-run failure still saves the \
+         progress made so the next call resumes instead of restarting. `token` \
+         is an optional personal access token (Lichess; raises rate limits) — \
+         leave it out for a public sync. `full` (default false) ignores the \
+         persisted cursor and re-syncs the whole history, overwriting it.",
         json!({
             "type": "object",
             "properties": {
                 "database_id": { "type": "integer", "description": "Database to sync into." },
                 "source": { "type": "string", "enum": ["lichess", "chesscom"], "description": "Provider to pull from." },
                 "username": { "type": "string", "description": "Provider username to sync." },
-                "token": { "type": "string", "description": "Optional personal access token (Lichess)." }
+                "token": { "type": "string", "description": "Optional personal access token (Lichess)." },
+                "full": { "type": "boolean", "description": "Ignore the stored cursor and re-sync the whole history (default false)." }
             },
             "required": ["database_id", "source", "username"]
         }),
@@ -93,10 +97,11 @@ async fn import_sync(app: AppState, user: CurrentUser, args: Value) -> ToolOutco
         return ToolOutcome::error("Invalid arguments: missing string field `username`.");
     };
     let token = args.get("token").and_then(Value::as_str);
+    let full = args.get("full").and_then(Value::as_bool).unwrap_or(false);
 
     let service = ImportService::new(app.db.clone());
     match service
-        .sync(&user, database_id as i32, source, username, token)
+        .sync(&user, database_id as i32, source, username, token, full)
         .await
     {
         Ok(summary) => json_outcome(&summary_view(&summary)),
@@ -105,7 +110,7 @@ async fn import_sync(app: AppState, user: CurrentUser, args: Value) -> ToolOutco
 }
 
 /// Wire shape shared by both import tools:
-/// `{ imported, skipped, duplicates, game_ids[], errors[] }`.
+/// `{ imported, skipped, duplicates, game_ids[], errors[], synced_at }`.
 fn summary_view(summary: &ImportSummary) -> Value {
     json!({
         "imported": summary.imported,
@@ -113,6 +118,7 @@ fn summary_view(summary: &ImportSummary) -> Value {
         "duplicates": summary.duplicates,
         "game_ids": summary.game_ids,
         "errors": summary.errors,
+        "synced_at": summary.synced_at,
     })
 }
 

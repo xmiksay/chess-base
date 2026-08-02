@@ -41,6 +41,10 @@ struct SyncBody {
     /// Optional personal token (Lichess; raises rate limits). Blank ⇒ absent.
     #[serde(default)]
     token: Option<String>,
+    /// Ignore the persisted cursor and re-sync this username's whole history,
+    /// overwriting the stored cursor on completion (issue #197).
+    #[serde(default)]
+    full: bool,
 }
 
 /// Upload a PGN into a database (`POST /api/import/pgn`).
@@ -74,6 +78,7 @@ async fn sync(
             source,
             &body.username,
             body.token.as_deref(),
+            body.full,
         )
         .await?;
     Ok((StatusCode::OK, Json(summary_body(&summary))).into_response())
@@ -84,7 +89,8 @@ fn service(state: &AppState) -> ImportService {
 }
 
 /// Wire shape shared by both import endpoints:
-/// `{ imported, skipped, duplicates, game_ids[], errors[] }`.
+/// `{ imported, skipped, duplicates, game_ids[], errors[], synced_at }`.
+/// `synced_at` (RFC 3339) is set for a provider sync, `null` for a PGN upload.
 fn summary_body(summary: &ImportSummary) -> serde_json::Value {
     json!({
         "imported": summary.imported,
@@ -92,6 +98,7 @@ fn summary_body(summary: &ImportSummary) -> serde_json::Value {
         "duplicates": summary.duplicates,
         "game_ids": summary.game_ids,
         "errors": summary.errors,
+        "synced_at": summary.synced_at,
     })
 }
 
