@@ -104,12 +104,23 @@ src/
   ai/providers.rs  ownership-aware ProviderService over llm_providers (#20, per-user #198):
                    own + global (admin) rows, keys write-only (has_key flag), per-owner
                    is_default, resolve_default_for (own → global → None)     ← unit-tested
-  ai/agent/        embedded entanglement agent engine (#198): SYSTEM_PROMPT + GATED_TOOLS
-                   approval gate (ADR-0025); provider_store.rs AgentProviderStore — cached
-                   per-user UserProviderStore over llm_providers (user rows over globals,
-                   house fallback = global rows else ANTHROPIC_API_KEY; invalidated by
-                   provider CRUD; build_resolver maps userless → house), on
-                   AppState.provider_store; engine loop lands in later steps  ← unit-tested
+  ai/agent/        embedded entanglement 0.6.0 agent engine (#198, ADR-0040 — replaces
+                   the hand-rolled ai/assistant; m0008 drops its tables, adds
+                   agent_grants/agent_events/agent_sessions): SYSTEM_PROMPT +
+                   GATED_TOOLS approval gate (ADR-0025); provider_store.rs
+                   AgentProviderStore — cached per-user UserProviderStore over
+                   llm_providers (user rows over globals, house fallback = global rows
+                   else ANTHROPIC_API_KEY; DEFAULT_PIN `~default` sentinel: the build
+                   profile pins it, the resolver maps it to the caller's default row
+                   at session start); policy.rs AgentPolicy (GATED_TOOLS→Ask,
+                   Session grants in-memory, Always grants persisted in agent_grants);
+                   tools.rs BridgedTool (MCP registry 1:1, session→CurrentUser scoping,
+                   32KiB output cap); persistence.rs DbRecordSink (bounded channel →
+                   agent_events, ord per root); sessions.rs SessionService (list/create/
+                   open/delete, ownership fail-closed, integrity_gap-guarded resume);
+                   engine.rs AgentEngine::start (Holly + tool executor + persistence tap
+                   + throttle responder + index subscriber; idle_ttl 30min; compaction
+                   on the session's own model)  ← unit-tested
   study_gen/       study-gen stages (Epic 9): tree (#29) builds a pruned VariationTree
                    (TreeConfig.max_children_by_depth tapers branching with depth —
                    broad near the root, narrow on deep main lines, #160);
@@ -173,9 +184,13 @@ src/
                    (ADR-0027, no internal LLM); opening_tree/danger_map take an
                    optional `save_as` to seed a study server-side (#155, study_gen::seed,
                    returns {study_id,node_count}, no tree JSON) — all thin callers of
-                   the shared services. Mutating tools are gated behind the assistant's
-                   approval flow (`ai::assistant::GATED_TOOLS`, ADR-0025).
-                   routes/assistant.rs: AI assistant chat + provider registry (#20)
+                   the shared services. Mutating tools are gated behind the agent's
+                   approval flow (`ai::agent::GATED_TOOLS`, ADR-0025/0040).
+                   assistant_ws.rs (+protocol.rs): GET /api/assistant/ws — the
+                   streaming assistant relay onto the agent engine (envelope over
+                   InMsg/OutEvent + session CRUD, ownership-filtered both ways,
+                   history replay, ping/pong); routes/providers.rs: per-user LLM
+                   provider CRUD at /api/assistant/providers (keys write-only)
   bin/chess-base.rs  CLI entry (clap)
 frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
                    (strict `vue-tsc`; shared API/domain types in src/types.ts; ADR 0021).
@@ -186,6 +201,10 @@ frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
                    depth-indented blocks (MoveTreeLine) with per-node promote/demote
                    /delete actions. Engine options (MultiPV/Threads/Hash) persist
                    per user via settings (lib/useEnginePrefs); analysis on by default.
+                   Assistant (#198): stores/assistant.ts reconnecting WS client over
+                   the pure lib/assistantStream.ts fold → AssistantView streaming
+                   bubbles/tool chips/approval+question cards; ProvidersSettings
+                   manages the caller's LLM providers in Settings.
 ```
 
 **Layering rule:** pure logic (`position`, `pgn_tree`, `openings`, `plans`) is I/O-free and fully

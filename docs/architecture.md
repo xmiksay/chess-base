@@ -35,10 +35,9 @@ commented PGN studies, and integrates UCI engines.
 | `review` | Fast **engine-only full-game review** (Mode A, #119): replay a stored game and search every position, classifying each ply and writing a rule-based "why" note — no LLM, no API key. `classify` (pure): win-probability buckets (best / great / good / inaccuracy / mistake / blunder) from the eval before vs after a move, plus per-side ACPL + accuracy roll-up (`summarize`). `explain` (pure): the reusable `MoveFact` struct (eval delta, engine's preferred move/line, material won/lost resolved over the PV, missed/allowed mate) rendered as a terse note (`explain`) — the **seam** Mode B's LLM annotation (#31) is meant to consume as ground truth so its strategic prose stays engine-grounded. `service::review_game` is the thin engine shell (gathers one `analyse_multi` per position, then the pure `assemble` does all classification/explanation); `routes` exposes `POST /api/games/{id}/analyse?depth=` returning per-ply `{eval_cp, mate, best_move, best_line, played_rank, classification, explanation}` (`best_line`: the engine PV in SAN, ≤6 plies, for grafting a variation at a critical position, #135) + a per-side summary. Shares the one-shot engine pool (not the interactive WS, so it never starves live analysis) | none (pure core) + engine adapter |
 | `ai/llm` | Provider-agnostic batch-LLM contract: `LlmProvider` trait + DTOs (ADR 0013), fulfilled by `entanglement::StackLlmProvider` — an adapter that resolves a `(provider, model)` pair through the agent engine's per-user `ModelResolver` (#198) and drains the resolved backend's event stream to one `CompletionResponse`. Resolved per request via `AppState::llm_for(&user)`: the caller's default `llm_providers` row (house fallback included), `None` ⇒ the LLM paths answer 503 | HTTP (via entanglement) |
 | `ai/providers` | Ownership-aware `ProviderService` over the `llm_providers` table (#20, per-user since #198): `owner_id` NULL ⇒ an admin-managed **global** provider every user sees, else the user's own row. `list` returns own ∪ global rows (keys **write-only** — the `ProviderInfo` DTO carries `has_key`/`wire`/`base_url`/`is_global`, never the key); `upsert` writes the caller's own row (`is_global` requires admin, global-name uniqueness enforced in service code since SQL NULLs are distinct in the unique index; `api_key: None` keeps the stored key; `is_default` clears the flag on the same owner scope only); `delete` is owner-or-admin(global); `resolve_default_for` picks the session's starting provider/model (own default → global default → `None`) | DB |
-| `ai/agent` | Embedded entanglement agent engine (#198): `SYSTEM_PROMPT` + the `GATED_TOOLS` approval gate (ADR-0025), and `provider_store::AgentProviderStore` — the crate's `UserProviderStore` impl over `llm_providers`: a pre-warmed per-owner cache (`context()` is a pure sync read, rebuilt by `invalidate()` after provider CRUD) composing each user's rows over the global ones (user wins on a name collision), with a **house** fallback context (global rows, else `ANTHROPIC_API_KEY` read once at startup) serving users with no rows; `build_resolver` wraps entanglement's user resolver so a userless session resolves as the house user; rows map to catalog entries by `wire` (`anthropic`/`openai`/`gemini`; unknown ⇒ OpenAI-compatible if a `base_url` is set, else skipped with a warning), borrowing the builtin catalog's model metadata for same-named providers. Held on `AppState.provider_store`; the engine itself lands in later #198 steps | DB |
-| `ai/assistant` | Embedded Claude study assistant (#20, Direction B / ADR-0025): an in-app chat whose agent loop reuses the **same** in-process `ToolRegistry` the `/mcp` transport serves (no second tool impl). `service::AssistantService` drives the loop: ask the provider → run read-only tool calls automatically → **pause** on any *mutating* tool (`GATED_TOOLS`: the study/game/folder/import mutations — `study_create`/`study_import_pgn`/`study_add_move`/`study_annotate`/`study_set_folder`/`study_set_shapes`/`study_promote_node`/`study_reorder_node`/`study_merge_games`/`study_merge_danger`/`study_analyse`/`game_save_as_study`/`game_delete`/`folder_create`/`folder_update`/`folder_delete`/`import_pgn`/`import_sync`, #183) until the user approves/denies → resume; bounded by `MAX_ITERATIONS` rounds per user message (both the cap and pending approvals are surfaced to the SPA). `store::AssistantStore` persists `assistant_sessions` + the `assistant_messages` transcript (one `ai::llm::Message` JSON per row); sessions are private (owner-scoped). Pure gating/view helpers (`requires_approval`, `pending_approvals`, `iterations_since_user`, `build_view`) are unit-tested; the loop is unit-tested with a stub provider + real in-memory store. HTTP routes (`server/routes/assistant.rs`, `/api/assistant/*`) are thin callers | DB + `ai/llm` provider + tool registry |
+| `ai/agent` | Embedded **entanglement 0.6.0** agent engine (#198, ADR-0040 — replaces the hand-rolled `ai/assistant`; see "Embedded agent engine" below): `SYSTEM_PROMPT` + the `GATED_TOOLS` approval gate (ADR-0025); `provider_store::AgentProviderStore` — the crate's `UserProviderStore` impl over `llm_providers`: a pre-warmed per-owner cache (`context()` is a pure sync read, rebuilt by `invalidate()` after provider CRUD) composing each user's rows over the global ones (user wins on a name collision), with a **house** fallback context (global rows, else `ANTHROPIC_API_KEY` read once at startup) serving users with no rows; `build_resolver` wraps entanglement's user resolver so a userless session resolves as the house user and the `DEFAULT_PIN` `~default` sentinel resolves to the caller's default provider row (the `build` profile pins it — the one per-user model binding that lands before the spawn prompt's first turn, so `create` sends a single `Spawn` frame); rows map to catalog entries by `wire` (`anthropic`/`openai`/`gemini`; unknown ⇒ OpenAI-compatible if a `base_url` is set, else skipped with a warning). `policy::AgentPolicy` plugs the executor's `PermissionResolver`/`GrantStore` seams: `GATED_TOOLS` grade `Ask` (`base_profile`), an approval upgrades to `Allow` in-memory for the session or via a durable `agent_grants` row for **Always**. `tools::BridgedTool` re-exposes the MCP `ToolRegistry` 1:1 (same name/description/schema), resolving the session's registered user to a `CurrentUser` per call and capping output at 32 KiB. `persistence::DbRecordSink` is the never-blocking `RecordSink`: bounded channel → dedicated writer appending `agent_events` rows, `ord`-ordered per root; `load_records` is the read side. `sessions::SessionService` is the transport-agnostic conversation CRUD (`list`/`create`/`open`/`delete`, ownership fail-closed, `integrity_gap`-guarded resume — a gapped log resumes the intact prefix). `engine::AgentEngine::start` boots the stack: resolver → `Holly` → tool executor (with the DB policy) → persistence tap → throttle responder → index subscriber (folds lifecycle events back onto `agent_sessions`: live set, rename, throttled `last_active`); `idle_ttl` 30 min hibernates settled sessions (still resumable); no `aux_llm_resolver`, so compaction runs on the session's own model. Held on `AppState.provider_store` / `AppState.agent` | DB + engine broadcast |
 | `study_gen` | Study-generation pipeline stages (Epic 9 / ADR-0009): deterministic preprocessing (`tree`, `features`) feeding the LLM annotation pass (`annotate`). `tree` (#29): from a start FEN, breadth-first builds a bounded, pruned `VariationTree` of DB-played continuations, each node tagged with an engine eval + the pre-chewed DB stats; pruning (`select_continuations`) drops moves below a frequency floor or outside an eval margin, capped by `max_children`/`max_depth`/`max_nodes` (`TreeConfig`). The breadth cap is per-node via `TreeConfig::max_children_at(ply)`: setting `max_children_by_depth` (e.g. `[3,3,2,1]`, last entry repeats) **tapers branching with depth** — broad near the root, narrowing to the principal line deep (#160) — while unset every depth uses the scalar `max_children` (uniform, backward compatible). Tree types, pruning and the BFS walk are I/O-free over two seams (`Evaluator`, `ContinuationSource`); the concrete engine/DB adapters (`EngineEvaluator`, `ReportContinuations`) live in the module root. `features` (#30, `features.rs` + `features/derived.rs`): pure pawn-structure & key-square classifier — `concepts_of_fen` pattern-matches the pawn skeleton into structure tags (IQP, hanging pawns, Carlsbad, hedgehog, Maroczy, Stonewall, French chain), key squares (blockade / bind / outpost / break / chain-base, each with beneficiary), open/half-open files, isolated/doubled/passed/backward pawns, a king-safety signal and material imbalance (bishop pair, opposite-coloured bishops); the builder attaches the resulting `Concepts` to every node. `annotate` (#31): **batch** LLM annotation pass over the finished tagged tree → comments + NAG glyphs + training questions. `build_prompt` feeds the model only the moves, concept tags and opening name — **no tools, and no engine eval / PV / DB stats in the context** (ADR-0009). The model's draft attaches machine-checkable `Claim`s (`only_move`, `best_move`, `blunder`, `loses_material`/`wins_material`), and `verify_and_commit` confirms each against ground truth (legal-move legality + the tree's stored engine eval) before committing into a `MoveTree`; a claim ground truth contradicts is dropped, taking the prose that rested on it with it (`Rejection` records what fell). Pure verification (stored eval + chess rules), so the whole loop is unit-tested with a stub provider and no engine. `generate` (#115): the **orchestrator** that ties the three stages into one user-invokable operation — `generate_study` runs the tree builder → batch annotation/verification pass → persists the verified `MoveTree` as a `studies` row owned by the caller (`StudyService::create_with_tree`), returning the new study id + a summary (node count, rejected-claim count). Generic over the `Evaluator`/`ContinuationSource`/`LlmProvider` seams (unit-tested with injected fakes + a real in-memory study service); `generate_study_live` is the production wrapper. `plan_shapes` (ADR-0029): an **opt-in** pass between tree-build and annotation that pins board arrows onto every node — the top-`N` engine PV trajectories (brushes `plan1..plan3`, capped at `MAX_PLAN_LINES`, via the `MultiAnalyzer` seam + a depth-bounded `EnginePlanAnalyzer`) and/or the pure `threats::threats` hanging-piece scan — stored on `VariationNode.shapes` and carried into the committed `MoveTree` by `move_tree_from`; the arrows are data, never added to the LLM prompt (ADR-0009), and export to PGN via the existing `[%cal]` codec. Driven by `GenerateParams.plan_lines`/`threats` (both default off). `GenerateParams.filter` (issue #172, ADR-0034) optionally narrows the tree's continuations to one player's games (either side or `color`-restricted) and/or a date range, threaded through `build_variation_tree`/`ReportContinuations`; defaults to `PositionFilter::default()` (every scoped game, unchanged). Exposed through `POST /api/studies/generate` — it is **not** an MCP tool (ADR-0027: the MCP surface exposes the deterministic `tree`/`features` stages as data via `opening_tree` / `position_concepts`, and the LLM that annotates them runs on the client side of the MCP boundary). **Danger-map mode** (ADR-0026, a second mode beside the best-line builder): `danger` (#131) is the pure classifier — given perspective-normalised centipawn evals it returns the trap verdict (`Weapon`/`HopeChess`/`Quiet`) and only-move gap; `attack` (#142) reuses the `plans.rs` PV tracer to detect a pawn storm marching toward the enemy king; `spine` (#139) is the driver — it walks a PGN repertoire (the "spine") from move 0 and, at every searched opponent position, folds `analyse_multi` + DB stats through those signals into a tagged `DangerTree` whose nodes carry **Weapon** / **Caution** (refuted bait *or* an attack our move concedes) / **Off-book** roles. The walk depends only on the `MultiAnalyzer` + `ContinuationSource` seams (unit-tested against fakes). `danger_generate` (#140) is the mode's orchestrator: it folds the tagged `DangerTree` into a `VariationTree` (each node's role becomes a synthetic concept hint, `eval` left `None`), runs the shared annotate/verify pass, and persists a study — surfacing the rejected claims and role tags. Exposed through `POST /api/studies/generate-danger-map` (`studies/danger_route.rs`, #141) — **not** an MCP tool (ADR-0027: the `spine` walk is exposed as ground-truth data via the `danger_map` MCP tool instead, with annotation done client-side); the request carries the spine as PGN, a per-variation `movetime_ms`/`multipv` budget, and partial `SpineConfig`/`DangerConfig`/`AttackConfig` overrides (all `serde(default)`). The **engine-only** `POST /api/studies/danger-map` (#156, same file) is the LLM-free sibling — a thin caller over `walk_danger_spine_live` (symmetric to the `danger_map` MCP tool, ADR-0027) that returns the raw `DangerTree` plus a flat roles digest without persisting a study or touching a language model, so the SPA danger overlay works on a no-key install; engine-absent is a clean `503` like the other engine routes, a malformed spine PGN a `400` | none (pure core) + engine/DB adapters + `ai/llm` provider |
-| `server` | Axum router, app state, request identity, MCP `/mcp` endpoint + its auth (OAuth 2.1 / service token, ADR 0016), engine analysis WebSocket, embedded SPA, browser launch, lifecycle | HTTP |
+| `server` | Axum router, app state, request identity, MCP `/mcp` endpoint + its auth (OAuth 2.1 / service token, ADR 0016), engine analysis WebSocket, the assistant WebSocket relay (`assistant_ws.rs`, #198) + per-user LLM-provider routes (`routes/providers.rs`), embedded SPA, browser launch, lifecycle | HTTP |
 
 The **pure** modules (`position`, `pgn_tree`, `openings`, `plans`) carry the chess logic and are unit-tested without any
 runtime. Everything else is a thin adapter with dependencies injected, so the
@@ -160,7 +159,9 @@ engine-depth / repertoire-framing (variation depth + breadth) form plus opt-in
 board-arrow knobs (`plan_lines` 0–3 + a `threats` toggle, ADR-0029) over
 `POST /api/studies/generate` (`stores/studies.ts::generate`), surfacing the
 verification summary (committed nodes, rejected claims) and gated on the
-`/api/health` `llm` flag (a hint to set `ANTHROPIC_API_KEY` when absent). The
+`/api/health` `llm` flag (true when any provider context resolves — a
+configured `llm_providers` row or the `ANTHROPIC_API_KEY` house fallback,
+#198). The
 sibling **"Danger map"** button opens `components/GenerateDangerMapDialog.vue`
 (ADR-0026 #131): a repertoire-spine (PGN) / side / walk-depth / `movetime_ms` /
 `multipv` form over `POST /api/studies/generate-danger-map`
@@ -323,7 +324,7 @@ game/study operations, thin callers composing `GameService` + `StudyService`),
 (`search_headers`, `position_threats`) and `import_tools.rs` (`import_pgn`,
 `import_sync`). `db_tools.rs`'s `db_read_game` gained an `annotated`/`depth`
 flag mirroring `GET /api/games/{id}/export?annotated=` (#120). Every new
-mutating tool is listed in `ai::assistant::GATED_TOOLS` (ADR-0025), so the
+mutating tool is listed in `ai::agent::GATED_TOOLS` (ADR-0025/0040), so the
 embedded assistant still pauses for approval on each one; `study_list` and the
 other new read-only tools run automatically like their pre-existing peers.
 
@@ -516,26 +517,53 @@ house fallback — `AgentProviderStore::default_for`); `None` (no engine, nothin
 configured, or a failed resolution — logged) keeps the old behavior of a clean
 503 on `generate_study` and the danger-map generator.
 
-## Embedded study assistant (Epic 7 / ADR-0025)
+## Embedded agent engine (Epic 7 / ADR-0025 → ADR-0040)
 
-`ai/assistant` is the in-app chat counterpart to the `/mcp` transport: instead of
-an external client, an embedded agent loop drives the **same** in-process
-`ToolRegistry` (exposed via `ToolRegistry::tools`/`invoke`), so there is one tool
-surface, not two. `AssistantService::post_message` appends the user turn and runs
-`drive`: ask `LlmProvider::complete` (system prompt + the registry's `ToolSpec`s),
-record the assistant turn, then — if it requested tools — run the read-only ones
-automatically and **pause** if any is *mutating* (`requires_approval`). The pause
-is just a trailing assistant turn whose tool calls have no results yet, so it is
-resumable across requests: the SPA shows `pending_approvals`, the user approves or
-denies per call, and `respond` runs the approved calls (denied → an error tool
-result the model sees) and continues the loop. The loop is bounded by
-`MAX_ITERATIONS` tool rounds since the last user message (`iterations_since_user`),
-surfaced alongside the cap. Sessions are private, owner-scoped rows in
-`assistant_sessions`; the transcript is `assistant_messages`, one
-`ai::llm::Message` serialized per row. The HTTP surface is `/api/assistant/*`
-(sessions CRUD, `messages`, `respond`, and the admin `providers` registry); a
-`503` when no provider is configured. Direction-A (external MCP client)
-deployments need none of this — the key never reaches the SPA either way.
+`ai/agent` is the in-app assistant counterpart to the `/mcp` transport — since
+#198 an embedded **entanglement 0.6.0** engine rather than a hand-rolled loop.
+The flow, end to end: the SPA opens `GET /api/assistant/ws`
+(`server/assistant_ws.rs`, `CurrentUser`-gated upgrade; `503` when the engine
+never started) and speaks a thin envelope over the engine's kind-tagged frames —
+inbound `{"type":"in","msg":…}` engine `InMsg`s plus session-CRUD verbs
+(`list`/`new`/`open`/`delete`/`pong`), outbound `{"type":"out","ev":…}`
+`OutEvent`s plus CRUD replies (`protocol.rs`). The relay is **fail-closed in
+both directions**: an inbound frame naming a session the caller does not own is
+refused before it reaches the engine (then `holly.send_from_wire` additionally
+refuses privileged variants), and an outbound event is forwarded only to its
+owner (`SessionList` filtered per user, `Throttle` reduced to a per-user
+boolean, other session-less events dropped). Behind the relay one process-wide
+`Holly` serves every user's sessions (ids namespaced `{user}:{uuid}`); its tool
+executor dispatches `BridgedTool`s — the **same** in-process MCP `ToolRegistry`,
+re-exposed 1:1, each call resolving the session's registered user to a
+`CurrentUser` so every read/write is scoped exactly like an HTTP or `/mcp`
+call. Every finished record flows through `DbRecordSink` (bounded channel, a
+dedicated writer) into `agent_events`, strictly `ord`-ordered per root session.
+
+**Provider resolution** (per user, first wins): the user's own `llm_providers`
+rows ⊕ admin-global rows (user wins on a name collision) → the **house**
+fallback context (global rows, else `ANTHROPIC_API_KEY` — the env var's only
+remaining role). A session starts on the caller's default row via the
+`DEFAULT_PIN` `~default` sentinel the `build` profile pins (resolved before the
+spawn prompt's first turn, so `create` is a single `Spawn` frame). Users manage
+their rows via `/api/assistant/providers` (`routes/providers.rs`: keys
+**write-only**, responses carry `has_key`; `is_global` requires admin; a
+mutation invalidates the store's cache). Compaction/summarize run on the
+session's own model (no aux resolver); titles change only by user rename.
+
+**Approvals**: `GATED_TOOLS` grade `Ask` in the executor's base profile
+(everything else runs automatically, ADR-0025). The SPA's approval card offers
+Once / this Session (in-memory) / **Always** — a durable `agent_grants` row
+(`AgentPolicy`), so a standing approval survives restarts. **Persistence &
+resume**: `agent_sessions` indexes each conversation (name, throttled
+`last_active`, live flag); opening a session replays its `agent_events` history
+over the socket, and a hibernated (idle 30 min) or restarted session resumes
+from the log — `integrity_gap`-guarded, so a log with a `Gap` tombstone resumes
+the intact prefix and surfaces the loss. SPA side: `stores/assistant.ts` is the
+reconnecting WS client over the pure `lib/assistantStream.ts` fold;
+`AssistantView` renders streaming bubbles, tool chips, approval/question cards
+and a usage footer; `ProvidersSettings` (Settings) manages the caller's
+providers. Direction-A (external MCP client) deployments need none of this —
+the key never reaches the SPA either way.
 
 ## Data model
 
@@ -601,6 +629,19 @@ deployments need none of this — the key never reaches the SPA either way.
 - `oauth_tokens(access_token, refresh_token, client_id, user_id, scope, created_at,
   expires_at)` — issued OAuth pairs; the access token is what `authenticate_mcp`
   checks, the refresh token mints a fresh pair (both rotate on refresh).
+- `llm_providers(id, owner_id?, name, wire, base_url?, api_key, model, is_default)`
+  — per-user LLM providers (#20, per-user since #198/ADR-0040): `owner_id IS NULL`
+  ⇒ an admin-managed global row every user sees; `wire` is the protocol
+  (`anthropic`/`openai`/`gemini`), `base_url` an endpoint override. Unique
+  `(owner_id, name)`; global-name uniqueness re-checked in code (NULLs are
+  distinct in a unique index). Keys are write-only at the API.
+- `agent_grants(id, user_id, tool, arg?, scope, created_at)` — durable "Always"
+  tool approvals for the agent engine (`AgentPolicy`); unique `(user_id, tool, arg)`.
+- `agent_events(id, root_session_id, user_id, ord, ts, session_id, direction,
+  payload)` — the append-only agent event log; `ord` is unique per
+  `root_session_id` (the resume/replay order).
+- `agent_sessions(root_session_id, user_id, name?, agent, created_at, last_active)`
+  — one engine conversation per root id: the listing index over the event log.
 
 Indices cover `zobrist`, the games header columns (`database_id`, player/event FKs,
 `date`, `eco`, `result`) and `database_id`/`owner_id` scoping, plus the two unique
@@ -613,7 +654,11 @@ adds `games.source_ref` and the `sync_cursors` table; `m0006_assistant` adds the
 embedded-assistant tables (`assistant_sessions`, `assistant_messages`,
 `llm_providers`, #20); `m0007_folders` adds the `folders` table and the
 `studies.folder_id`/`origin_game_id` columns (#164, one `ALTER` column per statement
-so SQLite accepts it). All run on both SQLite and Postgres.
+so SQLite accepts it); `m0008_agent_engine` (#198, ADR-0040) **drops** the
+assistant transcript tables (no migration — old chat history is discarded),
+extends `llm_providers` with `owner_id`/`wire`/`base_url` (unique index moves to
+`(owner_id, name)`) and adds `agent_grants`/`agent_events`/`agent_sessions`.
+All run on both SQLite and Postgres.
 
 ### Position search
 
@@ -741,8 +786,9 @@ See the epics in `.claude/CLAUDE.md`. Each epic is a GitHub milestone; concrete
 features are individual issues. Epic 7 adds an MCP JSON-RPC endpoint (mirroring
 the `site` project's `routes/mcp.rs`) exposing engine/database/interactive-analysis
 tools so an external AI client (Direction A) can read and analyse studies — and
-an **embedded** Claude assistant (Direction B, #20 / ADR-0025) that reuses that
-same in-process tool surface for an in-app chat (see "Embedded study assistant"). Study *authoring* — lifecycle CRUD + PGN import/export
+an **embedded** assistant (Direction B, #20 / ADR-0025, since #198 the
+entanglement engine of ADR-0040) that reuses that same in-process tool surface
+for an in-app chat (see "Embedded agent engine"). Study *authoring* — lifecycle CRUD + PGN import/export
 (issue #9) and node-level create/annotate/restructure (issue #18) — is a separate
 programmatic REST API (`/api/studies`), **not** an MCP tool surface, per ADR-0009:
 the LLM annotates batches that are committed through that same `StudyService`,
