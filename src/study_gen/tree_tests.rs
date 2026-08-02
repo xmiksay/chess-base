@@ -28,6 +28,18 @@ fn config(min_frequency: f64, eval_margin_cp: i32, max_children: usize) -> TreeC
 }
 
 #[test]
+fn tree_config_deserializes_partial_json_with_defaults() {
+    let cfg: TreeConfig = serde_json::from_str(r#"{"max_depth": 8}"#).unwrap();
+    assert_eq!(
+        cfg,
+        TreeConfig {
+            max_depth: 8,
+            ..TreeConfig::default()
+        }
+    );
+}
+
+#[test]
 fn score_to_cp_passes_centipawns_and_folds_mate() {
     assert_eq!(score_to_cp(Some(Score::Cp { value: 35 })), 35);
     assert_eq!(score_to_cp(None), 0);

@@ -92,3 +92,31 @@ async fn opening_tree_save_as_seeds_a_persisted_study() {
     let nodes = view["tree"]["nodes"].as_array().unwrap();
     assert_eq!(nodes.len() as u64, seeded["node_count"].as_u64().unwrap());
 }
+
+/// Regression (#195): a partial `tree` override — only `max_depth`/`max_children`,
+/// exactly what the SPA's `GenerateStudyDialog` sends — must deserialize with the
+/// rest of `TreeConfig` defaulted, not bounce as a tool error before the engine
+/// even runs. Gated on `CHESS_BASE_TEST_ENGINE`.
+#[tokio::test]
+async fn opening_tree_accepts_a_partial_tree_override() {
+    let Some(path) = engine_path() else { return };
+    let service = Arc::new(EngineService::new(EngineConfig::new("test", path), 1));
+    let session = seeded_session_with_engine(&[SICILIAN_PGN], Some(service)).await;
+
+    let seeded = tool_json(
+        &session
+            .tool(
+                304,
+                "opening_tree",
+                json!({
+                    "engine_depth": 6,
+                    "tree": { "max_depth": 2, "max_children": 2 },
+                    "save_as": { "database_id": 1, "name": "Partial tree override", "global": true }
+                }),
+            )
+            .await,
+    );
+
+    assert!(seeded["study_id"].as_i64().is_some());
+    assert!(seeded["node_count"].as_u64().unwrap() >= 1);
+}

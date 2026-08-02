@@ -48,9 +48,10 @@ pub trait ContinuationSource {
 }
 
 /// How big a tree to build and how hard to prune it. Pure tree shape — engine
-/// search limits live on the evaluator, not here. `serde` so a study request can
-/// carry one over the wire.
+/// search limits live on the evaluator, not here. `serde(default)` so a study
+/// request can carry partial overrides over the defaults (issue #195).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TreeConfig {
     /// Maximum plies from the root (root is ply 0). Caps tree depth.
     pub max_depth: usize,
