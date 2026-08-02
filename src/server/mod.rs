@@ -15,7 +15,7 @@ pub use config::{AppConfig, Mode};
 pub use identity::{assert_admin, scope, AuthError, CurrentUser};
 pub use state::AppState;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -79,11 +79,19 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
     // LLM provider wiring is down while the entanglement agent engine lands
     // (#198): provider resolution returns in a later step. Until then the LLM
     // paths stay disabled and `/api/health` reports `llm: false`.
+    // The per-user provider store pre-warms from `llm_providers` (post-migration)
+    // and is invalidated by provider CRUD; step 4 hands it to the agent engine.
+    let provider_store = Some(
+        crate::ai::agent::AgentProviderStore::new(db.clone())
+            .await
+            .context("building the agent provider store")?,
+    );
     let state = AppState {
         db: db.clone(),
         mode: cfg.mode,
         engine_service,
         llm_provider: None,
+        provider_store,
     };
     let app = build_router(state);
 

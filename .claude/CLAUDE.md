@@ -95,12 +95,17 @@ src/
                    MoveTree::graft_subtree/resolve_line (dedup + an optional stats
                    comment on the line's final node), into a new study or an existing
                    one, POST /api/studies/add-line (add_line_route.rs) ← unit-tested
-  ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
-  ai/providers.rs  ProviderService over llm_providers table (#20): admin-managed providers
-                   (key server-side); default row builds the provider at startup, else env
-  ai/assistant/    embedded Claude study assistant (#20, Direction B): agent loop driving the
-                   SAME in-process MCP ToolRegistry — iteration cap + per-tool approval
-                   (mutating tools gated); store.rs persists sessions/transcript   ← unit-tested
+  ai/llm/          LlmProvider trait + DTOs (Epic 9 annotation seam; the concrete client
+                   returns with the entanglement engine, #198)
+  ai/providers.rs  ownership-aware ProviderService over llm_providers (#20, per-user #198):
+                   own + global (admin) rows, keys write-only (has_key flag), per-owner
+                   is_default, resolve_default_for (own → global → None)     ← unit-tested
+  ai/agent/        embedded entanglement agent engine (#198): SYSTEM_PROMPT + GATED_TOOLS
+                   approval gate (ADR-0025); provider_store.rs AgentProviderStore — cached
+                   per-user UserProviderStore over llm_providers (user rows over globals,
+                   house fallback = global rows else ANTHROPIC_API_KEY; invalidated by
+                   provider CRUD; build_resolver maps userless → house), on
+                   AppState.provider_store; engine loop lands in later steps  ← unit-tested
   study_gen/       study-gen stages (Epic 9): tree (#29) builds a pruned VariationTree
                    (TreeConfig.max_children_by_depth tapers branching with depth —
                    broad near the root, narrow on deep main lines, #160);

@@ -28,6 +28,7 @@ async fn local_app() -> Router {
         mode: Mode::Local,
         engine_service: None,
         llm_provider: None,
+        provider_store: None,
     })
 }
 
@@ -69,6 +70,7 @@ async fn server_mode_requires_auth() {
         mode: Mode::Server,
         engine_service: None,
         llm_provider: None,
+        provider_store: None,
     });
     let (status, _) = send(&app, "/api/threats?fen=x").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);

@@ -136,6 +136,7 @@ mod tests {
             mode: crate::server::config::Mode::Local,
             engine_service: None,
             llm_provider: None,
+            provider_store: None,
         }
     }
 }

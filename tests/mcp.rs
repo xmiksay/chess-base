@@ -270,6 +270,7 @@ async fn missing_bearer_is_unauthorized_with_resource_metadata() {
         mode: Mode::Server,
         engine_service: None,
         llm_provider: None,
+        provider_store: None,
     });
 
     let resp = app
@@ -309,6 +310,7 @@ async fn invalid_bearer_is_unauthorized() {
         mode: Mode::Server,
         engine_service: None,
         llm_provider: None,
+        provider_store: None,
     });
 
     let resp = app
@@ -383,6 +385,7 @@ async fn tools_call_rejects_mutating_a_non_owned_study() {
         mode: Mode::Server,
         engine_service: None,
         llm_provider: None,
+        provider_store: None,
     });
 
     let resp = app

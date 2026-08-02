@@ -1,9 +1,11 @@
-//! HTTP surface for the admin-managed LLM provider registry (issue #20). API
-//! keys are write-only — stored server-side, never returned to the SPA.
+//! HTTP surface for the per-user LLM provider registry (issue #20, per-user
+//! since #198). API keys are write-only — stored server-side, never returned
+//! to the SPA (responses carry a `has_key` flag instead).
 //!
-//! The old assistant session/message routes that shared this file were removed
-//! with the hand-rolled assistant (#198); the entanglement-backed agent surface
-//! lands in later steps.
+//! Every authenticated user manages their own rows; global rows (visible to
+//! everyone) stay admin-only via `is_global`. After a successful mutation the
+//! agent provider store's cache is invalidated so the next model resolution
+//! sees the change.
 
 use axum::{
     extract::{Path, State},
@@ -34,23 +36,44 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Rebuild the agent store's per-user catalogs after a provider mutation.
+/// Best-effort: a failed refresh is logged, the mutation already succeeded.
+async fn invalidate_store(state: &AppState, owner: Option<&str>) {
+    if let Some(store) = &state.provider_store {
+        if let Err(e) = store.invalidate(owner).await {
+            tracing::warn!(error = %format!("{e:#}"), "provider store refresh failed");
+        }
+    }
+}
+
 async fn list_providers(
     State(state): State<AppState>,
     user: CurrentUser,
 ) -> Result<Response, ProviderStoreError> {
-    crate::server::identity::assert_admin(&user).map_err(|_| ProviderStoreError::Forbidden)?;
-    let providers = ProviderService::new(state.db.clone()).list().await?;
+    let providers = ProviderService::new(state.db.clone()).list(&user).await?;
     Ok((StatusCode::OK, Json(providers)).into_response())
 }
 
 #[derive(Deserialize)]
 struct ProviderBody {
     name: String,
+    #[serde(default = "default_wire")]
+    wire: String,
     model: String,
-    /// Secret key, write-only — stored server-side, never returned.
-    api_key: String,
+    #[serde(default)]
+    base_url: Option<String>,
+    /// Secret key, write-only — omitted ⇒ keep the stored key.
+    #[serde(default)]
+    api_key: Option<String>,
     #[serde(default)]
     is_default: bool,
+    /// Write a global row (admin only).
+    #[serde(default)]
+    is_global: bool,
+}
+
+fn default_wire() -> String {
+    "anthropic".to_string()
 }
 
 async fn upsert_provider(
@@ -58,17 +81,22 @@ async fn upsert_provider(
     user: CurrentUser,
     Json(body): Json<ProviderBody>,
 ) -> Result<Response, ProviderStoreError> {
+    let owner = (!body.is_global).then(|| user.id.clone());
     let info = ProviderService::new(state.db.clone())
         .upsert(
             &user,
             ProviderInput {
                 name: body.name,
+                wire: body.wire,
                 model: body.model,
+                base_url: body.base_url,
                 api_key: body.api_key,
                 is_default: body.is_default,
+                is_global: body.is_global,
             },
         )
         .await?;
+    invalidate_store(&state, owner.as_deref()).await;
     Ok((StatusCode::OK, Json(info)).into_response())
 }
 
@@ -80,6 +108,7 @@ async fn delete_provider(
     ProviderService::new(state.db.clone())
         .delete(&user, id)
         .await?;
+    invalidate_store(&state, Some(&user.id)).await;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -88,10 +117,7 @@ async fn delete_provider(
 impl IntoResponse for ProviderStoreError {
     fn into_response(self) -> Response {
         let (status, message) = match &self {
-            ProviderStoreError::Forbidden => (
-                StatusCode::FORBIDDEN,
-                "admin privileges required".to_string(),
-            ),
+            ProviderStoreError::Forbidden => (StatusCode::FORBIDDEN, "not permitted".to_string()),
             ProviderStoreError::NotFound => {
                 (StatusCode::NOT_FOUND, "provider not found".to_string())
             }

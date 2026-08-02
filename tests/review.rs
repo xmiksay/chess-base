@@ -35,6 +35,7 @@ async fn app_with(engine: Option<Arc<EngineService>>) -> (Router, DatabaseConnec
         mode: Mode::Local,
         engine_service: engine,
         llm_provider: None,
+        provider_store: None,
     });
     (app, db)
 }

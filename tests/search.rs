@@ -29,6 +29,7 @@ async fn app_with_db() -> (Router, DatabaseConnection) {
         mode: Mode::Server,
         engine_service: None,
         llm_provider: None,
+        provider_store: None,
     });
     (app, db)
 }

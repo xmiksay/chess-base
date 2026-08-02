@@ -1,10 +1,11 @@
-//! Admin-managed LLM provider registry (issue #20), backing the `llm_providers`
-//! table. The old startup resolution (default row → Anthropic client, env
-//! fallback) was removed with the hand-rolled assistant (#198); the embedded
-//! entanglement agent engine re-wires provider resolution in a later step.
+//! Ownership-aware LLM provider registry (issue #20, per-user since #198)
+//! backing the `llm_providers` table. A row with `owner_id` NULL is a global
+//! (admin-managed) provider every user sees; otherwise it belongs to that
+//! user. The [`AgentProviderStore`](crate::ai::agent::AgentProviderStore)
+//! composes both into each user's resolution catalog.
 //!
 //! API keys are **server-side only**: [`ProviderService::list`] returns
-//! [`ProviderInfo`] without the key — keys never reach the SPA.
+//! [`ProviderInfo`] with a `has_key` flag — keys never reach the SPA.
 
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder,
@@ -12,15 +13,20 @@ use sea_orm::{
 };
 
 use crate::db::entities::llm_providers;
-use crate::server::identity::{assert_admin, AuthError, CurrentUser};
+use crate::server::identity::{scope, AuthError, CurrentUser};
 
 /// A provider config without its secret key — the only shape exposed to clients.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProviderInfo {
     pub id: i32,
     pub name: String,
+    pub wire: String,
     pub model: String,
+    pub base_url: Option<String>,
+    /// Whether a key is stored — the key itself is never serialized.
+    pub has_key: bool,
     pub is_default: bool,
+    pub is_global: bool,
 }
 
 impl From<llm_providers::Model> for ProviderInfo {
@@ -28,8 +34,12 @@ impl From<llm_providers::Model> for ProviderInfo {
         Self {
             id: m.id,
             name: m.name,
+            wire: m.wire,
             model: m.model,
+            base_url: m.base_url,
+            has_key: !m.api_key.is_empty(),
             is_default: m.is_default,
+            is_global: m.owner_id.is_none(),
         }
     }
 }
@@ -37,9 +47,14 @@ impl From<llm_providers::Model> for ProviderInfo {
 /// Fields to create or update a provider.
 pub struct ProviderInput {
     pub name: String,
+    pub wire: String,
     pub model: String,
-    pub api_key: String,
+    pub base_url: Option<String>,
+    /// `None` ⇒ keep the existing key (or store none on create).
+    pub api_key: Option<String>,
     pub is_default: bool,
+    /// Write a global (`owner_id` NULL) row — admin only.
+    pub is_global: bool,
 }
 
 /// Why a provider operation failed. Transport-agnostic.
@@ -59,7 +74,7 @@ impl From<AuthError> for ProviderStoreError {
     }
 }
 
-/// CRUD over `llm_providers`.
+/// CRUD over `llm_providers`, scoped to the calling user.
 #[derive(Clone)]
 pub struct ProviderService {
     db: DatabaseConnection,
@@ -70,44 +85,62 @@ impl ProviderService {
         Self { db }
     }
 
-    /// All configured providers (no keys), newest first.
-    pub async fn list(&self) -> Result<Vec<ProviderInfo>, ProviderStoreError> {
+    /// The caller's own providers plus the global ones (no keys), newest first.
+    pub async fn list(&self, user: &CurrentUser) -> Result<Vec<ProviderInfo>, ProviderStoreError> {
         let rows = llm_providers::Entity::find()
+            .filter(scope(llm_providers::Column::OwnerId, user))
             .order_by_desc(llm_providers::Column::Id)
             .all(&self.db)
             .await?;
         Ok(rows.into_iter().map(ProviderInfo::from).collect())
     }
 
-    /// Create or update a provider by name (admin only). Making this row the
-    /// default clears the flag on every other row so at most one default remains.
+    /// Create or update a provider by name within its ownership scope. A plain
+    /// user writes only their own rows; `is_global` requires admin. Making a
+    /// row the default clears the flag on that owner's other rows (the global
+    /// default only competes among global rows).
     pub async fn upsert(
         &self,
         user: &CurrentUser,
         input: ProviderInput,
     ) -> Result<ProviderInfo, ProviderStoreError> {
-        assert_admin(user)?;
-        if input.is_default {
-            self.clear_defaults().await?;
+        if input.is_global && !user.is_admin {
+            return Err(ProviderStoreError::Forbidden);
         }
+        let owner: Option<String> = (!input.is_global).then(|| user.id.clone());
+
+        if input.is_default {
+            self.clear_defaults(owner.as_deref()).await?;
+        }
+        // Find-by-(owner, name) enforces global-name uniqueness in service
+        // code: SQL NULLs are distinct in the unique index, so two global rows
+        // with one name would otherwise both insert.
         let existing = llm_providers::Entity::find()
+            .filter(owner_condition(owner.as_deref()))
             .filter(llm_providers::Column::Name.eq(input.name.clone()))
             .one(&self.db)
             .await?;
         let model = match existing {
             Some(row) => {
                 let mut active: llm_providers::ActiveModel = row.into();
+                active.wire = Set(input.wire);
                 active.model = Set(input.model);
-                active.api_key = Set(input.api_key);
+                active.base_url = Set(input.base_url);
+                if let Some(key) = input.api_key {
+                    active.api_key = Set(key);
+                }
                 active.is_default = Set(input.is_default);
                 active.update(&self.db).await?
             }
             None => {
                 llm_providers::ActiveModel {
                     name: Set(input.name),
+                    wire: Set(input.wire),
                     model: Set(input.model),
-                    api_key: Set(input.api_key),
+                    base_url: Set(input.base_url),
+                    api_key: Set(input.api_key.unwrap_or_default()),
                     is_default: Set(input.is_default),
+                    owner_id: Set(owner),
                     ..Default::default()
                 }
                 .insert(&self.db)
@@ -117,20 +150,44 @@ impl ProviderService {
         Ok(ProviderInfo::from(model))
     }
 
-    /// Delete a provider by id (admin only).
+    /// Delete a provider by id: a user deletes their own rows, an admin also
+    /// the global ones.
     pub async fn delete(&self, user: &CurrentUser, id: i32) -> Result<(), ProviderStoreError> {
-        assert_admin(user)?;
-        let res = llm_providers::Entity::delete_by_id(id)
+        let row = llm_providers::Entity::find_by_id(id)
+            .one(&self.db)
+            .await?
+            .ok_or(ProviderStoreError::NotFound)?;
+        crate::server::identity::assert_can_write(row.owner_id.as_deref(), user)?;
+        llm_providers::Entity::delete_by_id(id)
             .exec(&self.db)
             .await?;
-        if res.rows_affected == 0 {
-            return Err(ProviderStoreError::NotFound);
-        }
         Ok(())
     }
 
-    async fn clear_defaults(&self) -> Result<(), DbErr> {
+    /// The provider/model pair a new session starts on: the user's own default
+    /// row, else the global default, else `None`. (The `ANTHROPIC_API_KEY` env
+    /// fallback lives in the agent store's house context, not here.)
+    pub async fn resolve_default_for(
+        &self,
+        user: &CurrentUser,
+    ) -> Result<Option<(String, String)>, ProviderStoreError> {
+        for owner in [Some(user.id.as_str()), None] {
+            let row = llm_providers::Entity::find()
+                .filter(owner_condition(owner))
+                .filter(llm_providers::Column::IsDefault.eq(true))
+                .one(&self.db)
+                .await?;
+            if let Some(row) = row {
+                return Ok(Some((row.name, row.model)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Clear `is_default` on every row of one owner scope (`None` = global).
+    async fn clear_defaults(&self, owner: Option<&str>) -> Result<(), DbErr> {
         let rows = llm_providers::Entity::find()
+            .filter(owner_condition(owner))
             .filter(llm_providers::Column::IsDefault.eq(true))
             .all(&self.db)
             .await?;
@@ -143,70 +200,14 @@ impl ProviderService {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::config::{Backend, DbConfig};
-
-    async fn mem_db() -> DatabaseConnection {
-        crate::db::connect(&DbConfig {
-            backend: Backend::Sqlite {
-                path: ":memory:".to_string(),
-            },
-        })
-        .await
-        .expect("connect in-memory db")
-    }
-
-    #[tokio::test]
-    async fn upsert_requires_admin_and_lists_without_keys() {
-        let svc = ProviderService::new(mem_db().await);
-        let plain = CurrentUser {
-            id: "alice".to_string(),
-            is_admin: false,
-        };
-        let input = || ProviderInput {
-            name: "anthropic".to_string(),
-            model: "claude-sonnet-4-6".to_string(),
-            api_key: "secret".to_string(),
-            is_default: true,
-        };
-        assert!(matches!(
-            svc.upsert(&plain, input()).await,
-            Err(ProviderStoreError::Forbidden)
-        ));
-
-        let admin = CurrentUser::local_admin();
-        let info = svc.upsert(&admin, input()).await.expect("upsert");
-        assert_eq!(info.name, "anthropic");
-        assert!(info.is_default);
-
-        // The serialized list never carries the key.
-        let listed = svc.list().await.expect("list");
-        assert_eq!(listed.len(), 1);
-        let json = serde_json::to_string(&listed).unwrap();
-        assert!(!json.contains("secret"), "api key leaked into list output");
-    }
-
-    #[tokio::test]
-    async fn upsert_default_is_unique() {
-        let svc = ProviderService::new(mem_db().await);
-        let admin = CurrentUser::local_admin();
-        for name in ["one", "two"] {
-            svc.upsert(
-                &admin,
-                ProviderInput {
-                    name: name.to_string(),
-                    model: "m".to_string(),
-                    api_key: "k".to_string(),
-                    is_default: true,
-                },
-            )
-            .await
-            .expect("upsert");
-        }
-        let defaults = svc.list().await.unwrap();
-        let count = defaults.iter().filter(|p| p.is_default).count();
-        assert_eq!(count, 1, "only the latest default should remain set");
+/// Exact-owner filter (`None` ⇒ the global rows), as opposed to [`scope`]'s
+/// own-∪-global read scope.
+fn owner_condition(owner: Option<&str>) -> sea_orm::sea_query::SimpleExpr {
+    match owner {
+        Some(id) => llm_providers::Column::OwnerId.eq(id),
+        None => llm_providers::Column::OwnerId.is_null(),
     }
 }
+
+#[cfg(test)]
+mod tests;

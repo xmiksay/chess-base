@@ -43,6 +43,14 @@ sea-orm-migration = { version = "1.1", features = ["sqlx-sqlite", "sqlx-postgres
 # Engine
 vampirc-uci = "0.11"
 
+# Embedded entanglement agent engine (#198): core actor/LLM seam + the runtime's
+# multi-user provider store. `entanglement-provider` is named directly because
+# the catalog building blocks (ProviderEntry/ModelEntry/Wire) are not re-exported
+# by core. Its reqwest 0.12 rides alongside our 0.13 — expected.
+entanglement-core = "0.6.0"
+entanglement-runtime = { version = "0.6.0", default-features = false, features = ["provider"] }
+entanglement-provider = "0.6.0"
+
 # Migrations use #[async_trait::async_trait]
 async-trait = "0.1"
 

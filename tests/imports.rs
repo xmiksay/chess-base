@@ -22,6 +22,7 @@ async fn server_app() -> Router {
         mode: Mode::Server,
         engine_service: None,
         llm_provider: None,
+        provider_store: None,
     })
 }
 

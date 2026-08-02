@@ -25,6 +25,7 @@ async fn server_app() -> Router {
         mode: Mode::Server,
         engine_service: None,
         llm_provider: None,
+        provider_store: None,
     })
 }
 
@@ -353,6 +354,7 @@ async fn local_service_token_authenticates_mcp() {
         mode: Mode::Local,
         engine_service: None,
         llm_provider: None,
+        provider_store: None,
     });
     assert_eq!(mcp_tools_list_status(&app, &token).await, StatusCode::OK);
 }

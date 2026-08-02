@@ -5,6 +5,7 @@ use std::sync::Arc;
 use axum::http::request::Parts;
 use sea_orm::DatabaseConnection;
 
+use crate::ai::agent::AgentProviderStore;
 use crate::ai::llm::LlmProvider;
 use crate::engine::{EngineRegistry, EngineService};
 use crate::server::config::Mode;
@@ -22,6 +23,10 @@ pub struct AppState {
     /// until the entanglement agent engine re-wires provider resolution (#198);
     /// `None` ⇒ the `generate_study` paths are disabled.
     pub llm_provider: Option<Arc<dyn LlmProvider>>,
+    /// Per-user provider store for the embedded entanglement engine (#198).
+    /// Built at startup (it only needs the DB); provider CRUD invalidates it.
+    /// `None` in tests that don't exercise the agent.
+    pub provider_store: Option<Arc<AgentProviderStore>>,
 }
 
 impl AppState {
