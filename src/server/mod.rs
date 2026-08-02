@@ -78,9 +78,8 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
     // One pool backs both facades: the direct batch API and the MCP tool.
     let engine_service = default_engine.map(|c| Arc::new(EngineService::new(c, ENGINE_POOL_SIZE)));
     // The per-user provider store pre-warms from `llm_providers` (post-migration)
-    // and is invalidated by provider CRUD; the agent engine resolves through it.
-    // (`llm_provider` — the old study-generation seam — is re-wired in a later
-    // #198 step; those paths stay disabled meanwhile.)
+    // and is invalidated by provider CRUD; the agent engine resolves through it,
+    // and the batch-LLM paths resolve per calling user via `AppState::llm_for`.
     let provider_store = Some(
         crate::ai::agent::AgentProviderStore::new(db.clone())
             .await
@@ -90,7 +89,6 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
         db: db.clone(),
         mode: cfg.mode,
         engine_service,
-        llm_provider: None,
         provider_store,
         agent: Arc::new(std::sync::OnceLock::new()),
     };

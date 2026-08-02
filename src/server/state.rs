@@ -6,10 +6,12 @@ use axum::http::request::Parts;
 use sea_orm::DatabaseConnection;
 
 use crate::ai::agent::{AgentEngine, AgentProviderStore};
+use crate::ai::llm::entanglement::StackLlmProvider;
 use crate::ai::llm::LlmProvider;
 use crate::engine::{EngineRegistry, EngineService};
 use crate::server::config::Mode;
 use crate::server::identity::{AuthError, CurrentUser};
+use entanglement_provider::UserId;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -19,10 +21,6 @@ pub struct AppState {
     /// `engine_analyse` tool. Built at startup from the registry's resolved
     /// default; `None` ⇒ those paths are disabled.
     pub engine_service: Option<Arc<EngineService>>,
-    /// LLM provider backing AI-assisted study generation (#115). Always `None`
-    /// until the entanglement agent engine re-wires provider resolution (#198);
-    /// `None` ⇒ the `generate_study` paths are disabled.
-    pub llm_provider: Option<Arc<dyn LlmProvider>>,
     /// Per-user provider store for the embedded entanglement engine (#198).
     /// Built at startup (it only needs the DB); provider CRUD invalidates it.
     /// `None` in tests that don't exercise the agent.
@@ -45,6 +43,26 @@ impl AppState {
     /// The running agent engine, if it started.
     pub fn agent(&self) -> Option<&Arc<AgentEngine>> {
         self.agent.get()
+    }
+
+    /// The calling user's batch-LLM provider (#198, step 6): their default
+    /// `llm_providers` row (falling back house-wards, see
+    /// `AgentProviderStore::default_for`) resolved through the agent engine's
+    /// model resolver. `None` ⇒ no engine running, nothing configured for this
+    /// user, or the default row failed to resolve (logged) — callers surface
+    /// their existing 503 "no LLM provider" behavior.
+    pub fn llm_for(&self, user: &CurrentUser) -> Option<Arc<dyn LlmProvider>> {
+        let engine = self.agent()?;
+        let uid = UserId::new(user.id.clone());
+        let (provider, model) = engine.providers.default_for(&uid)?;
+        match StackLlmProvider::resolve(&engine.resolver, Some(&uid), &provider, &model) {
+            Ok(resolved) => Some(Arc::new(resolved)),
+            Err(err) => {
+                tracing::warn!(user = %user.id, provider, model, error = %err,
+                    "default LLM provider failed to resolve");
+                None
+            }
+        }
     }
 }
 

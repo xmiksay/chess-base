@@ -23,7 +23,6 @@ async fn server_app() -> (Router, sea_orm::DatabaseConnection) {
         db: db.clone(),
         mode: Mode::Server,
         engine_service: None,
-        llm_provider: None,
         provider_store: None,
         agent: Default::default(),
     });
@@ -186,7 +185,6 @@ async fn auth_endpoints_are_disabled_in_local_mode() {
         db,
         mode: Mode::Local,
         engine_service: None,
-        llm_provider: None,
         provider_store: None,
         agent: Default::default(),
     });

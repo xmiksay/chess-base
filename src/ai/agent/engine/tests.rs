@@ -11,10 +11,13 @@
 use super::*;
 use crate::ai::agent::persistence::load_records;
 use crate::db::config::DbConfig;
+use crate::db::entities::llm_providers;
 use crate::server::config::Mode;
+use crate::server::identity::CurrentUser;
 use entanglement_core::InMsg;
 use entanglement_provider::UserId;
 use entanglement_runtime::session_store::{integrity_gap, pair_records, LogPayload};
+use sea_orm::{ActiveModelTrait, Set};
 use std::time::Duration;
 
 async fn dummy_app() -> AppState {
@@ -28,7 +31,6 @@ async fn dummy_app() -> AppState {
         db,
         mode: Mode::Local,
         engine_service: None,
-        llm_provider: None,
         provider_store: Some(store),
         agent: Default::default(),
     }
@@ -185,6 +187,61 @@ async fn a_new_engine_resumes_from_the_persisted_log_and_answers_again() {
         text.contains("second prompt"),
         "new prompt answered: {text}"
     );
+}
+
+#[tokio::test]
+async fn llm_for_is_none_without_an_engine_or_any_provider_rows() {
+    let app = dummy_app().await;
+    let admin = CurrentUser::local_admin();
+    // No engine set on the state at all.
+    assert!(app.llm_for(&admin).is_none());
+
+    // Engine running, but the hermetic store has no rows and no env key.
+    let engine = AgentEngine::start(app.clone()).await.expect("engine start");
+    app.agent.set(engine.clone()).ok().expect("set agent once");
+    assert!(app.llm_for(&admin).is_none());
+    engine.shutdown();
+}
+
+#[tokio::test]
+async fn llm_for_resolves_the_callers_default_provider_row() {
+    let db = crate::db::connect(&DbConfig::in_memory())
+        .await
+        .expect("connect in-memory db");
+    let admin = CurrentUser::local_admin();
+    // An openai-wire row: construction needs no key and no network, so
+    // resolution succeeds without ever contacting the (dead) endpoint.
+    llm_providers::ActiveModel {
+        name: Set("zai".to_string()),
+        model: Set("glm-5".to_string()),
+        api_key: Set("k".to_string()),
+        is_default: Set(true),
+        owner_id: Set(Some(admin.id.clone())),
+        wire: Set("openai".to_string()),
+        base_url: Set(Some("http://127.0.0.1:1/v1".to_string())),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("seed provider row");
+
+    let store = AgentProviderStore::new_with_env(db.clone(), None)
+        .await
+        .expect("build provider store");
+    let app = AppState {
+        db,
+        mode: Mode::Local,
+        engine_service: None,
+        provider_store: Some(store),
+        agent: Default::default(),
+    };
+    let engine = AgentEngine::start(app.clone()).await.expect("engine start");
+    app.agent.set(engine.clone()).ok().expect("set agent once");
+
+    let provider = app.llm_for(&admin).expect("default row resolves");
+    assert_eq!(provider.default_model(), "glm-5");
+    assert_eq!(provider.name(), "entanglement");
+    engine.shutdown();
 }
 
 #[tokio::test]

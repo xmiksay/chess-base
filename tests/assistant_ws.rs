@@ -57,7 +57,6 @@ async fn spawn_app(mode: Mode) -> (SocketAddr, AppState) {
         db,
         mode,
         engine_service: None,
-        llm_provider: None,
         provider_store: Some(store),
         agent: Default::default(),
     };

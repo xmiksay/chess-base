@@ -269,7 +269,6 @@ async fn missing_bearer_is_unauthorized_with_resource_metadata() {
         db,
         mode: Mode::Server,
         engine_service: None,
-        llm_provider: None,
         provider_store: None,
         agent: Default::default(),
     });
@@ -310,7 +309,6 @@ async fn invalid_bearer_is_unauthorized() {
         db,
         mode: Mode::Server,
         engine_service: None,
-        llm_provider: None,
         provider_store: None,
         agent: Default::default(),
     });
@@ -386,7 +384,6 @@ async fn tools_call_rejects_mutating_a_non_owned_study() {
         db,
         mode: Mode::Server,
         engine_service: None,
-        llm_provider: None,
         provider_store: None,
         agent: Default::default(),
     });

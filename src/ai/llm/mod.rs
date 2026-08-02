@@ -6,11 +6,15 @@
 //! annotation pass (Epic 9) and its test stubs.
 //!
 //! The old in-crate Anthropic client (and its `Transport` HTTP seam) was
-//! removed with the hand-rolled assistant (#198); the concrete client arrives
-//! with the embedded entanglement agent engine in later steps.
+//! removed with the hand-rolled assistant (#198); the concrete client is
+//! [`entanglement::StackLlmProvider`], an adapter over the embedded
+//! entanglement provider stack resolved per calling user
+//! (`AppState::llm_for`).
 //!
 //! **The API key is server-side only.** Providers are constructed in the backend
 //! and never serialized to the SPA.
+
+pub mod entanglement;
 
 use std::time::Duration;
 

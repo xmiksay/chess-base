@@ -19,7 +19,7 @@ use entanglement_core::{
     AgentMode, AgentProfile, EngineConfig, Holly, OutEvent, Permission, PermissionProfile,
     ProfileRegistry, SessionId,
 };
-use entanglement_provider::HttpClient;
+use entanglement_provider::{HttpClient, ModelResolver};
 use entanglement_runtime::hooks::Hooks;
 use entanglement_runtime::multi_user::SessionUserRegistry;
 use entanglement_runtime::persistence::spawn_persistence_subscriber_with_sink;
@@ -87,6 +87,10 @@ pub struct AgentEngine {
     pub users: SessionUserRegistry,
     pub sessions: SessionService,
     pub providers: Arc<AgentProviderStore>,
+    /// The per-user model resolver the engine itself runs on, cached here so
+    /// `AppState::llm_for` resolves batch-LLM providers through the exact same
+    /// catalog/key resolution without rebuilding a resolver per request.
+    pub resolver: ModelResolver,
     /// Runtime service tasks, in spawn order; aborted in reverse by
     /// [`shutdown`][Self::shutdown].
     tasks: Vec<JoinHandle<()>>,
@@ -108,11 +112,12 @@ impl AgentEngine {
         let specs = bridged.specs();
         let shared = bridged.shared();
 
+        let model_resolver = providers.build_resolver(http.clone());
         let profiles = agent_profiles();
         let cfg = EngineConfig {
             tool_specs: specs,
             profiles: profiles.clone(),
-            model_resolver: Some(providers.build_resolver(http.clone())),
+            model_resolver: Some(model_resolver.clone()),
             system_prompt_resolver: Some(Arc::new(|_: &SessionId, _: &AgentProfile| {
                 Some(SYSTEM_PROMPT.to_string())
             })),
@@ -153,6 +158,7 @@ impl AgentEngine {
             users,
             sessions,
             providers,
+            resolver: model_resolver,
             tasks: vec![executor, writer, persistence, throttle, index],
         }))
     }

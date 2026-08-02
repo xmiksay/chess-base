@@ -33,7 +33,7 @@ commented PGN studies, and integrates UCI engines.
 | `imports` | Transport-agnostic `ImportService` (issue #70): trigger a provider `sync` (Lichess/Chess.com) or ingest an uploaded PGN (`import_pgn` → `ingest_pgn_all`) into a target database, behind the same write guard as `databases` (ADR 0007/0011). A `sync` loads the cursor persisted per `(database, source)` (`imports/cursor.rs` ⇄ `sync_cursors`), runs the collector from it and saves the advanced cursor, so re-syncs fetch only new games (issue #95). HTTP routes (`imports/routes.rs`): `POST /api/import/sync` and `POST /api/import/pgn`, both returning `{ imported, skipped, duplicates, game_ids, errors }` — `game_ids` (the new games' ids, in PGN order, so a client can chain the created game into further calls) and `duplicates` are filled by PGN upload; a sync reports counts only; thin callers. The SPA surface is `ImportView` (`/import`) | DB / HTTP |
 | `engine` | UCI engine config + message parsing (`command`/`analysis` pure), the `manager::Engine` process manager (spawn, handshake, `setoption`, `position`/`go`/`stop`, streamed analysis), the pooled `service::EngineService` facade — one-shot `analyse` plus `analyse_multi` (top-N MultiPV lines for the game-review pass, #119) for batch + MCP (ADR 0014) — and the `download` auto-download manager (platform catalog → fetch + checksum + register, #11) (Stockfish, Lc0/Maia) | process / HTTP |
 | `review` | Fast **engine-only full-game review** (Mode A, #119): replay a stored game and search every position, classifying each ply and writing a rule-based "why" note — no LLM, no API key. `classify` (pure): win-probability buckets (best / great / good / inaccuracy / mistake / blunder) from the eval before vs after a move, plus per-side ACPL + accuracy roll-up (`summarize`). `explain` (pure): the reusable `MoveFact` struct (eval delta, engine's preferred move/line, material won/lost resolved over the PV, missed/allowed mate) rendered as a terse note (`explain`) — the **seam** Mode B's LLM annotation (#31) is meant to consume as ground truth so its strategic prose stays engine-grounded. `service::review_game` is the thin engine shell (gathers one `analyse_multi` per position, then the pure `assemble` does all classification/explanation); `routes` exposes `POST /api/games/{id}/analyse?depth=` returning per-ply `{eval_cp, mate, best_move, best_line, played_rank, classification, explanation}` (`best_line`: the engine PV in SAN, ≤6 plies, for grafting a variation at a critical position, #135) + a per-side summary. Shares the one-shot engine pool (not the interactive WS, so it never starves live analysis) | none (pure core) + engine adapter |
-| `ai/llm` | Provider-agnostic LLM client: `LlmProvider` trait + Anthropic Messages API client (ADR 0013); HTTP behind an injectable `Transport` seam | HTTP |
+| `ai/llm` | Provider-agnostic batch-LLM contract: `LlmProvider` trait + DTOs (ADR 0013), fulfilled by `entanglement::StackLlmProvider` — an adapter that resolves a `(provider, model)` pair through the agent engine's per-user `ModelResolver` (#198) and drains the resolved backend's event stream to one `CompletionResponse`. Resolved per request via `AppState::llm_for(&user)`: the caller's default `llm_providers` row (house fallback included), `None` ⇒ the LLM paths answer 503 | HTTP (via entanglement) |
 | `ai/providers` | Ownership-aware `ProviderService` over the `llm_providers` table (#20, per-user since #198): `owner_id` NULL ⇒ an admin-managed **global** provider every user sees, else the user's own row. `list` returns own ∪ global rows (keys **write-only** — the `ProviderInfo` DTO carries `has_key`/`wire`/`base_url`/`is_global`, never the key); `upsert` writes the caller's own row (`is_global` requires admin, global-name uniqueness enforced in service code since SQL NULLs are distinct in the unique index; `api_key: None` keeps the stored key; `is_default` clears the flag on the same owner scope only); `delete` is owner-or-admin(global); `resolve_default_for` picks the session's starting provider/model (own default → global default → `None`) | DB |
 | `ai/agent` | Embedded entanglement agent engine (#198): `SYSTEM_PROMPT` + the `GATED_TOOLS` approval gate (ADR-0025), and `provider_store::AgentProviderStore` — the crate's `UserProviderStore` impl over `llm_providers`: a pre-warmed per-owner cache (`context()` is a pure sync read, rebuilt by `invalidate()` after provider CRUD) composing each user's rows over the global ones (user wins on a name collision), with a **house** fallback context (global rows, else `ANTHROPIC_API_KEY` read once at startup) serving users with no rows; `build_resolver` wraps entanglement's user resolver so a userless session resolves as the house user; rows map to catalog entries by `wire` (`anthropic`/`openai`/`gemini`; unknown ⇒ OpenAI-compatible if a `base_url` is set, else skipped with a warning), borrowing the builtin catalog's model metadata for same-named providers. Held on `AppState.provider_store`; the engine itself lands in later #198 steps | DB |
 | `ai/assistant` | Embedded Claude study assistant (#20, Direction B / ADR-0025): an in-app chat whose agent loop reuses the **same** in-process `ToolRegistry` the `/mcp` transport serves (no second tool impl). `service::AssistantService` drives the loop: ask the provider → run read-only tool calls automatically → **pause** on any *mutating* tool (`GATED_TOOLS`: the study/game/folder/import mutations — `study_create`/`study_import_pgn`/`study_add_move`/`study_annotate`/`study_set_folder`/`study_set_shapes`/`study_promote_node`/`study_reorder_node`/`study_merge_games`/`study_merge_danger`/`study_analyse`/`game_save_as_study`/`game_delete`/`folder_create`/`folder_update`/`folder_delete`/`import_pgn`/`import_sync`, #183) until the user approves/denies → resume; bounded by `MAX_ITERATIONS` rounds per user message (both the cap and pending approvals are surfaced to the SPA). `store::AssistantStore` persists `assistant_sessions` + the `assistant_messages` transcript (one `ai::llm::Message` JSON per row); sessions are private (owner-scoped). Pure gating/view helpers (`requires_approval`, `pending_approvals`, `iterations_since_user`, `build_view`) are unit-tested; the loop is unit-tested with a stub provider + real in-memory store. HTTP routes (`server/routes/assistant.rs`, `/api/assistant/*`) are thin callers | DB + `ai/llm` provider + tool registry |
@@ -497,21 +497,24 @@ frontend only renders the `serde`-serialized `Plan`.
 
 ## LLM provider (ADR 0013)
 
-`ai/llm` is the provider-agnostic Claude client shared by the batch annotation
-pass (Epic 9) and the interactive assistant (Epic 7). `LlmProvider::complete`
-takes provider-agnostic `Message`s (user / assistant-with-tool-calls /
-tool-results) plus optional `ToolSpec`s and returns text and/or `ToolCall`s — the
-same surface the interactive assistant reuses for tool-calling. The only concrete
-provider today is `anthropic::AnthropicProvider` over `POST /v1/messages`; a small
-trait keeps room for others. The HTTP boundary is the `Transport` trait, so wire
-encoding and response parsing are unit-tested against a stub with no network (the
-one live test is gated behind `ANTHROPIC_API_KEY`). The model id is configurable —
-default Sonnet-class for cost, Opus by override. **The API key is server-side
-only**: it travels in the `x-api-key` header and never reaches the SPA. The server
-builds the provider once at startup — the admin-configured default `llm_providers`
-row (#20) wins, else the `ANTHROPIC_API_KEY` env fallback (`ai/providers::resolve`)
-— and holds it on `AppState.llm_provider` (best-effort, like the engine: nothing
-configured leaves it `None` and disables `generate_study` **and** the assistant).
+`ai/llm` is the provider-agnostic batch-LLM contract used by the study-generation
+paths (Epic 9). `LlmProvider::complete` takes provider-agnostic `Message`s (user /
+assistant-with-tool-calls / tool-results) plus optional `ToolSpec`s and returns
+text and/or `ToolCall`s. Since #198 (step 6) the one concrete implementation is
+`ai/llm/entanglement::StackLlmProvider`: it resolves a `(provider, model)` pair
+through the embedded agent engine's `ModelResolver` (the exact same per-user
+catalog/key resolution the interactive assistant runs on, cached on
+`AgentEngine.resolver`) and fulfils `complete()` by building a fresh backend from
+the resolved `llm_factory` and folding the streamed `LlmEvent`s into one
+`CompletionResponse` (text chunks concatenated, assembled `ToolCall`s collected —
+argument JSON re-parsed to the contract's `Value` — `Finish.usage` mapped;
+reasoning/content-block events dropped). **The API key is server-side only** and
+never reaches the SPA. There is no process-wide provider: routes call
+`AppState::llm_for(&user)` per request, which resolves the *caller's* default
+`llm_providers` row (own default → global default → first row, else the env-key
+house fallback — `AgentProviderStore::default_for`); `None` (no engine, nothing
+configured, or a failed resolution — logged) keeps the old behavior of a clean
+503 on `generate_study` and the danger-map generator.
 
 ## Embedded study assistant (Epic 7 / ADR-0025)
 

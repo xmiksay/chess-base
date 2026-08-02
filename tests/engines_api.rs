@@ -41,7 +41,6 @@ async fn crud_persists_and_default_resolves() {
         db: db.clone(),
         mode: Mode::Local,
         engine_service: None,
-        llm_provider: None,
         provider_store: None,
         agent: Default::default(),
     });
@@ -99,7 +98,6 @@ async fn crud_persists_and_default_resolves() {
         db: db.clone(),
         mode: Mode::Local,
         engine_service: None,
-        llm_provider: None,
         provider_store: None,
         agent: Default::default(),
     });
@@ -150,7 +148,6 @@ async fn writes_require_admin_in_server_mode() {
         db,
         mode: Mode::Server,
         engine_service: None,
-        llm_provider: None,
         provider_store: None,
         agent: Default::default(),
     });

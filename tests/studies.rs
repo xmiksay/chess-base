@@ -28,7 +28,6 @@ async fn server_app_with_db() -> (Router, DatabaseConnection) {
         db: db.clone(),
         mode: Mode::Server,
         engine_service: None,
-        llm_provider: None,
         provider_store: None,
         agent: Default::default(),
     });

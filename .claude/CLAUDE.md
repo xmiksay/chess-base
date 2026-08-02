@@ -95,8 +95,12 @@ src/
                    MoveTree::graft_subtree/resolve_line (dedup + an optional stats
                    comment on the line's final node), into a new study or an existing
                    one, POST /api/studies/add-line (add_line_route.rs) ← unit-tested
-  ai/llm/          LlmProvider trait + DTOs (Epic 9 annotation seam; the concrete client
-                   returns with the entanglement engine, #198)
+  ai/llm/          LlmProvider trait + DTOs (Epic 9 annotation seam); concrete client
+                   entanglement.rs StackLlmProvider (#198 step 6): resolves per-user
+                   (provider, model) via the agent engine's ModelResolver, drains the
+                   backend stream to one CompletionResponse; routes get it per request
+                   from AppState::llm_for(&user) (None ⇒ 503, no process-wide provider)
+                   ← unit-tested
   ai/providers.rs  ownership-aware ProviderService over llm_providers (#20, per-user #198):
                    own + global (admin) rows, keys write-only (has_key flag), per-owner
                    is_default, resolve_default_for (own → global → None)     ← unit-tested
