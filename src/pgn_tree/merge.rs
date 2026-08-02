@@ -104,14 +104,23 @@ impl MoveTree {
     /// is illegal in the running position stops that game's line rather than
     /// corrupting the tree. Games must start from this tree's start position — a
     /// set-up mismatch simply drops the line on the first illegal move.
-    pub fn merge_games(&mut self, games: &[MergeGame]) -> usize {
+    ///
+    /// `max_plies` truncates each game's mainline to its first N plies before
+    /// folding, so a repertoire study reads as opening prep instead of whole games
+    /// (issue #196); `None` or `Some(0)` folds every ply (today's behavior).
+    pub fn merge_games(&mut self, games: &[MergeGame], max_plies: Option<u32>) -> usize {
         let start = self.start_position().to_string();
         let mut stats: HashMap<usize, NodeStat> = HashMap::new();
         let mut added = 0;
+        let cap = max_plies.filter(|&n| n > 0).map(|n| n as usize);
         for game in games {
             let mut cur = self.root;
             let mut fen = start.clone();
-            for san in &game.sans {
+            let sans = match cap {
+                Some(cap) => &game.sans[..game.sans.len().min(cap)],
+                None => &game.sans[..],
+            };
+            for san in sans {
                 // Validate in the running position; a bad move ends this line so a
                 // corrupt or off-start game never derails the merge.
                 let Ok((after, _)) = apply_san(&fen, san, MODE) else {
@@ -209,10 +218,13 @@ mod tests {
     #[test]
     fn merges_shared_prefix_and_dedups() {
         let mut tree = MoveTree::new();
-        let added = tree.merge_games(&[
-            game(&["e4", "e5", "Nf3"], "A", Some(1.0)),
-            game(&["e4", "e5", "Nc3"], "B", Some(0.0)),
-        ]);
+        let added = tree.merge_games(
+            &[
+                game(&["e4", "e5", "Nf3"], "A", Some(1.0)),
+                game(&["e4", "e5", "Nc3"], "B", Some(0.0)),
+            ],
+            None,
+        );
         // e4, e5, Nf3, Nc3 — the shared e4/e5 prefix is not duplicated.
         assert_eq!(added, 4);
         assert_eq!(tree.mainline(), vec!["e4", "e5", "Nf3"]);
@@ -222,11 +234,14 @@ mod tests {
     fn reorders_by_frequency() {
         let mut tree = MoveTree::new();
         // Two games open 1.d4, one opens 1.e4 → d4 is the most-common first move.
-        tree.merge_games(&[
-            game(&["e4"], "A", None),
-            game(&["d4"], "B", None),
-            game(&["d4"], "C", None),
-        ]);
+        tree.merge_games(
+            &[
+                game(&["e4"], "A", None),
+                game(&["d4"], "B", None),
+                game(&["d4"], "C", None),
+            ],
+            None,
+        );
         assert_eq!(tree.mainline(), vec!["d4"]);
         // Both first moves survive as siblings under the root.
         let root_children: Vec<_> = tree.nodes[tree.root]
@@ -240,10 +255,13 @@ mod tests {
     #[test]
     fn annotates_branch_points_with_count_and_score() {
         let mut tree = MoveTree::new();
-        tree.merge_games(&[
-            game(&["e4", "e5"], "Carlsen–Nepo 2023", Some(1.0)),
-            game(&["e4", "c5"], "Carlsen–So 2022", Some(0.0)),
-        ]);
+        tree.merge_games(
+            &[
+                game(&["e4", "e5"], "Carlsen–Nepo 2023", Some(1.0)),
+                game(&["e4", "c5"], "Carlsen–So 2022", Some(0.0)),
+            ],
+            None,
+        );
         // e4 is not a branch point (single first move) → no stats comment.
         let e4 = tree.nodes[tree.root].children[0];
         assert!(tree.nodes[e4].comment.is_none());
@@ -270,9 +288,9 @@ mod tests {
             game(&["d4", "d5"], "B", Some(0.5)),
         ];
         let mut tree = MoveTree::new();
-        tree.merge_games(&games);
+        tree.merge_games(&games, None);
         let before = serde_json::to_string(&tree).unwrap();
-        let added = tree.merge_games(&games);
+        let added = tree.merge_games(&games, None);
         assert_eq!(added, 0);
         assert_eq!(serde_json::to_string(&tree).unwrap(), before);
     }
@@ -281,7 +299,7 @@ mod tests {
     fn illegal_move_stops_a_line_without_panicking() {
         let mut tree = MoveTree::new();
         // "e5" is illegal as White's first move → the whole line is dropped.
-        let added = tree.merge_games(&[game(&["e5", "Nf3"], "bad", None)]);
+        let added = tree.merge_games(&[game(&["e5", "Nf3"], "bad", None)], None);
         assert_eq!(added, 0);
         assert!(tree.mainline().is_empty());
     }
@@ -292,5 +310,49 @@ mod tests {
         assert!(is_stats_comment("1 game"));
         assert!(!is_stats_comment("A key tabiya"));
         assert!(!is_stats_comment("games galore"));
+    }
+
+    #[test]
+    fn max_plies_truncates_longer_games_but_not_shorter_ones() {
+        let mut tree = MoveTree::new();
+        let added = tree.merge_games(
+            &[
+                // Longer than the cap: truncated to the first 3 plies.
+                game(&["e4", "e5", "Nf3", "Nc6", "Bb5"], "long", None),
+                // Exactly at the cap: kept in full.
+                game(&["d4", "d5", "c4"], "exact", None),
+            ],
+            Some(3),
+        );
+        assert_eq!(added, 6); // e4,e5,Nf3 + d4,d5,c4
+        let long_leaf: Vec<_> = std::iter::successors(Some(tree.root), |&id| {
+            tree.nodes[id].children.first().copied()
+        })
+        .skip(1)
+        .filter_map(|id| tree.nodes[id].san.clone())
+        .collect();
+        assert!(!long_leaf.contains(&"Nc6".to_string()));
+        assert!(!long_leaf.contains(&"Bb5".to_string()));
+    }
+
+    #[test]
+    fn max_plies_zero_or_none_is_uncapped() {
+        let sans = ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6"];
+        let mut capped_zero = MoveTree::new();
+        capped_zero.merge_games(&[game(&sans, "g", None)], Some(0));
+        let mut uncapped = MoveTree::new();
+        uncapped.merge_games(&[game(&sans, "g", None)], None);
+        assert_eq!(
+            serde_json::to_string(&capped_zero).unwrap(),
+            serde_json::to_string(&uncapped).unwrap()
+        );
+        assert_eq!(capped_zero.mainline(), sans.to_vec());
+    }
+
+    #[test]
+    fn game_shorter_than_the_cap_is_kept_whole() {
+        let mut tree = MoveTree::new();
+        tree.merge_games(&[game(&["e4", "e5"], "short", None)], Some(30));
+        assert_eq!(tree.mainline(), vec!["e4", "e5"]);
     }
 }

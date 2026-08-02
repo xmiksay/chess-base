@@ -60,8 +60,26 @@ describe('MergeGamesDialog', () => {
       game_ids: [1, 2, 3],
       name: 'Repertoire',
       folder_id: null,
+      max_plies: 30,
     })
     expect(wrapper.emitted('merged')?.[0]).toEqual([created])
+  })
+
+  it('sends no max_plies when the length field is set to 0 (whole games)', async () => {
+    const created = { id: 9, name: 'Repertoire' } as Study
+    vi.mocked(api.studies.mergeGames).mockResolvedValue(created)
+
+    const wrapper = await setup([1, 2, 3])
+    await wrapper.find('[data-test="merge-new-name"]').setValue('Repertoire')
+    await wrapper.find('[data-test="merge-max-moves"]').setValue('0')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(api.studies.mergeGames).toHaveBeenCalledWith({
+      game_ids: [1, 2, 3],
+      name: 'Repertoire',
+      folder_id: null,
+    })
   })
 
   it('merges into an existing study when one is picked (name not required)', async () => {
@@ -79,6 +97,7 @@ describe('MergeGamesDialog', () => {
     expect(api.studies.mergeGames).toHaveBeenCalledWith({
       game_ids: [1, 2],
       study_id: 4,
+      max_plies: 30,
     })
     expect(wrapper.emitted('merged')?.[0]).toEqual([merged])
   })

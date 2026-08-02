@@ -37,8 +37,11 @@ fn study_merge_games_tool() -> Tool {
          the mainline), branch points get a `\"N games, X% (labels)\"` stats comment, \
          and transpositions are tagged. Set `study_id` to graft into an existing \
          study you may write; omit it to create a new one (`name` required), \
-         optionally filed into `folder_id`. Only standard-start games merge. \
-         Discover game ids via `db_list_games`. Returns the study id.",
+         optionally filed into `folder_id`. Only standard-start games merge. Set \
+         `max_plies` (e.g. 30 for 15 moves) to cap each game's mainline to its \
+         opening so the study reads as opening prep instead of whole games; omitted \
+         or `0` folds every ply. Discover game ids via `db_list_games`. Returns the \
+         study id.",
         json!({
             "type": "object",
             "properties": {
@@ -51,7 +54,11 @@ fn study_merge_games_tool() -> Tool {
                     "description": "Graft into this existing study instead of creating one."
                 },
                 "name": { "type": "string", "description": "Name for the new study (required when `study_id` is omitted)." },
-                "folder_id": { "type": "integer", "description": "Folder for the new study (optional)." }
+                "folder_id": { "type": "integer", "description": "Folder for the new study (optional)." },
+                "max_plies": {
+                    "type": "integer", "minimum": 0,
+                    "description": "Cap each game's mainline to its first N plies before folding (e.g. 30 = 15 moves); omitted or 0 folds every ply (whole games)."
+                }
             },
             "required": ["game_ids"]
         }),
@@ -80,10 +87,14 @@ async fn study_merge_games(app: AppState, user: CurrentUser, args: Value) -> Too
         .get("folder_id")
         .and_then(Value::as_i64)
         .map(|n| n as i32);
+    let max_plies = args
+        .get("max_plies")
+        .and_then(Value::as_u64)
+        .map(|n| n as u32);
 
     let service = StudyService::new(app.db.clone());
     match service
-        .merge_games(&user, &game_ids, study_id, name, folder_id)
+        .merge_games(&user, &game_ids, study_id, name, folder_id, max_plies)
         .await
     {
         Ok(study) => ToolOutcome::ok(json!({ "id": study.id }).to_string()),
@@ -241,6 +252,10 @@ mod tests {
             .find(|t| t["name"] == "study_merge_games")
             .expect("study_merge_games tool");
         assert_eq!(tool["inputSchema"]["required"], json!(["game_ids"]));
+        assert_eq!(
+            tool["inputSchema"]["properties"]["max_plies"]["type"],
+            json!("integer")
+        );
     }
 
     #[tokio::test]

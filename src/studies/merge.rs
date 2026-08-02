@@ -30,6 +30,10 @@ impl StudyService {
     /// have no moves, or won't parse are skipped — transpositional entry orders stay
     /// visible as branches, matching the repertoire intent. Re-merging the same games
     /// is idempotent (SAN-follow dedup).
+    ///
+    /// `max_plies` caps each game's mainline to its opening (issue #196), so the
+    /// study reads as opening prep rather than whole games; `None` or `Some(0)`
+    /// folds every ply (today's behavior).
     pub async fn merge_games(
         &self,
         user: &CurrentUser,
@@ -37,6 +41,7 @@ impl StudyService {
         study_id: Option<i32>,
         name: Option<String>,
         folder_id: Option<i32>,
+        max_plies: Option<u32>,
     ) -> Result<studies::Model, StudyError> {
         if game_ids.is_empty() {
             return Err(StudyError::InvalidEdit("no games to merge".into()));
@@ -84,7 +89,7 @@ impl StudyService {
                         "cannot merge games into a study with a set-up start position".into(),
                     ));
                 }
-                tree.merge_games(&sources);
+                tree.merge_games(&sources, max_plies);
                 self.persist(study, &tree).await?;
                 self.get(user, study_id).await
             }
@@ -101,7 +106,7 @@ impl StudyService {
                 let database_id = source_database
                     .ok_or_else(|| StudyError::InvalidEdit("no source database".into()))?;
                 let mut tree = MoveTree::new();
-                tree.merge_games(&sources);
+                tree.merge_games(&sources, max_plies);
                 let model = studies::ActiveModel {
                     database_id: Set(database_id),
                     owner_id: Set(Some(user.id.clone())),

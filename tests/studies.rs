@@ -1062,6 +1062,51 @@ async fn merge_games_builds_a_frequency_ordered_repertoire_study() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
+/// `max_plies` (issue #196) caps each merged game's mainline to its opening so a
+/// repertoire study reads as opening prep rather than whole games.
+#[tokio::test]
+async fn merge_games_caps_line_length_with_max_plies() {
+    let (app, db) = server_app_with_db().await;
+    let bob = register(&app, "bob").await;
+    let db_id = make_database(&app, &bob).await as i32;
+
+    ingest_pgn(
+        &db,
+        db_id,
+        "[White \"A\"]\n[Black \"B\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *\n",
+    )
+    .await
+    .unwrap();
+    let (_, list) = send(
+        &app,
+        get_req(&format!("/api/games?database_id={db_id}"), &bob),
+    )
+    .await;
+    let ids: Vec<i64> = list["games"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["id"].as_i64().unwrap())
+        .collect();
+
+    let (status, study) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/merge-games",
+            &bob,
+            json!({ "game_ids": ids, "name": "Capped", "max_plies": 4 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let nodes = study["tree"]["nodes"].as_array().unwrap();
+    let sans: Vec<&str> = nodes.iter().filter_map(|n| n["san"].as_str()).collect();
+    assert_eq!(sans.len(), 4, "the tree stops after 4 plies: {sans:?}");
+    assert!(!sans.contains(&"Bb5"));
+    assert!(!sans.contains(&"a6"));
+}
+
 /// `POST /api/studies/{id}/mark-transpositions` (issue #174) tags a variation
 /// that transposes into the mainline via a Zobrist collision — here the classic
 /// Queen's-pawn/English reorder (1.d4 d5 2.c4 vs 1.c4 d5 2.d4) — and leaves it

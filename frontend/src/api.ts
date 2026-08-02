@@ -225,11 +225,14 @@ export const api = {
     // Merge many games' mainlines into one repertoire study (issue #170): frequency
     // orders the continuations and pins per-branch stats. `studyId` set ⇒ graft into
     // that study; otherwise a new study is created (`name` required) from the start.
+    // `max_plies` caps each game's mainline to its opening (issue #196); omitted or
+    // `0` folds every ply (whole games).
     mergeGames: (body: {
       game_ids: number[]
       study_id?: number
       name?: string
       folder_id?: number | null
+      max_plies?: number
     }) => send<Study>('POST', '/api/studies/merge-games', body),
     // Add a SAN line to a study (issue #173, position explorer): grafts as
     // deduped, legality-checked variations. `study_id` set ⇒ graft into that

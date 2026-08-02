@@ -23,6 +23,12 @@ const folderId = ref<number | null>(null)
 const merging = ref(false)
 const error = ref<string | null>(null)
 
+// Opening cutoff (issue #196): each merged game's mainline is truncated to its
+// first `maxMoves` moves so the study reads as opening prep instead of whole
+// games. Entered in moves, sent to the API as plies (`* 2`); `0` = whole games.
+const maxMoves = ref(15)
+const maxPlies = computed(() => (maxMoves.value > 0 ? maxMoves.value * 2 : 0))
+
 const canSubmit = computed(
   () =>
     !merging.value &&
@@ -45,6 +51,7 @@ async function submit() {
       ...(studyId.value != null
         ? { study_id: studyId.value }
         : { name: name.value.trim(), folder_id: folderId.value }),
+      ...(maxPlies.value > 0 ? { max_plies: maxPlies.value } : {}),
     })
     emit('merged', study)
   } catch (e) {
@@ -134,6 +141,17 @@ async function submit() {
               {{ f.name }}
             </option>
           </select>
+        </label>
+
+        <label class="flex flex-col gap-1 text-sm">
+          Max length (moves, 0 = whole games)
+          <input
+            v-model.number="maxMoves"
+            data-test="merge-max-moves"
+            type="number"
+            min="0"
+            class="rounded border border-border px-2 py-1"
+          >
         </label>
 
         <p

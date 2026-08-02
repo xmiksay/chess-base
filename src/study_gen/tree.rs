@@ -78,12 +78,17 @@ pub struct TreeConfig {
 }
 
 impl Default for TreeConfig {
+    /// A useful out-of-the-box shape (issue #196): the old `max_depth: 6` (3
+    /// moves) read as trivial, so this reaches 16 plies (8 moves) with a taper —
+    /// broad near the root to cover the opponent's main tries, narrowing to the
+    /// principal line deep (issue #160) — bounded by a larger `max_nodes` so the
+    /// engine-eval budget stays predictable.
     fn default() -> Self {
         Self {
-            max_depth: 6,
+            max_depth: 16,
             max_children: 3,
-            max_children_by_depth: None,
-            max_nodes: 64,
+            max_children_by_depth: Some(vec![4, 3, 3, 2, 2, 1]),
+            max_nodes: 200,
             min_frequency: 0.05,
             eval_margin_cp: 100,
         }
