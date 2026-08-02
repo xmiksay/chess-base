@@ -1,15 +1,22 @@
-//! Embedded entanglement agent engine (#198). Step 2: constants + the
-//! per-user provider store; the engine itself lands in later steps.
+//! Embedded entanglement agent engine (#198). Steps 2–3: constants, the
+//! per-user provider store, permission policy and the MCP tool bridge; the
+//! engine itself lands in later steps.
 //!
 //! Holds the pieces that survived the hand-rolled assistant (moved verbatim
 //! from the deleted `ai::assistant`): the system prompt steering the study
 //! agent and the approval gate over mutating MCP tools (ADR-0025).
 //! [`provider_store`] implements entanglement's `UserProviderStore` seam over
-//! the `llm_providers` table.
+//! the `llm_providers` table; [`policy`] its `PermissionResolver`/`GrantStore`
+//! seams over `agent_grants` (m0008); [`tools`] bridges the MCP registry 1:1
+//! into the engine's tool vocabulary.
 
+pub mod policy;
 pub mod provider_store;
+pub mod tools;
 
+pub use policy::{base_profile, AgentPolicy};
 pub use provider_store::{AgentProviderStore, HOUSE_USER};
+pub use tools::{bridge_registry, BridgedTool};
 
 /// The tools whose effects mutate the caller's data and therefore require an
 /// explicit approval before the loop runs them. Everything else (engine/database
