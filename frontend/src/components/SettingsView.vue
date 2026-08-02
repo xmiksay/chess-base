@@ -9,6 +9,7 @@ import {
 } from '../stores/settings'
 import type { Database } from '../types'
 import EnginesSettings from './EnginesSettings.vue'
+import ProvidersSettings from './ProvidersSettings.vue'
 
 // Per-user settings (issue #13): theme, board theme, piece set and default
 // database. Each control writes through the store, which mirrors to localStorage
@@ -201,5 +202,7 @@ const setEngineHash = (e: Event) =>
     </section>
 
     <EnginesSettings />
+
+    <ProvidersSettings />
   </div>
 </template>

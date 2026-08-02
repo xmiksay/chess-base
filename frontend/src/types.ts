@@ -587,47 +587,144 @@ export interface ImportSummary {
   state: ImportState
 }
 
-// --- AI study assistant (issue #20) -----------------------------------------
+// --- AI assistant WebSocket protocol (issue #198) ---------------------------
+// Mirrors src/server/assistant_ws/protocol.rs + the entanglement engine's
+// `kind`-tagged snake_case InMsg/OutEvent wire shapes. Pure fold logic lives in
+// lib/assistantStream.ts; these are the shared wire types views/stores consume.
 
-/** A model-requested tool call; `requires_approval` marks a mutating tool. */
-export interface AssistantToolCall {
-  id: string
-  name: string
-  input: unknown
-  requires_approval: boolean
-}
-
-/** A tool result fed back into the loop. */
-export interface AssistantToolResult {
-  tool_call_id: string
-  content: string
-  is_error: boolean
-}
-
-/** One transcript turn: `role` plus whichever of the optional fields applies. */
-export interface AssistantMessage {
-  role: 'user' | 'assistant' | 'tool_results'
+/** One multimodal content block; the SPA builds and reads text parts only. */
+export interface ContentPart {
+  type: string
   text?: string
-  tool_calls?: AssistantToolCall[]
-  tool_results?: AssistantToolResult[]
 }
 
-/** A session sidebar row (no transcript). */
-export interface AssistantSessionSummary {
-  id: number
-  title: string
-  model: string
+/** Session lifecycle state carried by the `status` event. */
+export type AgentState =
+  | 'idle'
+  | 'thinking'
+  | 'working'
+  | 'waiting_agent'
+  | 'waiting_approval'
+  | 'waiting_answer'
+  | 'paused'
+  | 'done'
+  | 'error'
+
+/** One labelled choice of a model-driven `user_question`. */
+export interface AssistantQuestionOption {
+  label: string
+  description?: string | null
 }
 
-/** A full session with its transcript + agent-loop state. */
-export interface AssistantSession {
+/** One question of a `user_question` event (free text is always allowed). */
+export interface AssistantQuestion {
+  question: string
+  options: AssistantQuestionOption[]
+  multi_select?: boolean
+}
+
+/**
+ * Engine → client events (the subset the SPA folds; unknown kinds are dropped
+ * by the reducer). `input` on tool events is a JSON *string*.
+ */
+export type AssistantOutEvent =
+  | { kind: 'text_delta'; session: string; seq: number; text: string }
+  | { kind: 'reasoning_delta'; session: string; seq: number; text: string }
+  | { kind: 'tool_call_delta'; session: string; seq: number; request_id: string; tool: string; delta: string }
+  | { kind: 'tool_call'; session: string; seq: number; request_id: string; tool: string; input: string }
+  | { kind: 'tool_request'; session: string; seq: number; request_id: string; tool: string; input: string }
+  | { kind: 'tool_exec'; session: string; seq: number; request_id: string; tool: string; input: string }
+  | { kind: 'tool_output'; session: string; seq: number; request_id: string; tool: string; output: string }
+  | { kind: 'user_question'; session: string; seq: number; request_id: string; questions: AssistantQuestion[] }
+  | { kind: 'status'; session: string; state: AgentState }
+  | {
+      kind: 'usage'
+      session: string
+      seq: number
+      input_tokens: number
+      output_tokens: number
+      cached_input_tokens: number
+      cache_write_tokens: number
+      cost_usd: number | null
+    }
+  | { kind: 'error'; session: string; seq: number; message: string }
+  | { kind: 'done'; session: string; seq: number }
+  | { kind: 'compacted'; session: string; seq: number; summary: string }
+  | { kind: 'plan'; session: string; seq: number; content: string }
+  | { kind: 'task_list'; session: string; seq: number; content: string }
+  | { kind: 'session_started'; session: string }
+  | { kind: 'session_ended'; session: string; ts: number }
+  | { kind: 'session_hibernated'; session: string; ts: number }
+  | { kind: 'session_meta_changed'; session: string; name?: string | null; action?: string | null }
+
+/** Client → engine messages the SPA sends (riding in an `in` frame). */
+export type AssistantInMsg =
+  | { kind: 'prompt'; session: string; content: ContentPart[] }
+  | { kind: 'approve'; session: string; request_id: string; scope?: 'session' | 'always' }
+  | { kind: 'reject'; session: string; request_id: string; reason: string | null }
+  | { kind: 'answer_question'; session: string; request_id: string; answers: string[][] }
+  | { kind: 'stop'; session: string }
+  | { kind: 'set_session_meta'; session: string; name: string; if_unset: boolean }
+
+/** A conversation sidebar row (`sessions` frame item). */
+export interface AgentSessionSummary {
+  root_session_id: string
+  name: string | null
+  agent: string
+  created_at: string
+  last_active: string
+  /** Whether the engine currently holds this conversation in memory. */
+  live: boolean
+}
+
+/** One replayed transcript record of a `history` frame. */
+export interface AssistantHistoryRecord {
+  dir: 'in' | 'out'
+  payload: AssistantInMsg | AssistantOutEvent
+}
+
+/** Server → client envelope frames on `/api/assistant/ws`. */
+export type AssistantServerFrame =
+  | { type: 'out'; ev: AssistantOutEvent }
+  | { type: 'sessions'; items: AgentSessionSummary[] }
+  | { type: 'created'; root: string }
+  | { type: 'history'; root: string; gapped: boolean; records: AssistantHistoryRecord[] }
+  | { type: 'deleted'; root: string }
+  | { type: 'error'; code?: 'no_provider' | 'not_found' | null; message: string }
+  | { type: 'gap'; dropped: number }
+  | { type: 'throttled'; active: boolean }
+  | { type: 'ping' }
+
+/** Client → server envelope frames on `/api/assistant/ws`. */
+export type AssistantClientFrame =
+  | { type: 'in'; msg: AssistantInMsg }
+  | { type: 'list' }
+  | { type: 'new'; prompt: string; name: string | null }
+  | { type: 'open'; root: string }
+  | { type: 'delete'; root: string }
+  | { type: 'pong' }
+
+// --- LLM provider registry (issue #20, per-user since #198) -----------------
+
+/** A provider row; the API key is write-only (`has_key` stands in for it). */
+export interface ProviderInfo {
   id: number
-  title: string
+  name: string
+  wire: string
   model: string
-  messages: AssistantMessage[]
-  /** Mutating calls awaiting an approve/deny decision. */
-  pending_approvals: AssistantToolCall[]
-  awaiting_approval: boolean
-  iterations: number
-  iteration_cap: number
+  base_url: string | null
+  has_key: boolean
+  is_default: boolean
+  is_global: boolean
+}
+
+/** Create/update body; `api_key` omitted or blank keeps the stored key. */
+export interface ProviderBody {
+  name: string
+  wire: string
+  model: string
+  base_url?: string | null
+  api_key?: string | null
+  is_default: boolean
+  is_global: boolean
 }

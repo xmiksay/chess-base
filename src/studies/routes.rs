@@ -296,10 +296,10 @@ async fn generate(
         )
             .into_response()
     })?;
-    let provider = state.llm_provider.as_ref().ok_or_else(|| {
+    let provider = state.llm_for(&user).ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            "No language model configured: set ANTHROPIC_API_KEY to enable study generation.",
+            "No language model configured: add an LLM provider to enable study generation.",
         )
             .into_response()
     })?;

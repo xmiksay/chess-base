@@ -41,7 +41,8 @@ async fn get_set_round_trip_and_persists() {
         db: db.clone(),
         mode: Mode::Local,
         engine_service: None,
-        llm_provider: None,
+        provider_store: None,
+        agent: Default::default(),
     });
 
     // Defaults: an empty object before anything is stored.
@@ -80,7 +81,8 @@ async fn get_set_round_trip_and_persists() {
         db: db.clone(),
         mode: Mode::Local,
         engine_service: None,
-        llm_provider: None,
+        provider_store: None,
+        agent: Default::default(),
     });
     let (_, settings) = send(&app2, get("/api/settings")).await;
     assert_eq!(settings["theme"], "dark");
@@ -95,7 +97,8 @@ async fn rejects_invalid_theme_and_unknown_database() {
         db,
         mode: Mode::Local,
         engine_service: None,
-        llm_provider: None,
+        provider_store: None,
+        agent: Default::default(),
     });
 
     let (status, body) = send(&app, put("/api/settings", json!({"theme": "neon"}))).await;
@@ -118,7 +121,8 @@ async fn engine_settings_round_trip_through_the_route() {
         db,
         mode: Mode::Local,
         engine_service: None,
-        llm_provider: None,
+        provider_store: None,
+        agent: Default::default(),
     });
 
     // In-range engine settings persist and come back through GET.
@@ -156,7 +160,8 @@ async fn server_mode_requires_auth() {
         db,
         mode: Mode::Server,
         engine_service: None,
-        llm_provider: None,
+        provider_store: None,
+        agent: Default::default(),
     });
 
     let (status, _) = send(&app, get("/api/settings")).await;

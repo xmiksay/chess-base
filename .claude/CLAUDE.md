@@ -95,12 +95,32 @@ src/
                    MoveTree::graft_subtree/resolve_line (dedup + an optional stats
                    comment on the line's final node), into a new study or an existing
                    one, POST /api/studies/add-line (add_line_route.rs) ← unit-tested
-  ai/llm/          LlmProvider trait + Anthropic Messages API client (Transport seam, key server-side)
-  ai/providers.rs  ProviderService over llm_providers table (#20): admin-managed providers
-                   (key server-side); default row builds the provider at startup, else env
-  ai/assistant/    embedded Claude study assistant (#20, Direction B): agent loop driving the
-                   SAME in-process MCP ToolRegistry — iteration cap + per-tool approval
-                   (mutating tools gated); store.rs persists sessions/transcript   ← unit-tested
+  ai/llm/          LlmProvider trait + DTOs (Epic 9 annotation seam); concrete client
+                   entanglement.rs StackLlmProvider (#198 step 6): resolves per-user
+                   (provider, model) via the agent engine's ModelResolver, drains the
+                   backend stream to one CompletionResponse; routes get it per request
+                   from AppState::llm_for(&user) (None ⇒ 503, no process-wide provider)
+                   ← unit-tested
+  ai/providers.rs  ownership-aware ProviderService over llm_providers (#20, per-user #198):
+                   own + global (admin) rows, keys write-only (has_key flag), per-owner
+                   is_default, resolve_default_for (own → global → None)     ← unit-tested
+  ai/agent/        embedded entanglement 0.6.0 agent engine (#198, ADR-0040 — replaces
+                   the hand-rolled ai/assistant; m0008 drops its tables, adds
+                   agent_grants/agent_events/agent_sessions): SYSTEM_PROMPT +
+                   GATED_TOOLS approval gate (ADR-0025); provider_store.rs
+                   AgentProviderStore — cached per-user UserProviderStore over
+                   llm_providers (user rows over globals, house fallback = global rows
+                   else ANTHROPIC_API_KEY; DEFAULT_PIN `~default` sentinel: the build
+                   profile pins it, the resolver maps it to the caller's default row
+                   at session start); policy.rs AgentPolicy (GATED_TOOLS→Ask,
+                   Session grants in-memory, Always grants persisted in agent_grants);
+                   tools.rs BridgedTool (MCP registry 1:1, session→CurrentUser scoping,
+                   32KiB output cap); persistence.rs DbRecordSink (bounded channel →
+                   agent_events, ord per root); sessions.rs SessionService (list/create/
+                   open/delete, ownership fail-closed, integrity_gap-guarded resume);
+                   engine.rs AgentEngine::start (Holly + tool executor + persistence tap
+                   + throttle responder + index subscriber; idle_ttl 30min; compaction
+                   on the session's own model)  ← unit-tested
   study_gen/       study-gen stages (Epic 9): tree (#29) builds a pruned VariationTree
                    (TreeConfig.max_children_by_depth tapers branching with depth —
                    broad near the root, narrow on deep main lines, #160);
@@ -164,9 +184,13 @@ src/
                    (ADR-0027, no internal LLM); opening_tree/danger_map take an
                    optional `save_as` to seed a study server-side (#155, study_gen::seed,
                    returns {study_id,node_count}, no tree JSON) — all thin callers of
-                   the shared services. Mutating tools are gated behind the assistant's
-                   approval flow (`ai::assistant::GATED_TOOLS`, ADR-0025).
-                   routes/assistant.rs: AI assistant chat + provider registry (#20)
+                   the shared services. Mutating tools are gated behind the agent's
+                   approval flow (`ai::agent::GATED_TOOLS`, ADR-0025/0040).
+                   assistant_ws.rs (+protocol.rs): GET /api/assistant/ws — the
+                   streaming assistant relay onto the agent engine (envelope over
+                   InMsg/OutEvent + session CRUD, ownership-filtered both ways,
+                   history replay, ping/pong); routes/providers.rs: per-user LLM
+                   provider CRUD at /api/assistant/providers (keys write-only)
   bin/chess-base.rs  CLI entry (clap)
 frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
                    (strict `vue-tsc`; shared API/domain types in src/types.ts; ADR 0021).
@@ -177,6 +201,10 @@ frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
                    depth-indented blocks (MoveTreeLine) with per-node promote/demote
                    /delete actions. Engine options (MultiPV/Threads/Hash) persist
                    per user via settings (lib/useEnginePrefs); analysis on by default.
+                   Assistant (#198): stores/assistant.ts reconnecting WS client over
+                   the pure lib/assistantStream.ts fold → AssistantView streaming
+                   bubbles/tool chips/approval+question cards; ProvidersSettings
+                   manages the caller's LLM providers in Settings.
 ```
 
 **Layering rule:** pure logic (`position`, `pgn_tree`, `openings`, `plans`) is I/O-free and fully

@@ -1,10 +1,10 @@
 //! AI integration.
 //!
-//! [`llm`] is the provider-agnostic LLM client layer — the foundation shared by
-//! the planned batch annotation pass (Epic 9) and the interactive assistant
-//! (Epic 7). Both need a Claude API client; extracting it here keeps the core
-//! batch pass from depending on the optional interactive work.
+//! [`llm`] is the provider-agnostic LLM client layer — the request/response
+//! types the batch annotation pass (Epic 9) programs against. [`agent`] is the
+//! embedded entanglement agent engine (#198) replacing the old hand-rolled
+//! assistant; [`providers`] is the admin-managed provider registry backing it.
 
-pub mod assistant;
+pub mod agent;
 pub mod llm;
 pub mod providers;

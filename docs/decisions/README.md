@@ -44,3 +44,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0036 | The MCP tool surface is symmetrical to the HTTP API |
 | 0037 | k8s deployment: public GHCR image with bundled Stockfish |
 | 0038 | PGN import returns the created game ids; content-hash dedup on every import path |
+| 0040 | Embed the entanglement agent engine (streaming WS assistant, per-user providers) |

@@ -1,5 +1,6 @@
 //! HTTP server: wiring the router, state, embedded SPA and lifecycle.
 
+pub mod assistant_ws;
 pub mod auth;
 pub mod browser;
 pub mod config;
@@ -15,7 +16,7 @@ pub use config::{AppConfig, Mode};
 pub use identity::{assert_admin, scope, AuthError, CurrentUser};
 pub use state::AppState;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -76,18 +77,33 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
 
     // One pool backs both facades: the direct batch API and the MCP tool.
     let engine_service = default_engine.map(|c| Arc::new(EngineService::new(c, ENGINE_POOL_SIZE)));
-    // The LLM provider: the admin-configured default row (issue #20) wins, else
-    // the `ANTHROPIC_API_KEY` env fallback. `None` ⇒ the assistant + study
-    // generation paths stay disabled; the server still starts.
-    let llm_provider = crate::ai::providers::ProviderService::new(db.clone())
-        .resolve()
-        .await;
+    // The per-user provider store pre-warms from `llm_providers` (post-migration)
+    // and is invalidated by provider CRUD; the agent engine resolves through it,
+    // and the batch-LLM paths resolve per calling user via `AppState::llm_for`.
+    let provider_store = Some(
+        crate::ai::agent::AgentProviderStore::new(db.clone())
+            .await
+            .context("building the agent provider store")?,
+    );
     let state = AppState {
         db: db.clone(),
         mode: cfg.mode,
         engine_service,
-        llm_provider,
+        provider_store,
+        agent: Arc::new(std::sync::OnceLock::new()),
     };
+    // The embedded agent engine (#198, step 4). A startup failure disables the
+    // assistant (`/api/health` reports `llm: false`) but never takes the server
+    // down — chess-base must run with no LLM configured at all.
+    match crate::ai::agent::AgentEngine::start(state.clone()).await {
+        Ok(engine) => {
+            let _ = state.agent.set(engine);
+        }
+        Err(e) => tracing::error!(
+            error = %format!("{e:#}"),
+            "agent engine failed to start; assistant disabled"
+        ),
+    }
     let app = build_router(state);
 
     let addr = SocketAddr::new(cfg.host, cfg.port);

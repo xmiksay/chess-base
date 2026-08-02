@@ -23,7 +23,8 @@ async fn server_app() -> (Router, sea_orm::DatabaseConnection) {
         db: db.clone(),
         mode: Mode::Server,
         engine_service: None,
-        llm_provider: None,
+        provider_store: None,
+        agent: Default::default(),
     });
     (app, db)
 }
@@ -184,7 +185,8 @@ async fn auth_endpoints_are_disabled_in_local_mode() {
         db,
         mode: Mode::Local,
         engine_service: None,
-        llm_provider: None,
+        provider_store: None,
+        agent: Default::default(),
     });
     let (status, _) = register(&app, "alice", "password123").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);

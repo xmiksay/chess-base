@@ -9,12 +9,14 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::server::{embed::Assets, engine_ws, identity::CurrentUser, state::AppState};
+use crate::server::{
+    assistant_ws, embed::Assets, engine_ws, identity::CurrentUser, state::AppState,
+};
 
-mod assistant;
 mod engines;
 pub mod mcp;
 mod oauth;
+mod providers;
 
 /// Build the application router.
 pub fn router(state: AppState) -> Router {
@@ -22,6 +24,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/whoami", get(whoami))
         .route("/api/engine/analyse", get(engine_ws::analyse))
+        .route("/api/assistant/ws", get(assistant_ws::ws))
         .fallback(static_handler)
         .with_state(state.clone());
 
@@ -45,7 +48,7 @@ pub fn router(state: AppState) -> Router {
         ))
         .merge(crate::studies::add_line_route::router(state.clone()))
         .merge(crate::studies::merge_danger_route::router(state.clone()))
-        .merge(assistant::router(state.clone()))
+        .merge(providers::router(state.clone()))
         .merge(oauth::router(state.clone()))
         .merge(mcp::router(state))
 }
@@ -70,13 +73,21 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
         // Capability flags so the SPA can enable engine review (Mode A) and gate
         // the LLM study generator (Mode B) without probing the endpoints.
         "engine": state.engine_service.is_some(),
-        "llm": state.llm_provider.is_some(),
+        // The agent engine is up *and* at least one provider surface exists
+        // (a user/global `llm_providers` row or the env-key house fallback).
+        "llm": state.agent().is_some_and(|a| a.providers.has_any_context()),
     }))
 }
 
 /// Serve an embedded asset, falling back to `index.html` for SPA routes.
 async fn static_handler(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
+    // An unmatched `/api/*` path is an API miss, not an SPA route — return 404
+    // instead of the SPA shell (the removed assistant session routes land here,
+    // #198).
+    if path.starts_with("api/") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let path = if path.is_empty() { "index.html" } else { path };
 
     if let Some(file) = Assets::get(path) {
