@@ -8,7 +8,8 @@ import { useStudiesStore } from '../stores/studies'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { useSettingsStore } from '../stores/settings'
 import { useEngineStore } from '../stores/engine'
-import type { Study } from '../types'
+import { useDangerStore } from '../stores/danger'
+import type { DangerTree, Study } from '../types'
 
 vi.mock('../api', () => ({
   api: {
@@ -100,5 +101,46 @@ describe('StudyView', () => {
 
     await wrapper.find('[data-test="toggle-threats"]').setValue(true)
     expect(update).toHaveBeenCalledWith({ showThreats: true })
+  })
+
+  // Issue #190: "Clear arrows" must clear the live engine-analysis overlays
+  // (including the danger layer) and keep them off, without ever touching the
+  // node's persisted pinned shapes — those have their own "Clear pinned plan".
+  it('clears the live overlay layers and leaves the pinned shape untouched', async () => {
+    const settings = useSettingsStore()
+    const update = vi.spyOn(settings, 'update').mockResolvedValue()
+    const wrapper = await mountWithStudy()
+
+    const editor = useStudyEditorStore()
+    const danger = useDangerStore()
+    // A danger node whose parent sits exactly at the selected node's FEN, so
+    // `dangerShapesForFen` resolves an arrow for it (mirrors lib/dangerShapes.test.ts).
+    danger.tree = {
+      root: 0,
+      nodes: [
+        { id: 0, parent: null, ply: 0, children: [1], fen: editor.fen },
+        {
+          id: 1,
+          parent: 0,
+          ply: 1,
+          san: 'e5',
+          fen: 'irrelevant',
+          children: [],
+          tag: { kind: 'Trap', role: 'Caution', only_move_gap: 100, miss_rate: 0.3, eval: { cp: -20 } },
+        },
+      ],
+    } as unknown as DangerTree
+    await flushPromises()
+
+    const board = wrapper.findComponent(Board)
+    expect(board.props('overlayShapes')).toEqual([{ orig: 'e7', dest: 'e5', brush: 'dangerCaution' }])
+
+    await wrapper.find('[data-test="clear-arrows"]').trigger('click')
+    await flushPromises()
+
+    expect(update).toHaveBeenCalledWith({ showPlans: false, showThreats: false, showMasterMoves: false })
+    expect(board.props('overlayShapes')).toEqual([])
+    // The node's persisted pinned shape (the editable `shapes` layer) is untouched.
+    expect(board.props('shapes')).toEqual([{ orig: 'd2', dest: 'd4', brush: 'green' }])
   })
 })

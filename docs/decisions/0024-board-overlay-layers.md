@@ -38,10 +38,12 @@ without each writing to it directly.
   master off) when a flag is absent, so older blobs and fresh users behave
   sensibly.
 
-- **Clear = clear hand-drawn arrows.** The computed layers are governed by their
-  toggles; the "Clear arrows" control clears the user's own right-click drawings
-  via `Board.clearUserShapes` (`cg.setShapes([])`), leaving the auto-shape layers
-  intact.
+- ~~**Clear = clear hand-drawn arrows.** The computed layers are governed by
+  their toggles; the "Clear arrows" control clears the user's own right-click
+  drawings via `Board.clearUserShapes` (`cg.setShapes([])`), leaving the
+  auto-shape layers intact.~~ Superseded by ADR-0041: "Clear arrows" now
+  targets the computed layers themselves (turns their toggles off), not the
+  hand-drawn shapes.
 
 **Consequences.** Threats ship without any engine/analysis dependency, so the
 Plans toggle + master-moves layer + persistence + threats all land together. The

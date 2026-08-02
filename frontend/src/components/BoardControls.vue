@@ -93,9 +93,10 @@ function toggleLayer(key: 'showPlans' | 'showThreats' | 'showMasterMoves', value
       <button
         class="ml-auto rounded border border-border px-2 py-1 text-xs"
         data-test="clear-arrows"
+        title="Clear the live engine-analysis arrows (plans/threats/master/danger) and keep them off until re-enabled"
         @click="$emit('clear-arrows')"
       >
-        Clear arrows
+        Clear engine arrows
       </button>
     </div>
   </div>

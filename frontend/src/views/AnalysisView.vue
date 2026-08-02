@@ -15,15 +15,11 @@ import type { BoardMove } from '../types'
 const game = useGameStore()
 const settings = useSettingsStore()
 const error = ref<string | null>(null)
-const boardRef = ref<InstanceType<typeof Board> | null>(null)
 
 // Composed overlay layers (plans/threats/master) driven by the board's live FEN.
-const { boardShapes } = useBoardOverlays(() => game.fen)
-
-/** Clear the user's hand-drawn arrows from the board (computed layers stay). */
-function clearArrows() {
-  boardRef.value?.clearUserShapes()
-}
+// `clearArrows` (issue #190) turns off every layer so the live engine-analysis
+// arrows disappear and stay off until the user re-enables a toggle.
+const { boardShapes, clear: clearArrows } = useBoardOverlays(() => game.fen)
 
 /** Delete a node (and its line) from the in-memory analysis tree, after confirm. */
 function onRemove(id: number) {
@@ -85,7 +81,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         <div class="flex items-stretch gap-2">
           <BoardEvalBar :fen="game.fen" />
           <Board
-            ref="boardRef"
             :fen="game.fen"
             :orientation="game.orientation"
             :dests="game.legalDests"
