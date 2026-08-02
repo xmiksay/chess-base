@@ -2,7 +2,7 @@
 // Variation-tree editor (issue #8): pick/create a study, play moves on the board
 // to build a mainline + variations, navigate the tree, and annotate moves. The
 // board (chessground) and tree stay in sync through the study-editor store.
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Board from '../components/Board.vue'
 import BoardControls from '../components/BoardControls.vue'
 import BoardEvalBar from '../components/BoardEvalBar.vue'
@@ -32,24 +32,29 @@ const editor = useStudyEditorStore()
 const settings = useSettingsStore()
 const danger = useDangerStore()
 
-const boardRef = ref<InstanceType<typeof Board> | null>(null)
-
 // Toggleable overlay layers (plans / threats / master, #123) driven by the
 // selected node's FEN. The engine-PV arrows ride along as the Plans layer, so
 // they stay read-only auto-shapes that never clobber the node's pinned drawings.
-const { boardShapes } = useBoardOverlays(() => editor.fen)
+const { boardShapes, clear: clearEngineOverlays } = useBoardOverlays(() => editor.fen)
 
 // Engine-only danger arrows (#156): the dangerous replies available from the
 // selected node, derived locally from the walked DangerTree. Composed on top of
 // the standard overlay layers so they coexist with plans / threats / master.
+// "Clear arrows" (issue #190) hides this layer without discarding the walked
+// tree (the side panel keeps its data); re-running the walk shows it again.
+const dangerVisible = ref(true)
+watch(() => danger.tree, () => { dangerVisible.value = true })
 const overlayShapes = computed(() => [
   ...boardShapes.value,
-  ...dangerShapesForFen(danger.tree, editor.fen),
+  ...(dangerVisible.value ? dangerShapesForFen(danger.tree, editor.fen) : []),
 ])
 
-/** Clear the user's hand-drawn arrows; the computed overlay layers stay. */
+/** "Clear arrows" (issue #190): turn off the live engine-analysis overlays
+ * (plans/threats/master/danger) and keep them off. Never touches the node's
+ * persisted pinned shapes — those have their own "Clear pinned plan" control. */
 function clearArrows() {
-  boardRef.value?.clearUserShapes()
+  clearEngineOverlays()
+  dangerVisible.value = false
 }
 
 /** Delete a node (and its subtree) from the open study, after confirming. */
@@ -103,9 +108,11 @@ async function onExport(withEval: boolean) {
 }
 
 // Pinned plan arrows on the selected node (#61); the stored `Shape` model
-// matches chessground's `DrawShape` (orig/dest/brush).
+// matches chessground's `DrawShape` (orig/dest/brush). Copy the array — Board
+// hands it straight to chessground, which mutates its shapes layer in place
+// (issue #190), and that must never happen to the Pinia-held original.
 const pinnedShapes = computed(
-  () => (editor.currentNode?.shapes ?? []) as unknown as DrawShape[],
+  () => [...(editor.currentNode?.shapes ?? [])] as unknown as DrawShape[],
 )
 
 async function onBoardMove({ from, to }: BoardMove) {
@@ -257,7 +264,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           <div class="flex items-stretch gap-2">
             <BoardEvalBar :fen="editor.fen" />
             <Board
-              ref="boardRef"
               :fen="editor.fen"
               :dests="editor.legalDests"
               :movable="true"

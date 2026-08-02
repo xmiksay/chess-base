@@ -131,9 +131,15 @@ master-moves** layer (`/api/search/tree` → `lib/masterShapes.ts`, arrows sized
 labelled by frequency). `lib/useBoardOverlays.ts` (used by `AnalysisView`) watches
 the position + each layer's persisted toggle (`stores/settings.ts`
 `showPlans`/`showThreats`/`showMasterMoves`), re-loads the position-derived layers
-and clears a layer the moment it is switched off; the toggle row + a **Clear
-arrows** control (clears the user's hand-drawn shapes, `Board.clearUserShapes`)
-live in `components/BoardControls.vue`. `components/AnalysisPanel.vue` embeds the
+and clears a layer the moment it is switched off; its `clear()` (issue #190)
+turns every toggle off in one call, so the **Clear engine arrows** control in
+`components/BoardControls.vue` empties the live overlay layers and keeps them off
+until a toggle is re-enabled — `StudyView` folds its danger overlay (`stores/danger.ts`)
+into the same clear via a local visibility flag, without discarding the walked
+tree. Hand-drawn (right-click) arrows are a separate, never-persisted layer:
+`Board.vue` preserves them across `cg.set()` calls (which otherwise reset
+chessground's drawable-shapes layer on every `fen` change) by saving and
+restoring `cg.state.drawable.shapes` around the call. `components/AnalysisPanel.vue` embeds the
 shared `components/EnginePanel.vue` (+ `EvalBar.vue`) — eval bar, MultiPV lines,
 depth/nps and the analyse toggle — and adds the engine options + play-vs-engine
 controls + the per-line **Pin** seam via slots; hovering a PV row sets the store's

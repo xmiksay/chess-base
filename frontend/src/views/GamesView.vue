@@ -60,10 +60,11 @@ const selectedDb = ref<number | null>(null)
 const loadError = ref<string | null>(null)
 // Engine capability flag from `/api/health`; null until fetched.
 const engineEnabled = ref<boolean | null>(null)
-const boardRef = ref<InstanceType<typeof Board> | null>(null)
 
 // Composed overlay layers (plans/threats/master) driven by the board's live FEN.
-const { boardShapes } = useBoardOverlays(() => games.fen)
+// `clearArrows` (issue #190) turns off every layer so the live engine-analysis
+// arrows disappear and stay off until the user re-enables a toggle.
+const { boardShapes, clear: clearArrows } = useBoardOverlays(() => games.fen)
 
 /** A "White – Black" label for a game row, tolerating missing names. */
 function players(g: GameRow): string {
@@ -79,11 +80,6 @@ function sortArrow(field: GameSortField): string {
 // Playing an off-line move branches a variation (useTreeBoard follow-or-branch).
 function onMove({ from, to }: BoardMove) {
   games.playMove({ from, to })
-}
-
-/** Clear the user's hand-drawn arrows from the board (computed layers stay). */
-function clearArrows() {
-  boardRef.value?.clearUserShapes()
 }
 
 /** Delete a game from the open database, after confirming. */
@@ -327,7 +323,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         class="lg:w-1/2"
       >
         <Board
-          ref="boardRef"
           :fen="games.fen"
           :orientation="games.orientation"
           :dests="games.legalDests"

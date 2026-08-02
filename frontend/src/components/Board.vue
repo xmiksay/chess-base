@@ -99,9 +99,18 @@ onMounted(() => {
   }
 })
 
+// `cg.set()` always carries `fen`, and chessground resets the user-drawn
+// (right-click) shapes layer whenever `config.fen` is set (issue #190) — so
+// hand-drawn arrows would otherwise vanish on every ply step. Save and restore
+// that layer around the call; the auto-shape overlays are unaffected.
 watch(
   () => [props.fen, props.orientation, props.dests, props.movable, props.lastMove],
-  () => cg && cg.set(config()),
+  () => {
+    if (!cg) return
+    const drawn = cg.state.drawable.shapes
+    cg.set(config())
+    cg.setShapes(drawn)
+  },
   { deep: true },
 )
 
@@ -118,15 +127,6 @@ watch(
     else if (cg) cg.setAutoShapes([])
   },
 )
-
-// Clear the user's right-click-drawn arrows (issue #123). Leaves the computed
-// auto-shape layers (plans / threats / master) intact — those are toggled off
-// via their layer switches, not this control.
-function clearUserShapes() {
-  cg?.setShapes([])
-}
-
-defineExpose({ clearUserShapes })
 </script>
 
 <template>

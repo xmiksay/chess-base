@@ -44,5 +44,14 @@ export function useBoardOverlays(fen: () => string) {
     { immediate: true },
   )
 
-  return { boardShapes }
+  // "Clear arrows" (issue #190): turn off every position-derived layer so the
+  // engine-analysis arrows disappear and stay off — recomputation only resumes
+  // once the user flips a layer toggle back on.
+  function clear() {
+    overlays.clearThreats()
+    overlays.clearMaster()
+    settings.update({ showPlans: false, showThreats: false, showMasterMoves: false })
+  }
+
+  return { boardShapes, clear }
 }
