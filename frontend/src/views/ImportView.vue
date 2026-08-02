@@ -2,19 +2,22 @@
 // Game-import view (issue #70): pick a target database, then either sync from
 // Lichess / Chess.com (username + optional token) or upload a `.pgn` file. Each
 // import runs as a tracked job; the store folds their statuses into a summary.
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useImportStore } from '../stores/import'
 import type { ImportSource } from '../types'
 
 const store = useImportStore()
 
-// The collection the import writes into; defaults to the first visible database.
+// The collection the import writes into; remembered across visits (issue
+// #197) instead of always resetting to the first database on mount.
+const LAST_TARGET_KEY = 'chess-base:import:lastTargetId'
 const targetId = ref<number | null>(null)
 
-const sync = reactive<{ source: ImportSource; username: string; token: string }>({
+const sync = reactive<{ source: ImportSource; username: string; token: string; full: boolean }>({
   source: 'lichess',
   username: '',
   token: '',
+  full: false,
 })
 const pgnFile = ref<File | null>(null)
 
@@ -31,6 +34,10 @@ const summaryText = computed(() => {
   return `${s.imported} game(s) imported${duplicates} across ${s.total} job(s)${failed}.`
 })
 
+function formatSyncedAt(iso: string) {
+  return new Date(iso).toLocaleString()
+}
+
 function startSync() {
   if (!canSync.value) return
   const databaseId = targetId.value
@@ -40,6 +47,7 @@ function startSync() {
     source: sync.source,
     username: sync.username.trim(),
     token: supportsToken.value ? sync.token.trim() : '',
+    full: sync.full,
   })
 }
 
@@ -56,10 +64,18 @@ async function uploadPgn() {
   store.uploadPgn({ databaseId, name: file.name, pgn })
 }
 
+// Persist the chosen target so a later visit resumes on it instead of
+// silently resetting to the first database (issue #197).
+watch(targetId, (id) => {
+  if (id != null) localStorage.setItem(LAST_TARGET_KEY, String(id))
+})
+
 onMounted(async () => {
   await store.loadDatabases()
   if (targetId.value == null && store.databases.length) {
-    targetId.value = store.databases[0].id
+    const remembered = Number(localStorage.getItem(LAST_TARGET_KEY))
+    const stillExists = store.databases.some((db) => db.id === remembered)
+    targetId.value = stillExists ? remembered : store.databases[0].id
   }
 })
 </script>
@@ -163,6 +179,14 @@ onMounted(async () => {
           Sync
         </button>
       </div>
+      <label class="mt-3 flex items-center gap-2 text-sm text-muted">
+        <input
+          v-model="sync.full"
+          type="checkbox"
+          data-test="full-resync"
+        >
+        Full re-sync (ignore the saved cursor and re-fetch the whole history)
+      </label>
     </form>
 
     <!-- PGN upload -->
@@ -229,7 +253,7 @@ onMounted(async () => {
             class="text-muted"
             data-test="job-imported"
           >
-            {{ job.imported }} game(s){{ job.duplicates ? ` · ${job.duplicates} duplicate(s)` : '' }}
+            {{ job.imported }} new{{ job.duplicates ? ` · ${job.duplicates} already present` : '' }}<template v-if="job.syncedAt"> · last synced {{ formatSyncedAt(job.syncedAt) }}</template>
           </span>
           <span
             v-else-if="job.status === 'error'"

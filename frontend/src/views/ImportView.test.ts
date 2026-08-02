@@ -13,6 +13,7 @@ vi.mock('../api', () => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
   setActivePinia(createPinia())
   vi.mocked(api.databases.list).mockResolvedValue([
     { id: 1, name: 'My games', owner_id: 'u1', kind: 'own', index_depth: null, global: false },
@@ -58,7 +59,7 @@ describe('ImportView', () => {
   })
 
   it('triggers a sync against the chosen collection and renders the result', async () => {
-    vi.mocked(api.import.sync).mockResolvedValue({ imported: 7 })
+    vi.mocked(api.import.sync).mockResolvedValue({ imported: 7, synced_at: '2026-08-02T10:00:00Z' })
     const wrapper = mount(ImportView)
     await flushPromises()
 
@@ -67,11 +68,36 @@ describe('ImportView', () => {
     await wrapper.find('[data-test="sync-form"]').trigger('submit.prevent')
     await flushPromises()
 
-    expect(api.import.sync).toHaveBeenCalledWith(1, 'lichess', 'alice', 'tok')
+    expect(api.import.sync).toHaveBeenCalledWith(1, 'lichess', 'alice', 'tok', false)
     const job = wrapper.find('[data-test="job"]')
     expect(job.find('[data-test="job-status"]').text()).toBe('success')
     expect(job.find('[data-test="job-imported"]').text()).toContain('7')
+    expect(job.find('[data-test="job-imported"]').text()).toContain('last synced')
     expect(wrapper.find('[data-test="summary"]').text()).toContain('7 game(s) imported')
+  })
+
+  it('sends the full-resync flag when the checkbox is checked', async () => {
+    vi.mocked(api.import.sync).mockResolvedValue({ imported: 1 })
+    const wrapper = mount(ImportView)
+    await flushPromises()
+
+    await wrapper.find('[data-test="username"]').setValue('alice')
+    await wrapper.find('[data-test="full-resync"]').setValue(true)
+    await wrapper.find('[data-test="sync-form"]').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(api.import.sync).toHaveBeenCalledWith(1, 'lichess', 'alice', '', true)
+  })
+
+  it('remembers the last target collection across a remount', async () => {
+    const first = mount(ImportView)
+    await flushPromises()
+    await first.find('[data-test="target"]').setValue('2')
+    first.unmount()
+
+    const second = mount(ImportView)
+    await flushPromises()
+    expect((second.find('[data-test="target"]').element as HTMLSelectElement).value).toBe('2')
   })
 
   it('surfaces a failed sync as an error job', async () => {

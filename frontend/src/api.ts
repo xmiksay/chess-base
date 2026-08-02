@@ -334,14 +334,22 @@ export const api = {
 
   // Game import (issue #70): trigger a Lichess / Chess.com sync, or upload a
   // PGN file, into a target database. Both return `{ imported }` — the number of
-  // games ingested this run. A blank `token` is omitted (Lichess only).
+  // games ingested this run. A blank `token` is omitted (Lichess only). `full`
+  // (issue #197) ignores the persisted cursor and re-syncs the whole history.
   import: {
-    sync: (databaseId: number, source: ImportSource, username: string, token?: string) =>
+    sync: (
+      databaseId: number,
+      source: ImportSource,
+      username: string,
+      token?: string,
+      full = false,
+    ) =>
       send<ImportResult>('POST', '/api/import/sync', {
         database_id: databaseId,
         source,
         username,
         ...(token ? { token } : {}),
+        full,
       }),
     uploadPgn: (databaseId: number, pgn: string) =>
       send<ImportResult>('POST', '/api/import/pgn', { database_id: databaseId, pgn }),

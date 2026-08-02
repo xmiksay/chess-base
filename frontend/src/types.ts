@@ -561,6 +561,9 @@ export interface ImportResult {
   game_ids?: number[]
   skipped?: number
   errors?: string[]
+  // A provider sync's completion time (RFC 3339), issue #197. `null`/absent
+  // for a PGN upload.
+  synced_at?: string | null
 }
 
 export type JobStatus = 'running' | 'success' | 'error'
@@ -572,6 +575,7 @@ export interface ImportJob {
   status: JobStatus
   imported: number
   duplicates: number
+  syncedAt: string | null
   error: string | null
 }
 

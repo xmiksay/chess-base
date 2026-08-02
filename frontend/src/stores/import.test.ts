@@ -23,8 +23,8 @@ describe('foldStatus', () => {
 
   it('is running while any job is in flight', () => {
     const s = foldStatus([
-      { id: 1, kind: 'sync', label: 'a', status: 'running', imported: 0, duplicates: 0, error: null },
-      { id: 2, kind: 'sync', label: 'b', status: 'success', imported: 5, duplicates: 0, error: null },
+      { id: 1, kind: 'sync', label: 'a', status: 'running', imported: 0, duplicates: 0, syncedAt: null, error: null },
+      { id: 2, kind: 'sync', label: 'b', status: 'success', imported: 5, duplicates: 0, syncedAt: null, error: null },
     ])
     expect(s.state).toBe('running')
     expect(s.running).toBe(1)
@@ -32,23 +32,23 @@ describe('foldStatus', () => {
 
   it('is done when every finished job succeeded and sums the import counts', () => {
     const s = foldStatus([
-      { id: 1, kind: 'sync', label: 'a', status: 'success', imported: 5, duplicates: 0, error: null },
-      { id: 2, kind: 'sync', label: 'b', status: 'success', imported: 3, duplicates: 2, error: null },
+      { id: 1, kind: 'sync', label: 'a', status: 'success', imported: 5, duplicates: 0, syncedAt: null, error: null },
+      { id: 2, kind: 'sync', label: 'b', status: 'success', imported: 3, duplicates: 2, syncedAt: null, error: null },
     ])
     expect(s).toMatchObject({ state: 'done', succeeded: 2, failed: 0, imported: 8, duplicates: 2 })
   })
 
   it('is error when all jobs failed', () => {
     const s = foldStatus([
-      { id: 1, kind: 'sync', label: 'a', status: 'error', imported: 0, duplicates: 0, error: null },
+      { id: 1, kind: 'sync', label: 'a', status: 'error', imported: 0, duplicates: 0, syncedAt: null, error: null },
     ])
     expect(s).toMatchObject({ state: 'error', failed: 1 })
   })
 
   it('is partial when some succeeded and some failed', () => {
     const s = foldStatus([
-      { id: 1, kind: 'sync', label: 'a', status: 'success', imported: 2, duplicates: 0, error: null },
-      { id: 2, kind: 'sync', label: 'b', status: 'error', imported: 0, duplicates: 0, error: null },
+      { id: 1, kind: 'sync', label: 'a', status: 'success', imported: 2, duplicates: 0, syncedAt: null, error: null },
+      { id: 2, kind: 'sync', label: 'b', status: 'error', imported: 0, duplicates: 0, syncedAt: null, error: null },
     ])
     expect(s).toMatchObject({ state: 'partial', succeeded: 1, failed: 1, imported: 2 })
   })
@@ -73,16 +73,26 @@ describe('import store', () => {
   })
 
   it('records a successful sync as a job and folds it into the summary', async () => {
-    vi.mocked(api.import.sync).mockResolvedValue({ imported: 12 })
+    vi.mocked(api.import.sync).mockResolvedValue({ imported: 12, synced_at: '2026-08-02T10:00:00Z' })
     const store = useImportStore()
 
     await store.syncSource({ databaseId: 1, source: 'lichess', username: 'alice', token: 'tok' })
     await flushPromises()
 
-    expect(api.import.sync).toHaveBeenCalledWith(1, 'lichess', 'alice', 'tok')
+    expect(api.import.sync).toHaveBeenCalledWith(1, 'lichess', 'alice', 'tok', false)
     expect(store.jobs).toHaveLength(1)
-    expect(store.jobs[0]).toMatchObject({ kind: 'sync', status: 'success', imported: 12 })
+    expect(store.jobs[0]).toMatchObject({ kind: 'sync', status: 'success', imported: 12, syncedAt: '2026-08-02T10:00:00Z' })
     expect(store.summary).toMatchObject({ state: 'done', imported: 12 })
+  })
+
+  it('passes the full-resync flag through to the sync call', async () => {
+    vi.mocked(api.import.sync).mockResolvedValue({ imported: 4 })
+    const store = useImportStore()
+
+    await store.syncSource({ databaseId: 1, source: 'chesscom', username: 'hikaru', full: true })
+    await flushPromises()
+
+    expect(api.import.sync).toHaveBeenCalledWith(1, 'chesscom', 'hikaru', undefined, true)
   })
 
   it('records a failed sync with its error message', async () => {
