@@ -96,4 +96,39 @@ describe('DangerMapPanel', () => {
       'No new lines — already merged.',
     )
   })
+
+  it('prefills our_side from the side to move at the start position (issue #194)', async () => {
+    // Startpos (White to move) defaults to White...
+    const white = mount(DangerMapPanel, { props: { engineEnabled: true, studyId: 5 } })
+    expect(
+      (white.find('[data-test="danger-side"]').element as HTMLSelectElement).value,
+    ).toBe('White')
+
+    // ...while a start FEN with Black to move (e.g. a Black repertoire's
+    // opening spot after the opponent's first move) defaults to Black.
+    const black = mount(DangerMapPanel, {
+      props: {
+        engineEnabled: true,
+        studyId: 5,
+        startFen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+      },
+    })
+    expect(
+      (black.find('[data-test="danger-side"]').element as HTMLSelectElement).value,
+    ).toBe('Black')
+  })
+
+  it('never clobbers an in-progress spine edit when the start position changes', async () => {
+    const wrapper = mount(DangerMapPanel, { props: { engineEnabled: true, studyId: 5 } })
+    await wrapper.find('[data-test="danger-spine"]').setValue('1. e4 *')
+    await wrapper.find('[data-test="danger-side"]').setValue('Black')
+
+    await wrapper.setProps({
+      startFen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+    })
+
+    expect(
+      (wrapper.find('[data-test="danger-side"]').element as HTMLSelectElement).value,
+    ).toBe('Black')
+  })
 })

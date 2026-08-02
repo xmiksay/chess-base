@@ -334,6 +334,7 @@ async fn generate(
             .date_to
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
+        database_id: None,
     };
 
     let params = GenerateParams {

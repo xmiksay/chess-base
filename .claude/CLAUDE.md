@@ -151,11 +151,17 @@ src/
                    Off-book node (never searched);
                    spine.rs (#139) PGN-repertoire walk: per opponent position runs
                    analyse_multi (movetime/variation) → reachability/trap/only-move
-                   /attack → a tagged DangerTree (Weapon/Caution/Off-book); the
-                   trap test's "tempting reply" (PV2) is weighted by its DB
-                   frequency among human replies and the mate-only/single-line
-                   case is explicit (#176, ADR-0026 update; thresholds still
-                   unmeasured — FE overlay labelled "experimental");
+                   /attack → a tagged DangerTree (Weapon/Caution/Off-book — user-facing
+                   text says "Not in your repertoire", #194); the trap test's
+                   "tempting reply" (PV2) is weighted by its DB frequency among
+                   human replies and the mate-only/single-line case is explicit
+                   (#176, ADR-0026 update; thresholds still unmeasured — FE overlay
+                   labelled "experimental"). Reachability/miss-rate/bait-frequency
+                   compare DB SAN to the spine's own spelling via
+                   pgn_tree::san_core (a spine `Bb5` matches a DB `Bb5+`) and walk
+                   `answered ∪ kept` so a prepared reply absent from/below the cut
+                   in the DB stats is still expanded, never silently dropped
+                   (#194, ADR-0026 update);
                    attack.rs (#142) pure pawn-storm-toward-king detector reusing
                    plans.rs → Caution;
                    danger_generate.rs (#140) orchestrator: spine walk → fold to a
@@ -166,7 +172,10 @@ src/
                    sibling POST /api/studies/danger-map (#156, same file) is a
                    thin caller over walk_danger_spine_live returning the raw
                    DangerTree (+roles digest) — NO LLM, so the FE danger overlay
-                   works on a no-key install;
+                   works on a no-key install; both it and the MCP `danger_map`
+                   tool take an optional `database_id` to scope reachability
+                   stats to one database instead of pooling every one visible
+                   to the caller (#194, ADR-0026 update);
                    seed.rs (#155) LLM-free seed seam: convert a built tree to a
                    MoveTree (move_tree_from, carries start_fen) → create_with_tree;
                    backs the data tools' `save_as` (no LLM, no PGN round-trip)  ← unit-tested

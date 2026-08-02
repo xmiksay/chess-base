@@ -299,7 +299,7 @@ fn danger_comment_covers_every_kind() {
             None,
             None
         )),
-        "Off-book: no prepared answer in this repertoire"
+        "Not in your repertoire: a reply order you haven't prepared for"
     );
     // A gap can be `Some` on an Attack tag too (it's computed unconditionally) —
     // `danger_comment` must still switch on `kind`, not on which figures happen

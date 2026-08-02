@@ -206,7 +206,11 @@ impl MultiAnalyzer for EnginePlanAnalyzer<'_> {
 /// Walk a repertoire `spine` from `start_fen` against the live engine + DB,
 /// scoped to `user`, tagging the dangerous opponent positions (issue #139). A
 /// thin convenience over [`walk_danger_spine`] with the concrete adapters;
-/// `movetime_ms` is the per-variation search budget and `multipv` the line count.
+/// `movetime_ms` is the per-variation search budget and `multipv` the line
+/// count. Danger-map generation is still out of scope for the #172
+/// player/color/date filter (per the ADR); `database_id` (issue #194) narrows
+/// the reachability stats to one database instead of pooling every one the
+/// caller can see — `None` keeps the old all-visible behaviour.
 #[allow(clippy::too_many_arguments)]
 pub async fn walk_danger_spine_live(
     engine: &EngineService,
@@ -218,11 +222,14 @@ pub async fn walk_danger_spine_live(
     castling: CastlingMode,
     movetime_ms: u64,
     multipv: u16,
+    database_id: Option<i32>,
 ) -> Result<DangerTree, SpineError> {
     let analyzer = EngineMultiAnalyzer::new(engine, movetime_ms, multipv);
-    // Danger-map generation is out of scope for the #172 filter (per the ADR):
-    // the walk always sees every scoped game.
-    let continuations = ReportContinuations::new(reports, user, PositionFilter::default());
+    let filter = PositionFilter {
+        database_id,
+        ..PositionFilter::default()
+    };
+    let continuations = ReportContinuations::new(reports, user, filter);
     walk_danger_spine(
         &analyzer,
         &continuations,

@@ -78,6 +78,12 @@ pub struct PositionFilter {
     pub color: Option<Color>,
     pub date_from: Option<String>,
     pub date_to: Option<String>,
+    /// Scope to one specific database instead of every database visible to the
+    /// caller (issue #194): the danger-map reachability walk otherwise pools
+    /// personal blitz games and a master DB together. Intersected with the
+    /// caller's visible scope, never widening it — a `database_id` the caller
+    /// cannot see yields an empty result, not a leak.
+    pub database_id: Option<i32>,
 }
 
 /// Player ids whose name contains `name` (case-insensitive on SQLite's ASCII
@@ -177,7 +183,7 @@ impl PositionSearchService {
         filter: &PositionFilter,
     ) -> Result<Vec<MoveStat>, SearchError> {
         let zobrist = parse_zobrist(fen)?;
-        let visible = self.visible_database_ids(user).await?;
+        let visible = self.scoped_database_ids(user, filter).await?;
         if visible.is_empty() {
             return Ok(Vec::new());
         }
@@ -248,7 +254,7 @@ impl PositionSearchService {
         filter: &PositionFilter,
     ) -> Result<Vec<GameHit>, SearchError> {
         let zobrist = parse_zobrist(fen)?;
-        let visible = self.visible_database_ids(user).await?;
+        let visible = self.scoped_database_ids(user, filter).await?;
         if visible.is_empty() {
             return Ok(Vec::new());
         }
@@ -298,6 +304,22 @@ impl PositionSearchService {
             .into_tuple()
             .all(&self.db)
             .await?)
+    }
+
+    /// [`Self::visible_database_ids`] narrowed to `filter.database_id` when set
+    /// (issue #194): a caller-requested scope only ever *shrinks* what is
+    /// visible, so a `database_id` the caller cannot see yields an empty scope
+    /// rather than falling back to "every visible database".
+    async fn scoped_database_ids(
+        &self,
+        user: &CurrentUser,
+        filter: &PositionFilter,
+    ) -> Result<Vec<i32>, SearchError> {
+        let visible = self.visible_database_ids(user).await?;
+        Ok(match filter.database_id {
+            Some(id) => visible.into_iter().filter(|&v| v == id).collect(),
+            None => visible,
+        })
     }
 
     /// The `games` filter condition for `filter`, or `None` if a player filter
@@ -500,6 +522,81 @@ mod tests {
             .unwrap();
         assert_eq!(bob_tree.len(), 1);
         assert_eq!(bob_tree[0].san, "d4");
+    }
+
+    #[tokio::test]
+    async fn database_id_filter_scopes_reachability_to_one_database() {
+        // Alice owns two databases: a blitz import (1. e4) and a master import
+        // (1. d4). Without a `database_id` they pool together (the reachability
+        // problem, issue #194); with it, only the requested one contributes.
+        let (conn, blitz_db) = db_for("alice").await;
+        let master_db = databases::ActiveModel {
+            owner_id: Set(Some("alice".to_string())),
+            name: Set("masters".to_string()),
+            kind: Set("own".to_string()),
+            ..Default::default()
+        }
+        .insert(&conn)
+        .await
+        .unwrap()
+        .id;
+        ingest_pgn(&conn, blitz_db, SCHOLARS_MATE).await.unwrap(); // 1. e4
+        ingest_pgn(&conn, master_db, QUEENS_DRAW).await.unwrap(); // 1. d4
+        let svc = PositionSearchService::new(conn);
+
+        let both = svc
+            .opening_tree(&user("alice"), STARTPOS_FEN, &PositionFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(both.len(), 2, "both databases pool by default");
+
+        let scoped = svc
+            .opening_tree(
+                &user("alice"),
+                STARTPOS_FEN,
+                &PositionFilter {
+                    database_id: Some(master_db),
+                    ..PositionFilter::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].san, "d4");
+    }
+
+    #[tokio::test]
+    async fn database_id_filter_cannot_widen_scope_beyond_visible() {
+        // A `database_id` outside the caller's own ∪ global scope (owned by
+        // someone else) must yield an empty result, not leak that database's
+        // stats — the filter only ever narrows, never widens, visibility.
+        let (conn, alice_db) = db_for("alice").await;
+        let bob_db = databases::ActiveModel {
+            owner_id: Set(Some("bob".to_string())),
+            name: Set("bob".to_string()),
+            kind: Set("own".to_string()),
+            ..Default::default()
+        }
+        .insert(&conn)
+        .await
+        .unwrap()
+        .id;
+        ingest_pgn(&conn, alice_db, SCHOLARS_MATE).await.unwrap();
+        ingest_pgn(&conn, bob_db, QUEENS_DRAW).await.unwrap();
+        let svc = PositionSearchService::new(conn);
+
+        let tree = svc
+            .opening_tree(
+                &user("alice"),
+                STARTPOS_FEN,
+                &PositionFilter {
+                    database_id: Some(bob_db),
+                    ..PositionFilter::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(tree.is_empty());
     }
 
     #[tokio::test]

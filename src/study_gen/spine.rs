@@ -28,8 +28,9 @@ use std::collections::{HashMap, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::Analysis;
-use crate::pgn_tree::MoveTree;
+use crate::pgn_tree::{san_core, MoveTree};
 use crate::position::{apply_san, apply_uci, black_to_move, uci_to_san, CastlingMode};
+use crate::search::report::MoveReport;
 
 use super::attack::{pawn_storm, AttackConfig};
 use super::danger::{
@@ -237,16 +238,21 @@ where
         nodes[frame.danger].tag = classify(&lines, &replies, &frame.fen, config, mode, trap);
     }
 
-    // Expected opponent moves we have a line against, by SAN.
+    // Expected opponent moves we have a line against, keyed by SAN core (no
+    // trailing +/#): the spine keeps the PGN author's spelling (e.g. `Bb5`)
+    // while the DB stores the normalized, suffixed SAN (`Bb5+`) — an exact
+    // match would wrongly call the user's own prepared move Off-book and never
+    // walk its subtree (issue #194).
     let answered: HashMap<&str, usize> = spine.nodes[frame.spine]
         .children
         .iter()
-        .filter_map(|&c| spine.nodes[c].san.as_deref().map(|s| (s, c)))
+        .filter_map(|&c| spine.nodes[c].san.as_deref().map(|s| (san_core(s), c)))
         .collect();
 
-    let mut kept: Vec<&_> = replies
+    let mut kept: Vec<MoveReport> = replies
         .iter()
         .filter(|r| r.frequency >= config.min_frequency)
+        .cloned()
         .collect();
     kept.sort_by(|a, b| {
         b.frequency
@@ -256,11 +262,39 @@ where
     });
     kept.truncate(config.max_replies);
 
-    for reply in kept {
+    // Walk answered ∪ kept: a prepared answer must not silently vanish from
+    // the tree just because it lost the frequency floor / max_replies cut, or
+    // because no game in the scoped DB ever played it (issue #194). Iterate
+    // the spine's own child order (not the HashMap) so the walk stays
+    // deterministic.
+    for &spine_child in &spine.nodes[frame.spine].children {
+        let Some(san) = spine.nodes[spine_child].san.as_deref() else {
+            continue;
+        };
+        if kept.iter().any(|r| san_core(&r.san) == san_core(san)) {
+            continue;
+        }
+        let report = replies
+            .iter()
+            .find(|r| san_core(&r.san) == san_core(san))
+            .cloned()
+            .unwrap_or_else(|| MoveReport {
+                san: san.to_string(),
+                count: 0,
+                white: 0,
+                draws: 0,
+                black: 0,
+                frequency: 0.0,
+                score: 0.0,
+            });
+        kept.push(report);
+    }
+
+    for reply in &kept {
         let Ok((child_fen, _)) = apply_san(&frame.fen, &reply.san, mode) else {
             continue;
         };
-        match answered.get(reply.san.as_str()) {
+        match answered.get(san_core(&reply.san)) {
             Some(&spine_child) => {
                 // On-book: a prepared reply — recurse back to our move.
                 let id = push_node(
@@ -338,7 +372,7 @@ async fn resolve_trap<A>(
     lines: &[Analysis],
     analyzer: &A,
     fen: &str,
-    replies: &[crate::search::report::MoveReport],
+    replies: &[MoveReport],
     config: &SpineConfig,
     mode: CastlingMode,
 ) -> Result<Option<TrapVerdict>, SpineError>
@@ -364,11 +398,19 @@ where
         return Ok(Some(verdict));
     }
 
+    // `uci_to_san` is suffix-free by design (position.rs), while `replies` may
+    // carry the DB's normalized, checking-suffixed SAN — compare by core so a
+    // checking bait still finds its real DB frequency (issue #194).
     let bait_frequency = second
         .pv
         .first()
         .and_then(|uci| uci_to_san(fen, uci, mode).ok())
-        .and_then(|san| replies.iter().find(|r| r.san == san).map(|r| r.frequency))
+        .and_then(|san| {
+            replies
+                .iter()
+                .find(|r| san_core(&r.san) == san_core(&san))
+                .map(|r| r.frequency)
+        })
         .unwrap_or(0.0);
     if bait_frequency < config.min_frequency {
         return Ok(Some(TrapVerdict::Quiet));
@@ -405,7 +447,7 @@ where
 /// engine call — the same PV1 number that drove the trap/only-move verdict.
 fn classify(
     lines: &[Analysis],
-    replies: &[crate::search::report::MoveReport],
+    replies: &[MoveReport],
     fen: &str,
     config: &SpineConfig,
     mode: CastlingMode,
@@ -459,17 +501,21 @@ fn classify(
 /// a SAN the DB reports.
 fn miss_rate(
     best: &Analysis,
-    replies: &[crate::search::report::MoveReport],
+    replies: &[MoveReport],
     fen: &str,
     mode: CastlingMode,
 ) -> Option<f64> {
     if best.bestmove.is_empty() {
         return None;
     }
+    // `uci_to_san` never emits a check/mate suffix; compare by core so a
+    // checking best reply still matches the DB's normalized SAN (issue #194 —
+    // otherwise every checking best move reports `played = 0.0`, inflating
+    // `miss_rate` to 1.0 and manufacturing bogus only-move Weapons).
     let best_san = uci_to_san(fen, &best.bestmove, mode).ok()?;
     let played = replies
         .iter()
-        .find(|r| r.san == best_san)
+        .find(|r| san_core(&r.san) == san_core(&best_san))
         .map(|r| r.frequency)
         .unwrap_or(0.0);
     Some((1.0 - played).clamp(0.0, 1.0))

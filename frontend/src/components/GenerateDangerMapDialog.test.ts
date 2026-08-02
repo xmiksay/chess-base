@@ -91,4 +91,25 @@ describe('GenerateDangerMapDialog', () => {
     await wrapper.find('[data-test="open-result"]').trigger('click')
     expect(wrapper.emitted('open')![0]).toEqual([9])
   })
+
+  it('prefills our_side from the side to move at the given start position (issue #194)', async () => {
+    // Startpos (White to move) defaults to White...
+    const white = mount(GenerateDangerMapDialog, { props: { llmEnabled: true } })
+    await flushPromises()
+    expect(
+      (white.find('[data-test="our-side"]').element as HTMLSelectElement).value,
+    ).toBe('White')
+
+    // ...while a start FEN with Black to move defaults to Black.
+    const black = mount(GenerateDangerMapDialog, {
+      props: {
+        llmEnabled: true,
+        startFen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+      },
+    })
+    await flushPromises()
+    expect(
+      (black.find('[data-test="our-side"]').element as HTMLSelectElement).value,
+    ).toBe('Black')
+  })
 })

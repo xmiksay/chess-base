@@ -66,6 +66,7 @@ impl SearchQuery {
             color,
             date_from: norm(self.date_from.clone()),
             date_to: norm(self.date_to.clone()),
+            database_id: None,
         })
     }
 }

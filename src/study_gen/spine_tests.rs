@@ -136,6 +136,83 @@ async fn offbook_reply_tagged_onbook_reply_recurses() {
 }
 
 #[tokio::test]
+async fn db_suffixed_reply_matches_the_spines_unsuffixed_prepared_move() {
+    // The DB stores normalized SAN with a trailing +/# (position.rs), while the
+    // spine keeps the PGN author's own spelling. An exact-string match would
+    // wrongly call the user's own prepared c5 "Off-book" and never walk its
+    // subtree (issue #194) — shakmaty's SAN parser doesn't validate the
+    // suffix, so `c5+` still applies as the real c5 move.
+    let mut stats = HashMap::new();
+    stats.insert(
+        fen_after(&["e4"]),
+        vec![report("c5+", 0.5), report("e5", 0.4)],
+    );
+    let mut an = HashMap::new();
+    an.insert(
+        fen_after(&["e4"]),
+        vec![line("c7c5", -10), line("e7e5", -20)],
+    );
+    // Deep enough to also walk one ply past c5 (Nf3), proving the subtree is
+    // actually followed, not just matched.
+    let config = SpineConfig {
+        max_depth: 3,
+        ..SpineConfig::default()
+    };
+
+    let tree = walk_danger_spine(
+        &FakeAnalyzer(an),
+        &FakeStats(stats),
+        &white_spine(),
+        STARTPOS_FEN,
+        &config,
+        STD,
+    )
+    .await
+    .unwrap();
+
+    let c5 = node_by_san(&tree, "c5+");
+    assert!(
+        c5.tag.is_none(),
+        "the prepared reply must not be Off-book despite the DB's +/# suffix"
+    );
+    assert!(
+        !c5.children.is_empty(),
+        "the spine's own follow-up (Nf3) must still be walked, not stranded"
+    );
+}
+
+#[tokio::test]
+async fn prepared_answer_with_no_db_games_still_walked() {
+    // The DB has no games at all reaching a reply the repertoire prepares for
+    // (a personal spine covering a move nobody in the corpus has played yet).
+    // It must still appear in the tree — walked as on-book — instead of
+    // silently vanishing because it never made the `kept` list (issue #194).
+    let mut an = HashMap::new();
+    an.insert(
+        fen_after(&["e4"]),
+        vec![line("c7c5", -10), line("e7e5", -20)],
+    );
+    let stats = HashMap::new(); // no continuations recorded anywhere
+
+    let tree = walk_danger_spine(
+        &FakeAnalyzer(an),
+        &FakeStats(stats),
+        &white_spine(),
+        STARTPOS_FEN,
+        &cfg(),
+        STD,
+    )
+    .await
+    .unwrap();
+
+    let c5 = node_by_san(&tree, "c5");
+    assert!(
+        c5.tag.is_none(),
+        "a prepared reply with zero DB games must not be Off-book"
+    );
+}
+
+#[tokio::test]
 async fn weapon_trap_tagged_on_our_move() {
     // After 1.e4, Black's best (c5) keeps Black only −10 (our downside bounded),
     // but the tempting e5 drops Black to −300 (our baited upside): a weapon.
@@ -530,6 +607,52 @@ async fn attack_pawn_storm_tagged_caution_on_our_move() {
     assert_eq!(attack.pawn, 'p', "Black's storming pawn");
     assert_eq!(attack.path, vec!["g7", "g5", "g4", "g3"]);
     assert_eq!(attack.advances, 3);
+}
+
+#[test]
+fn miss_rate_matches_db_suffixed_san_to_a_checking_best_move() {
+    // `uci_to_san` never emits a check/mate suffix, but the DB's reported SAN
+    // does — an exact-string match would treat every checking best move as
+    // "nobody ever plays it" and inflate `miss_rate` to 1.0 (issue #194),
+    // manufacturing bogus only-move Weapons.
+    let best = line("c7c5", 0);
+    let replies = vec![report("c5+", 0.7)];
+    let fen = fen_after(&["e4"]);
+
+    let miss = miss_rate(&best, &replies, &fen, STD).expect("best move maps to a SAN");
+    assert!(
+        (miss - 0.3).abs() < 1e-9,
+        "expected miss_rate 0.3 (1 - 0.7 played), got {miss}"
+    );
+}
+
+#[tokio::test]
+async fn bait_frequency_matches_db_suffixed_san_for_a_checking_bait() {
+    // Same asymmetry as `miss_rate`, but for the trap test's tempting-reply
+    // lookup (#176's bait-frequency gate): a checking bait stored in the DB as
+    // `e5+` must still be found by its real frequency, not fall back to 0.0
+    // and get downgraded to Quiet (issue #194).
+    let fen = fen_after(&["e4"]);
+    let lines = vec![line("c7c5", -10), line("e7e5", -300)];
+    let replies = vec![report("c5", 0.5), report("e5+", 0.3)];
+    let config = SpineConfig::default();
+
+    let verdict = resolve_trap(
+        &lines,
+        &FakeAnalyzer(HashMap::new()),
+        &fen,
+        &replies,
+        &config,
+        STD,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        verdict,
+        Some(TrapVerdict::Weapon),
+        "the checking bait's real 30% DB frequency clears min_frequency and must not downgrade to Quiet"
+    );
 }
 
 #[tokio::test]
