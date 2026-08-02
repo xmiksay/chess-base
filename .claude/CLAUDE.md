@@ -79,11 +79,14 @@ src/
                    merge_danger_route.rs (routes.rs is over the file-size cap), POST
                    /api/studies/{id}/merge-danger returns the refreshed study plus
                    added_nodes/weapons/cautions ← unit-tested;
-                   merge.rs merge_games (#170, ADR-0033): fold many games' mainlines
-                   into one repertoire study via pure MoveTree::merge_games (SAN-follow
-                   dedup → frequency-order children → pin "N games, X% (labels)" stats
-                   on branch points → mark_transpositions, #174, ADR-0035; standard-start
-                   only), into a new study or an existing one, POST /api/studies/merge-games;
+                   merge.rs merge_games (#170, ADR-0033; opening cutoff #196): fold many
+                   games' mainlines into one repertoire study via pure MoveTree::merge_games
+                   (max_plies truncates each game's SAN list before folding, None/0 = every
+                   ply → SAN-follow dedup → frequency-order children → pin "N games, X%
+                   (labels)" stats on branch points → mark_transpositions, #174, ADR-0035;
+                   standard-start only), into a new study or an existing one, threaded through
+                   HTTP/MCP/frontend (FE dialog defaults to 30 plies/15 moves, 0 = whole
+                   games), POST /api/studies/merge-games;
                    mark_transpositions.rs (#174, ADR-0035): standalone
                    StudyService::mark_transpositions re-runs the same pure pass on a study
                    built/edited some other way, POST /api/studies/{id}/mark-transpositions
@@ -123,7 +126,9 @@ src/
                    on the session's own model)  ← unit-tested
   study_gen/       study-gen stages (Epic 9): tree (#29) builds a pruned VariationTree
                    (TreeConfig.max_children_by_depth tapers branching with depth —
-                   broad near the root, narrow on deep main lines, #160);
+                   broad near the root, narrow on deep main lines, #160;
+                   TreeConfig::default() is max_depth 16/taper [4,3,3,2,2,1]/max_nodes
+                   200, #196, ADR-0033 update — applies when a caller omits `tree`);
                    features.rs (#30) pure pawn-structure & key-square concepts;
                    annotate.rs (#31) batch LLM annotation pass + verification loop
                    (tool-free prompt, claims checked vs engine/DB before commit);

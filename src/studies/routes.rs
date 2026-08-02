@@ -523,7 +523,8 @@ async fn add_move(
 /// Body for `POST /api/studies/merge-games`: fold a set of games' mainlines into
 /// one repertoire study. `study_id` set ⇒ graft into that existing study; otherwise
 /// a new study is created (`name` required) from the standard start, filed into
-/// `folder_id` (optional).
+/// `folder_id` (optional). `max_plies` caps each game's mainline to its opening
+/// (issue #196); omitted or `0` folds every ply (whole games).
 #[derive(Deserialize)]
 struct MergeGamesBody {
     game_ids: Vec<i32>,
@@ -533,6 +534,8 @@ struct MergeGamesBody {
     name: Option<String>,
     #[serde(default)]
     folder_id: Option<i32>,
+    #[serde(default)]
+    max_plies: Option<u32>,
 }
 
 /// Merge many games into one repertoire study (`POST /api/studies/merge-games`).
@@ -552,6 +555,7 @@ async fn merge_games(
             body.study_id,
             body.name,
             body.folder_id,
+            body.max_plies,
         )
         .await?;
     let status = if created {

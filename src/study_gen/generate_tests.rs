@@ -180,10 +180,10 @@ fn params(database_id: i32, start_fen: &str) -> GenerateParams {
         tree: TreeConfig {
             max_depth: 2,
             max_children: 5,
+            max_children_by_depth: None,
             max_nodes: 100,
             min_frequency: 0.0,
             eval_margin_cp: 10_000,
-            ..TreeConfig::default()
         },
         model: None,
         plan_lines: 0,

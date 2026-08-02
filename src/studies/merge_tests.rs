@@ -95,6 +95,7 @@ async fn merges_games_into_a_new_study_ordered_by_frequency() {
             None,
             Some("Carlsen repertoire".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -140,7 +141,7 @@ async fn grafts_into_an_existing_study_and_is_idempotent() {
         .await
         .unwrap();
     let merged = svc
-        .merge_games(&alice, &[g1], Some(base.id), None, None)
+        .merge_games(&alice, &[g1], Some(base.id), None, None, None)
         .await
         .unwrap();
     assert_eq!(merged.id, base.id);
@@ -149,10 +150,33 @@ async fn grafts_into_an_existing_study_and_is_idempotent() {
 
     // Re-merging the same game changes nothing (SAN-follow dedup).
     let again = svc
-        .merge_games(&alice, &[g1], Some(base.id), None, None)
+        .merge_games(&alice, &[g1], Some(base.id), None, None, None)
         .await
         .unwrap();
     assert_eq!(again.tree_json, merged.tree_json);
+}
+
+#[tokio::test]
+async fn max_plies_caps_the_merged_line_length() {
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+    let g1 = seed_game(
+        &svc.db,
+        db_id,
+        "A",
+        "B",
+        "2023.01.01",
+        "1-0",
+        "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *",
+    )
+    .await;
+
+    let study = svc
+        .merge_games(&alice, &[g1], None, Some("Capped".into()), None, Some(4))
+        .await
+        .unwrap();
+    let tree: MoveTree = serde_json::from_str(&study.tree_json).unwrap();
+    assert_eq!(tree.mainline(), vec!["e4", "e5", "Nf3", "Nc6"]);
 }
 
 #[tokio::test]
@@ -164,21 +188,21 @@ async fn hidden_games_and_bad_requests_are_rejected() {
 
     // Bob can't see Alice's game → NotFound, never a leak.
     assert!(matches!(
-        svc.merge_games(&bob, &[g1], None, Some("X".into()), None)
+        svc.merge_games(&bob, &[g1], None, Some("X".into()), None, None)
             .await
             .unwrap_err(),
         StudyError::NotFound
     ));
     // No games at all.
     assert!(matches!(
-        svc.merge_games(&alice, &[], None, Some("X".into()), None)
+        svc.merge_games(&alice, &[], None, Some("X".into()), None, None)
             .await
             .unwrap_err(),
         StudyError::InvalidEdit(_)
     ));
     // A new study needs a name.
     assert!(matches!(
-        svc.merge_games(&alice, &[g1], None, None, None)
+        svc.merge_games(&alice, &[g1], None, None, None, None)
             .await
             .unwrap_err(),
         StudyError::InvalidEdit(_)
@@ -208,7 +232,7 @@ async fn skips_set_up_and_empty_games() {
 
     // With no mergeable game left, the merge is a clean 400, not a corrupt study.
     assert!(matches!(
-        svc.merge_games(&alice, &[setup_game], None, Some("X".into()), None)
+        svc.merge_games(&alice, &[setup_game], None, Some("X".into()), None, None)
             .await
             .unwrap_err(),
         StudyError::InvalidEdit(_)

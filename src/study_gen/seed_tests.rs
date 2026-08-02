@@ -105,10 +105,10 @@ fn tree_config() -> TreeConfig {
     TreeConfig {
         max_depth: 2,
         max_children: 5,
+        max_children_by_depth: None,
         max_nodes: 100,
         min_frequency: 0.0,
         eval_margin_cp: 10_000,
-        ..TreeConfig::default()
     }
 }
 

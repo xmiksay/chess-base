@@ -20,20 +20,26 @@ fn config(min_frequency: f64, eval_margin_cp: i32, max_children: usize) -> TreeC
     TreeConfig {
         max_depth: 10,
         max_children,
+        max_children_by_depth: None,
         max_nodes: 1000,
         min_frequency,
         eval_margin_cp,
-        ..TreeConfig::default()
     }
 }
 
 #[test]
 fn tree_config_deserializes_partial_json_with_defaults() {
     let cfg: TreeConfig = serde_json::from_str(r#"{"max_depth": 8}"#).unwrap();
+    // `max_children_by_depth` carries its own field-level `#[serde(default)]`
+    // (opt-in taper, issue #160), so a partial JSON body that doesn't name it
+    // gets `None` even though `TreeConfig::default()` now sets a taper (#196) —
+    // only a caller that omits the whole `tree` field (routed through
+    // `Option<TreeConfig>::unwrap_or_default`) sees the tapered default.
     assert_eq!(
         cfg,
         TreeConfig {
             max_depth: 8,
+            max_children_by_depth: None,
             ..TreeConfig::default()
         }
     );
@@ -193,10 +199,10 @@ async fn builds_a_tagged_tree_with_eval_and_stats() {
     let cfg = TreeConfig {
         max_depth: 2,
         max_children: 5,
+        max_children_by_depth: None,
         max_nodes: 1000,
         min_frequency: 0.05,
         eval_margin_cp: 1000, // wide ⇒ eval doesn't prune here
-        ..TreeConfig::default()
     };
     let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg, STD)
         .await
@@ -251,10 +257,10 @@ async fn eval_margin_prunes_the_weaker_first_move() {
     let cfg = TreeConfig {
         max_depth: 1,
         max_children: 5,
+        max_children_by_depth: None,
         max_nodes: 1000,
         min_frequency: 0.05,
         eval_margin_cp: 50,
-        ..TreeConfig::default()
     };
     let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg, STD)
         .await
@@ -274,10 +280,10 @@ async fn respects_global_node_budget() {
     let cfg = TreeConfig {
         max_depth: 5,
         max_children: 5,
+        max_children_by_depth: None,
         max_nodes: 2, // root + one child only
         min_frequency: 0.05,
         eval_margin_cp: 1000,
-        ..TreeConfig::default()
     };
     let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg, STD)
         .await
@@ -379,10 +385,10 @@ async fn transposition_is_not_expanded_twice() {
     let cfg = TreeConfig {
         max_depth: 6,
         max_children: 5,
+        max_children_by_depth: None,
         max_nodes: 1000,
         min_frequency: 0.05,
         eval_margin_cp: 10_000, // wide ⇒ eval never prunes; frequency decides
-        ..TreeConfig::default()
     };
     let tree = build_tree(&eval, &stats, &fen_after(&[]), &cfg, STD)
         .await
@@ -580,10 +586,10 @@ async fn tapering_reaches_deeper_than_uniform_under_the_same_budget() {
     let uniform = TreeConfig {
         max_depth: DEPTH,
         max_children: 4,
+        max_children_by_depth: None,
         max_nodes: BUDGET,
         min_frequency: 0.0,
         eval_margin_cp: 10_000,
-        ..TreeConfig::default()
     };
     let uniform_tree = build_tree(&eval, &stats, STARTPOS_FEN, &uniform, STD)
         .await
