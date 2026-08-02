@@ -11,10 +11,10 @@ use serde_json::json;
 
 use crate::server::{embed::Assets, engine_ws, identity::CurrentUser, state::AppState};
 
-mod assistant;
 mod engines;
 pub mod mcp;
 mod oauth;
+mod providers;
 
 /// Build the application router.
 pub fn router(state: AppState) -> Router {
@@ -45,7 +45,7 @@ pub fn router(state: AppState) -> Router {
         ))
         .merge(crate::studies::add_line_route::router(state.clone()))
         .merge(crate::studies::merge_danger_route::router(state.clone()))
-        .merge(assistant::router(state.clone()))
+        .merge(providers::router(state.clone()))
         .merge(oauth::router(state.clone()))
         .merge(mcp::router(state))
 }
@@ -77,6 +77,12 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
 /// Serve an embedded asset, falling back to `index.html` for SPA routes.
 async fn static_handler(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
+    // An unmatched `/api/*` path is an API miss, not an SPA route — return 404
+    // instead of the SPA shell (the removed assistant session routes land here,
+    // #198).
+    if path.starts_with("api/") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let path = if path.is_empty() { "index.html" } else { path };
 
     if let Some(file) = Assets::get(path) {

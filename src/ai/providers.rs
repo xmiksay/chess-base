@@ -1,21 +1,16 @@
 //! Admin-managed LLM provider registry (issue #20), backing the `llm_providers`
-//! table. The **default** row builds the [`LlmProvider`] at startup, taking
-//! precedence over the `ANTHROPIC_API_KEY` env fallback; with no row and no env
-//! key the assistant and study-generation paths stay disabled.
+//! table. The old startup resolution (default row → Anthropic client, env
+//! fallback) was removed with the hand-rolled assistant (#198); the embedded
+//! entanglement agent engine re-wires provider resolution in a later step.
 //!
 //! API keys are **server-side only**: [`ProviderService::list`] returns
-//! [`ProviderInfo`] without the key, and the resolver consumes keys internally to
-//! build a client — they never reach the SPA.
-
-use std::sync::Arc;
+//! [`ProviderInfo`] without the key — keys never reach the SPA.
 
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder,
     Set,
 };
 
-use crate::ai::llm::anthropic::AnthropicProvider;
-use crate::ai::llm::LlmProvider;
 use crate::db::entities::llm_providers;
 use crate::server::identity::{assert_admin, AuthError, CurrentUser};
 
@@ -64,8 +59,7 @@ impl From<AuthError> for ProviderStoreError {
     }
 }
 
-/// CRUD over `llm_providers` plus the startup [`resolve`](Self::resolve) that turns
-/// the default row (or the env fallback) into a live [`LlmProvider`].
+/// CRUD over `llm_providers`.
 #[derive(Clone)]
 pub struct ProviderService {
     db: DatabaseConnection,
@@ -146,47 +140,6 @@ impl ProviderService {
             active.update(&self.db).await?;
         }
         Ok(())
-    }
-
-    /// Build the active provider: the DB default row if present, else the
-    /// `ANTHROPIC_API_KEY` env fallback, else `None`. Best-effort — a row that
-    /// fails to build a client is logged and falls through to the env key.
-    pub async fn resolve(&self) -> Option<Arc<dyn LlmProvider>> {
-        match self.default_row().await {
-            Ok(Some(row)) => match AnthropicProvider::with_model(row.api_key, row.model) {
-                Ok(provider) => return Some(Arc::new(provider) as Arc<dyn LlmProvider>),
-                Err(e) => tracing::warn!(error = %e, name = %row.name,
-                    "could not build configured LLM provider; trying env fallback"),
-            },
-            Ok(None) => {}
-            Err(e) => {
-                tracing::warn!(error = %e, "could not read llm_providers; trying env fallback")
-            }
-        }
-        provider_from_env()
-    }
-
-    async fn default_row(&self) -> Result<Option<llm_providers::Model>, DbErr> {
-        llm_providers::Entity::find()
-            .filter(llm_providers::Column::IsDefault.eq(true))
-            .order_by_asc(llm_providers::Column::Id)
-            .one(&self.db)
-            .await
-    }
-}
-
-/// The `ANTHROPIC_API_KEY` env fallback (the pre-#20 behaviour). A missing or
-/// blank key, or a construction failure, leaves the LLM paths disabled.
-fn provider_from_env() -> Option<Arc<dyn LlmProvider>> {
-    let key = std::env::var("ANTHROPIC_API_KEY")
-        .ok()
-        .filter(|k| !k.trim().is_empty())?;
-    match AnthropicProvider::new(key) {
-        Ok(provider) => Some(Arc::new(provider) as Arc<dyn LlmProvider>),
-        Err(e) => {
-            tracing::warn!(error = %e, "could not build LLM provider from env; LLM paths disabled");
-            None
-        }
     }
 }
 

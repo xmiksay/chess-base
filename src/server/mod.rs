@@ -76,17 +76,14 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
 
     // One pool backs both facades: the direct batch API and the MCP tool.
     let engine_service = default_engine.map(|c| Arc::new(EngineService::new(c, ENGINE_POOL_SIZE)));
-    // The LLM provider: the admin-configured default row (issue #20) wins, else
-    // the `ANTHROPIC_API_KEY` env fallback. `None` ⇒ the assistant + study
-    // generation paths stay disabled; the server still starts.
-    let llm_provider = crate::ai::providers::ProviderService::new(db.clone())
-        .resolve()
-        .await;
+    // LLM provider wiring is down while the entanglement agent engine lands
+    // (#198): provider resolution returns in a later step. Until then the LLM
+    // paths stay disabled and `/api/health` reports `llm: false`.
     let state = AppState {
         db: db.clone(),
         mode: cfg.mode,
         engine_service,
-        llm_provider,
+        llm_provider: None,
     };
     let app = build_router(state);
 

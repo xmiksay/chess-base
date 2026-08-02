@@ -1,20 +1,16 @@
 //! Provider-agnostic LLM client abstraction.
 //!
-//! A small [`LlmProvider`] trait fronts one or more concrete providers (today
-//! only Anthropic — [`anthropic::AnthropicProvider`]), so other providers can be
-//! added later (mirrors the `site` project's `ai/llm/registry.rs`). The single
-//! entry point is [`LlmProvider::complete`]: a chat completion over a list of
+//! A small [`LlmProvider`] trait fronts concrete providers. The single entry
+//! point is [`LlmProvider::complete`]: a chat completion over a list of
 //! [`Message`]s with optional [`ToolSpec`] tool-calling, used by the batch
-//! annotation pass and reused by the interactive assistant.
+//! annotation pass (Epic 9) and its test stubs.
 //!
-//! The HTTP boundary is the [`Transport`] trait, so the wire conversion and
-//! response parsing are unit-tested against a stub with no network access.
+//! The old in-crate Anthropic client (and its `Transport` HTTP seam) was
+//! removed with the hand-rolled assistant (#198); the concrete client arrives
+//! with the embedded entanglement agent engine in later steps.
 //!
 //! **The API key is server-side only.** Providers are constructed in the backend
-//! and never serialized to the SPA — the key lives in a request header
-//! ([`anthropic`]) and nowhere in the response or config surfaced to clients.
-
-pub mod anthropic;
+//! and never serialized to the SPA.
 
 use std::time::Duration;
 
@@ -159,39 +155,4 @@ pub trait LlmProvider: Send + Sync {
 
     /// The model used when a request doesn't override it.
     fn default_model(&self) -> &str;
-}
-
-// ---------------------------------------------------------------------------
-// HTTP transport seam
-// ---------------------------------------------------------------------------
-
-/// A serialized outbound HTTP request. The provider owns wire-format encoding;
-/// the [`Transport`] owns the network.
-#[derive(Clone, Debug)]
-pub struct HttpRequest {
-    pub url: String,
-    pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
-}
-
-/// A raw HTTP response. `retry_after` is parsed from the `Retry-After` header
-/// when present.
-#[derive(Clone, Debug)]
-pub struct HttpResponse {
-    pub status: u16,
-    pub retry_after: Option<Duration>,
-    pub body: Vec<u8>,
-}
-
-impl HttpResponse {
-    pub fn is_success(&self) -> bool {
-        (200..300).contains(&self.status)
-    }
-}
-
-/// The network boundary. Production uses [`anthropic::ReqwestTransport`]; tests
-/// inject a stub so the wire logic runs without a network.
-#[async_trait]
-pub trait Transport: Send + Sync {
-    async fn execute(&self, req: HttpRequest) -> Result<HttpResponse, ProviderError>;
 }

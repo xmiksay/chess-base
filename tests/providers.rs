@@ -1,8 +1,7 @@
-//! Integration tests for the embedded AI study assistant HTTP surface (issue
-//! #20): session listing, the no-provider `503`, and the admin provider registry
-//! (keys are write-only). The agent loop itself is unit-tested in
-//! `ai::assistant::service` against a stub provider; here we exercise the routes
-//! and error mapping over a real (in-memory) database with no live LLM.
+//! Integration tests for the LLM provider registry HTTP surface (issue #20,
+//! kept through the #198 assistant removal) and for the removal itself: the old
+//! hand-rolled assistant session routes must be gone (404 via the API
+//! fallback), while `/api/assistant/providers` keeps serving the SPA.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -49,28 +48,34 @@ async fn mem_db() -> DatabaseConnection {
 }
 
 #[tokio::test]
-async fn listing_sessions_is_empty_without_a_provider() {
-    let (status, body) = send(&mem_db().await, "GET", "/api/assistant/sessions", None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, json!([]));
-}
-
-#[tokio::test]
-async fn creating_a_session_without_a_provider_is_unavailable() {
-    let (status, _) = send(
-        &mem_db().await,
-        "POST",
-        "/api/assistant/sessions",
-        Some(json!({ "title": "x" })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-}
-
-#[tokio::test]
-async fn unknown_session_is_not_found() {
-    let (status, _) = send(&mem_db().await, "GET", "/api/assistant/sessions/999", None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+async fn removed_assistant_session_routes_are_gone() {
+    let db = mem_db().await;
+    for (method, uri, body) in [
+        (
+            "POST",
+            "/api/assistant/sessions",
+            Some(json!({"title":"x"})),
+        ),
+        ("GET", "/api/assistant/sessions", None),
+        ("GET", "/api/assistant/sessions/1", None),
+        (
+            "POST",
+            "/api/assistant/sessions/1/messages",
+            Some(json!({"text":"hi"})),
+        ),
+        (
+            "POST",
+            "/api/assistant/sessions/1/respond",
+            Some(json!({"decisions":{}})),
+        ),
+    ] {
+        let (status, _) = send(&db, method, uri, body).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{method} {uri} should 404 after the assistant removal (#198)"
+        );
+    }
 }
 
 #[tokio::test]
@@ -104,4 +109,16 @@ async fn provider_registry_upserts_and_never_returns_the_key() {
         !text.contains("super-secret"),
         "the api key leaked into the provider list"
     );
+}
+
+#[tokio::test]
+async fn deleting_an_unknown_provider_is_not_found() {
+    let (status, _) = send(
+        &mem_db().await,
+        "DELETE",
+        "/api/assistant/providers/999",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
