@@ -743,6 +743,37 @@ async fn generate_without_engine_is_service_unavailable() {
     assert!(text.contains("No engine configured"), "body was: {text}");
 }
 
+/// Regression (#195): a partial `tree` override — exactly the two fields the SPA's
+/// `GenerateStudyDialog` sends (`max_depth`/`max_children`, no `max_nodes`/
+/// `min_frequency`/`eval_margin_cp`) — must deserialize and reach the engine-presence
+/// check (`503`), not bounce as a `422` "missing field" before the handler even runs.
+#[tokio::test]
+async fn generate_with_partial_tree_override_is_accepted_by_the_transport() {
+    let app = server_app().await;
+    let admin = register(&app, "alice").await; // first user → admin
+    let db_id = make_database(&app, &admin).await;
+
+    let resp = app
+        .clone()
+        .oneshot(json_req(
+            "POST",
+            "/api/studies/generate",
+            &admin,
+            json!({
+                "database_id": db_id,
+                "name": "Partial tree override",
+                "tree": { "max_depth": 8, "max_children": 2 }
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("No engine configured"), "body was: {text}");
+}
+
 /// `POST /api/studies/generate-danger-map` is mounted and callable; with no engine
 /// wired the orchestrator surfaces a clean `503` (never a panic or a leaked
 /// internal). The full happy path is covered at the service layer with injected
