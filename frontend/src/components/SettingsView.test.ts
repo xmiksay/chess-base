@@ -15,6 +15,8 @@ vi.mock('../api', () => ({
       setDefault: vi.fn(),
       remove: vi.fn(),
     },
+    providers: { list: vi.fn(), upsert: vi.fn(), remove: vi.fn() },
+    whoami: vi.fn(),
   },
 }))
 
@@ -30,6 +32,8 @@ beforeEach(() => {
   ])
   vi.mocked(api.engines.list).mockResolvedValue([])
   vi.mocked(api.engines.default).mockResolvedValue({ default: null })
+  vi.mocked(api.providers.list).mockResolvedValue([])
+  vi.mocked(api.whoami).mockResolvedValue({ id: 'u1', is_admin: false })
 })
 
 describe('SettingsView', () => {

@@ -5,8 +5,6 @@ import type {
   AddMoveResult,
   Annotation,
   ApiSettings,
-  AssistantSession,
-  AssistantSessionSummary,
   AuthResponse,
   Database,
   DatabaseKind,
@@ -31,6 +29,8 @@ import type {
   MergeDangerResult,
   MoveStat,
   MoveTree,
+  ProviderBody,
+  ProviderInfo,
   Shape,
   Study,
   StudySummary,
@@ -347,23 +347,15 @@ export const api = {
       send<ImportResult>('POST', '/api/import/pgn', { database_id: databaseId, pgn }),
   },
 
-  // Embedded AI study assistant (issue #20). A chat session drives an agent loop
-  // over the same tools the MCP endpoint exposes; mutating tools pause for the
-  // user's approval. `create` / `send` / `respond` return the full session with
-  // its transcript and loop state. 503 when no LLM provider is configured.
-  assistant: {
-    listSessions: () => getJson<AssistantSessionSummary[]>('/api/assistant/sessions'),
-    getSession: (id: number) => getJson<AssistantSession>(`/api/assistant/sessions/${id}`),
-    createSession: (title?: string, model?: string) =>
-      send<AssistantSession>('POST', '/api/assistant/sessions', { title, model }),
-    deleteSession: (id: number) => send<null>('DELETE', `/api/assistant/sessions/${id}`),
-    // Post a user message and run the loop until it answers, pauses for an
-    // approval, or hits the iteration cap.
-    send: (id: number, text: string) =>
-      send<AssistantSession>('POST', `/api/assistant/sessions/${id}/messages`, { text }),
-    // Resolve a pending approval: a map of tool-call id → approve (true) / deny.
-    respond: (id: number, decisions: Record<string, boolean>) =>
-      send<AssistantSession>('POST', `/api/assistant/sessions/${id}/respond`, { decisions }),
+  // LLM provider registry for the AI assistant (issue #20, per-user since
+  // #198). Keys are write-only: responses carry `has_key`, never the key; an
+  // omitted/blank `api_key` on upsert keeps the stored one. `is_global` rows
+  // are admin-only. (The chat itself streams over /api/assistant/ws — see
+  // stores/assistant.ts.)
+  providers: {
+    list: () => getJson<ProviderInfo[]>('/api/assistant/providers'),
+    upsert: (body: ProviderBody) => send<ProviderInfo>('POST', '/api/assistant/providers', body),
+    remove: (id: number) => send<null>('DELETE', `/api/assistant/providers/${id}`),
   },
 
   // Per-user settings (issue #13): theme, board theme, default database.
