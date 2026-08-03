@@ -11,6 +11,7 @@ vi.mock('../api', () => ({
       generate: vi.fn(),
       importPgn: vi.fn(),
       exportPgn: vi.fn(),
+      exportLichess: vi.fn(),
       rename: vi.fn(),
       remove: vi.fn(),
       addLine: vi.fn(),
@@ -114,6 +115,13 @@ describe('studies store', () => {
     const store = useStudiesStore()
     await store.exportPgn(3, false)
     expect(api.studies.exportPgn).toHaveBeenCalledWith(3, { eval: false })
+  })
+
+  it('exportLichess returns the lichess-flavoured PGN (#216)', async () => {
+    vi.mocked(api.studies.exportLichess).mockResolvedValue('[Event "Study"]\n\n1. e4 e5 *')
+    const store = useStudiesStore()
+    await expect(store.exportLichess(3)).resolves.toBe('[Event "Study"]\n\n1. e4 e5 *')
+    expect(api.studies.exportLichess).toHaveBeenCalledWith(3)
   })
 
   it('rename keeps current and the list summary in sync', async () => {

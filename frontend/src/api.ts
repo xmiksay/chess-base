@@ -177,6 +177,10 @@ export const api = {
     // the per-move `[%eval]` annotations; `false` exports plain movetext.
     exportPgn: (id: number, { eval: withEval = true }: { eval?: boolean } = {}) =>
       getText(`/api/studies/${id}/export?eval=${withEval}`),
+    // Lichess-flavoured `.pgn` download (issue #216): header tags plus the full
+    // annotations ([%eval]/NAGs/comments/shapes) — ready to import as a
+    // Lichess study chapter.
+    exportLichess: (id: number) => getText(`/api/studies/${id}/export/lichess`),
     // Fill `[%eval]` on every non-terminal node and classify each move (issue
     // #162, #189): a `!`/`?!`/`?`/`??` NAG replaces any prior quality NAG;
     // comments/shapes/positional NAGs stay put. Returns the refreshed study plus
