@@ -72,6 +72,25 @@ async function clearAllShapes() {
   }
 }
 
+// Transposition pass (#174): append "Transposes to …" comments on nodes whose
+// position was already reached earlier in the tree. Comments only — node ids
+// are stable, so the selection survives the refresh.
+const marking = ref(false)
+const markError = ref<string | null>(null)
+
+async function markTranspositions() {
+  if (marking.value) return
+  markError.value = null
+  marking.value = true
+  try {
+    await editor.markTranspositions()
+  } catch (e) {
+    markError.value = String((e as Error)?.message ?? e)
+  } finally {
+    marking.value = false
+  }
+}
+
 /** "xx.x%" accuracy for the stats summary. */
 function pct(n: number): string {
   return `${n.toFixed(1)}%`
@@ -188,6 +207,27 @@ async function pinLine(line: EngineLine) {
     >
       {{ clearError }}
     </p>
+
+    <!-- Transposition pass (#174): comment-only, safe to re-run any time. -->
+    <div class="space-y-1">
+      <button
+        type="button"
+        data-test="mark-transpositions"
+        class="w-full rounded border border-border px-3 py-1 text-sm hover:bg-surface-2 disabled:opacity-60"
+        :disabled="marking"
+        title="Comment every move that transposes into a position already reached earlier in the study"
+        @click="markTranspositions"
+      >
+        {{ marking ? 'Marking…' : 'Mark transpositions' }}
+      </button>
+      <p
+        v-if="markError"
+        class="text-sm text-bad"
+        data-test="mark-transpositions-error"
+      >
+        {{ markError }}
+      </p>
+    </div>
 
     <!-- Shared eval/PV display, driven by the selected node's position. -->
     <EnginePanel :fen="editor.fen">

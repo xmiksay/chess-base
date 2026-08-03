@@ -165,6 +165,16 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
     studies.current = await api.studies.clearShapes(studyId.value!, scope)
   }
 
+  /**
+   * Re-run the transposition pass over the whole study (issue #174): a node
+   * whose position was already reached earlier in the tree gets a "Transposes
+   * to …" comment appended. The pass only touches comments — node ids are
+   * stable — so the current selection is kept.
+   */
+  async function markTranspositions() {
+    studies.current = await api.studies.markTranspositions(studyId.value!)
+  }
+
   /** Promote a variation toward the mainline. */
   async function promote(id: number) {
     studies.current = await api.studies.promote(studyId.value!, id)
@@ -216,6 +226,7 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
     setShapes,
     analyseStudy,
     clearShapes,
+    markTranspositions,
     promote,
     reorder,
     demote,

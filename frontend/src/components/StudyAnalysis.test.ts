@@ -169,6 +169,34 @@ describe('StudyAnalysis', () => {
     expect(clearShapes).toHaveBeenCalledWith('all')
   })
 
+  it('marks transpositions via the store action (#174)', async () => {
+    const engine = useEngineStore()
+    vi.spyOn(engine, 'connect').mockImplementation(() => {})
+    vi.spyOn(engine, 'disconnect').mockImplementation(() => {})
+
+    const editor = useStudyEditorStore()
+    const mark = vi.spyOn(editor, 'markTranspositions').mockResolvedValue()
+
+    const wrapper = mount(StudyAnalysis)
+    await wrapper.find('[data-test="mark-transpositions"]').trigger('click')
+
+    expect(mark).toHaveBeenCalledTimes(1)
+  })
+
+  it('surfaces a mark-transpositions error', async () => {
+    const engine = useEngineStore()
+    vi.spyOn(engine, 'connect').mockImplementation(() => {})
+    vi.spyOn(engine, 'disconnect').mockImplementation(() => {})
+
+    const editor = useStudyEditorStore()
+    vi.spyOn(editor, 'markTranspositions').mockRejectedValue(new Error('boom'))
+
+    const wrapper = mount(StudyAnalysis)
+    await wrapper.find('[data-test="mark-transpositions"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-test="mark-transpositions-error"]').text()).toContain('boom')
+  })
+
   it('surfaces a clear-shapes error', async () => {
     const engine = useEngineStore()
     vi.spyOn(engine, 'connect').mockImplementation(() => {})

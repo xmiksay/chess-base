@@ -11,6 +11,7 @@ vi.mock('../api', () => ({
       setShapes: vi.fn(),
       analyse: vi.fn(),
       clearShapes: vi.fn(),
+      markTranspositions: vi.fn(),
       promote: vi.fn(),
       reorder: vi.fn(),
       deleteNode: vi.fn(),
@@ -174,6 +175,19 @@ describe('studyEditor store', () => {
     await editor.clearShapes('generated')
     expect(api.studies.clearShapes).toHaveBeenCalledWith(10, 'generated')
     expect(studies.current).toEqual(cleared)
+  })
+
+  it('markTranspositions refreshes the tree and keeps the selection (#174)', async () => {
+    const marked = sampleStudy()
+    marked.tree.nodes[3].comment = 'Transposes to the main line after 1.e4'
+    vi.mocked(api.studies.markTranspositions).mockResolvedValue(marked)
+
+    editor.select(3)
+    await editor.markTranspositions()
+    expect(api.studies.markTranspositions).toHaveBeenCalledWith(10)
+    // The pass only appends comments — node ids are stable — so the selection stays.
+    expect(editor.nodeId).toBe(3)
+    expect(studies.current!.tree.nodes[3].comment).toContain('Transposes')
   })
 
   it('seeds the board from a set-up start_fen and replays edits from it', () => {

@@ -188,6 +188,11 @@ export const api = {
     // pinned, keeping anything drawn by hand; "all" clears every shape.
     clearShapes: (id: number, scope: ClearShapesScope) =>
       send<Study>('POST', `/api/studies/${id}/clear-shapes`, { scope }),
+    // Re-run the transposition pass over the whole tree (issue #174): a node
+    // whose position was already reached earlier gets a "Transposes to …"
+    // comment appended. Comments only — node ids are stable; idempotent.
+    markTranspositions: (id: number) =>
+      send<Study>('POST', `/api/studies/${id}/mark-transpositions`),
     rename: (id: number, name: string) => send<Study>('PATCH', `/api/studies/${id}`, { name }),
     remove: (id: number) => send<null>('DELETE', `/api/studies/${id}`),
     // File a study under a folder (issue #164); `folderId` null ⇒ unfile to root.
