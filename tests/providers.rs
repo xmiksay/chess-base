@@ -134,6 +134,7 @@ async fn non_admin_writes_own_rows_but_not_global_ones() {
     let alice = CurrentUser {
         id: "alice".to_string(),
         is_admin: false,
+        public: false,
     };
     let input = |is_global| ProviderInput {
         name: "zai".to_string(),
@@ -177,6 +178,7 @@ async fn admin_global_row_shows_in_another_users_list() {
     let bob = CurrentUser {
         id: "bob".to_string(),
         is_admin: false,
+        public: false,
     };
     let listed = ProviderService::new(db.clone())
         .list(&bob)
@@ -199,6 +201,7 @@ async fn default_resolution_prefers_the_users_own_row() {
     let alice = CurrentUser {
         id: "alice".to_string(),
         is_admin: false,
+        public: false,
     };
     let input = |name: &str, model: &str, is_global| ProviderInput {
         name: name.to_string(),

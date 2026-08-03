@@ -17,6 +17,7 @@ fn plain(id: &str) -> CurrentUser {
     CurrentUser {
         id: id.to_string(),
         is_admin: false,
+        public: false,
     }
 }
 

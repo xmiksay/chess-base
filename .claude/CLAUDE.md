@@ -206,7 +206,16 @@ src/
                    backs the data tools' `save_as` (no LLM, no PGN round-trip)  ← unit-tested
   auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
   server/          Axum app: routes, state, embedded SPA, browser launch,
-                   MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016).
+                   MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016;
+                   anonymous public tier #192/ADR-0043 — a server-mode request
+                   with no credential resolves to CurrentUser::anonymous
+                   (identity.rs) instead of 401: data reads on global databases
+                   only, via a dispatch-level allowlist in routes/mcp/mod.rs
+                   — list_databases/db_list_games/db_read_game/
+                   db_position_report/db_reference_games/db_export_games/
+                   search_headers/echo; no engine, no studies, no writes;
+                   local mode and an invalid/expired credential are unchanged
+                   — both still 401).
                    routes/mcp/ tools (40, #125 then #183/ADR-0036 — symmetrical to
                    the HTTP API, one carve-out list in symmetry.rs): engine_analyse +
                    analyse_position/analyse_game; study_tools.rs study_list/create/

@@ -48,3 +48,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0040 | Embed the entanglement agent engine (streaming WS assistant, per-user providers) |
 | 0041 | "Clear arrows" targets the live engine overlays, not hand-drawn shapes |
 | 0042 | Generated plan/threat arrows get clear semantics + a bulk clear |
+| 0043 | Anonymous public MCP tier: data reads on global databases only |

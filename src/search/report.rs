@@ -311,6 +311,7 @@ mod tests {
         CurrentUser {
             id: id.to_string(),
             is_admin: false,
+            public: false,
         }
     }
 

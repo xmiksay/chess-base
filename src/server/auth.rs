@@ -1,13 +1,18 @@
-//! MCP authentication (ADR-0016): resolve the caller behind a `/mcp` request and
-//! mint the bearer challenge on a miss.
+//! MCP authentication (ADR-0016, anonymous tier ADR-0043): resolve the caller
+//! behind a `/mcp` request and mint the bearer challenge on a miss.
 //!
 //! A request carries `Authorization: Bearer <token>`. [`authenticate_mcp`] tries
 //! an OAuth 2.1 access token first (server-mode, the claude.ai self-onboarding
 //! path) then falls back to a static **service token** (the local-mode printed
 //! token, or an admin-issued server one). Either resolves to the one
-//! [`CurrentUser`] every service scopes against. On any miss the caller gets a
-//! `401` with `WWW-Authenticate: Bearer resource_metadata="…"`, the discovery
-//! hook OAuth-aware clients follow to the authorization server.
+//! [`CurrentUser`] every service scopes against. A *present but invalid/expired*
+//! credential still gets a `401` with `WWW-Authenticate: Bearer
+//! resource_metadata="…"`, the discovery hook OAuth-aware clients follow to the
+//! authorization server. In **server mode**, a request with **no** credential at
+//! all instead mints [`CurrentUser::anonymous`] (ADR-0043: data reads on global
+//! databases only — the dispatch layer enforces the tool allowlist). Local mode
+//! is unchanged: no credential still 401s, since the printed local service token
+//! is the only way in.
 
 use axum::http::{header, HeaderMap};
 use base64::Engine;
@@ -19,6 +24,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::db::entities::{oauth_tokens, service_tokens, users};
+use crate::server::config::Mode;
 use crate::server::identity::{CurrentUser, LOCAL_ADMIN_ID};
 use crate::server::state::AppState;
 
@@ -36,26 +42,37 @@ pub struct BearerChallenge {
 }
 
 /// Resolve the caller behind a `/mcp` request: OAuth access token first, then a
-/// static service token. Returns the [`CurrentUser`] to scope every tool to, or a
-/// [`BearerChallenge`] to render as `401` on any miss.
+/// static service token. A credential that fails to resolve is a `401` (still
+/// carrying the bearer challenge, ADR-0016). No credential at all mints the
+/// anonymous public identity in server mode (ADR-0043) — local mode keeps
+/// requiring the printed local service token, so it still `401`s.
 pub async fn authenticate_mcp(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<CurrentUser, BearerChallenge> {
-    if let Some(token) = crate::auth::token_from_headers(headers) {
-        if let Some(user) = oauth_token_user(&state.db, &token).await {
-            return Ok(user);
+    match crate::auth::token_from_headers(headers) {
+        Some(token) => {
+            if let Some(user) = oauth_token_user(&state.db, &token).await {
+                return Ok(user);
+            }
+            if let Some(user) = service_token_user(&state.db, &token).await {
+                return Ok(user);
+            }
+            Err(challenge(headers))
         }
-        if let Some(user) = service_token_user(&state.db, &token).await {
-            return Ok(user);
-        }
+        None if state.mode == Mode::Server => Ok(CurrentUser::anonymous()),
+        None => Err(challenge(headers)),
     }
-    Err(BearerChallenge {
+}
+
+/// Build the bearer challenge for a missing/invalid credential.
+fn challenge(headers: &HeaderMap) -> BearerChallenge {
+    BearerChallenge {
         www_authenticate: format!(
             "Bearer resource_metadata=\"{}\"",
             protected_resource_url(headers)
         ),
-    })
+    }
 }
 
 /// Resolve a live OAuth access token to its user (role read from `users`).
@@ -76,6 +93,7 @@ async fn oauth_token_user(db: &DatabaseConnection, token: &str) -> Option<Curren
     Some(CurrentUser {
         id: user.id,
         is_admin: user.is_admin,
+        public: false,
     })
 }
 
@@ -95,6 +113,7 @@ async fn service_token_user(db: &DatabaseConnection, token: &str) -> Option<Curr
     Some(CurrentUser {
         id: row.owner_id,
         is_admin: row.is_admin,
+        public: false,
     })
 }
 

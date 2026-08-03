@@ -250,6 +250,7 @@ mod tests {
         CurrentUser {
             id: "bob".into(),
             is_admin: false,
+            public: false,
         }
     }
 
