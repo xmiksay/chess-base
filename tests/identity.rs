@@ -76,6 +76,7 @@ async fn scope_filter_matches_own_and_global_only() {
     let user = CurrentUser {
         id: "local-admin".to_string(),
         is_admin: true,
+        public: false,
     };
 
     let visible = databases::Entity::find()

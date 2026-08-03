@@ -5,8 +5,13 @@
 //! tools into — each tool is a name + input-schema + async handler — and wraps the
 //! handler's [`ToolOutcome`] into the MCP content/`isError` envelope. Every call
 //! is authenticated up front; the resolved [`CurrentUser`] is threaded into each
-//! handler so a tool scopes its reads/writes to the caller (ADR 0007/0011). The
-//! tool builders themselves live in [`tools`].
+//! handler so a tool scopes its reads/writes to the caller (ADR 0007/0011). A
+//! server-mode request with no credential resolves to the anonymous public
+//! identity instead of `401` (ADR-0043, issue #192): [`ANONYMOUS_ALLOWLIST`]
+//! gates both `tools/list` and `tools/call` down to plain data reads — no
+//! engine, no studies, no writes — everything else is scoped to global
+//! (`owner_id IS NULL`) rows via `CurrentUser`'s `public` flag. The tool
+//! builders themselves live in [`tools`].
 
 mod analysis;
 mod db_export_tools;
@@ -45,6 +50,22 @@ use crate::server::state::AppState;
 const SERVER_NAME: &str = "chess-base";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: &str = "2025-03-26";
+
+/// Tools the anonymous public caller (ADR-0043, issue #192) may invoke: data
+/// reads on global databases only, no engine (Stockfish CPU is a DoS surface
+/// for an unauthenticated caller), no studies/folders, no writes. `tools/list`
+/// filters to this set too, so an anonymous client never sees a tool it can't
+/// call.
+const ANONYMOUS_ALLOWLIST: &[&str] = &[
+    "echo",
+    "list_databases",
+    "db_list_games",
+    "db_read_game",
+    "db_position_report",
+    "db_reference_games",
+    "db_export_games",
+    "search_headers",
+];
 
 pub use tools::default_registry;
 
@@ -292,12 +313,29 @@ async fn handle(State(state): State<McpState>, headers: HeaderMap, body: Bytes) 
 
     let resp = match req.method.as_str() {
         "initialize" => JsonRpcResponse::success(req.id, initialize_result()),
-        "tools/list" => JsonRpcResponse::success(req.id, state.registry.list()),
+        "tools/list" => {
+            let mut list = state.registry.list();
+            if user.public {
+                restrict_to_allowlist(&mut list);
+            }
+            JsonRpcResponse::success(req.id, list)
+        }
         "tools/call" => tools_call(&state, &user, req.id, req.params).await,
         other => JsonRpcResponse::error(req.id, -32601, format!("Method not found: {other}")),
     };
 
     (StatusCode::OK, Json(resp)).into_response()
+}
+
+/// Filter a `tools/list` result down to [`ANONYMOUS_ALLOWLIST`] in place.
+fn restrict_to_allowlist(list: &mut Value) {
+    if let Some(tools) = list.get_mut("tools").and_then(Value::as_array_mut) {
+        tools.retain(|t| {
+            t["name"]
+                .as_str()
+                .is_some_and(|name| ANONYMOUS_ALLOWLIST.contains(&name))
+        });
+    }
 }
 
 /// Build the `401` response carrying the `WWW-Authenticate` bearer challenge.
@@ -341,6 +379,14 @@ async fn tools_call(
         .cloned()
         .unwrap_or_else(|| json!({}));
 
+    if user.public && !ANONYMOUS_ALLOWLIST.contains(&name) {
+        return JsonRpcResponse::error(
+            id,
+            -32001,
+            format!("Authentication required: `{name}` is not available to anonymous callers."),
+        );
+    }
+
     let tool = match state.registry.find(name) {
         Some(t) => t,
         None => return JsonRpcResponse::error(id, -32602, format!("Unknown tool: {name}")),
@@ -372,6 +418,16 @@ Self-hosted ChessBase replacement. Collect, search and study chess games with \
 engine analysis and AI-assisted studies. This endpoint exposes chess tooling \
 over JSON-RPC; the available tools depend on what is registered (call \
 `tools/list`).
+
+## Anonymous access
+
+A request with no `Authorization` header is served as an anonymous public \
+caller: data reads only (`list_databases`, `db_list_games`, `db_read_game`, \
+`db_position_report`, `db_reference_games`, `db_export_games`, \
+`search_headers`, `echo`), scoped to global (admin-managed) databases only — \
+no engine, no studies, no writes. `tools/list` reflects this reduced set; any \
+other tool returns an authentication-required error. Sign in (OAuth or a \
+service token) for your own databases plus write access.
 
 ## Tool surface (Epic 9)
 
@@ -430,6 +486,45 @@ mod tests {
         let env = tool_envelope(ToolOutcome::ok("hi"));
         assert!(env.get("isError").is_none());
         assert_eq!(env["content"][0]["type"], "text");
+    }
+
+    #[test]
+    fn restrict_to_allowlist_keeps_only_allowlisted_tools() {
+        let mut list = json!({
+            "tools": [
+                { "name": "echo" },
+                { "name": "study_create" },
+                { "name": "search_headers" },
+                { "name": "engine_analyse" },
+            ]
+        });
+        restrict_to_allowlist(&mut list);
+        let names: Vec<&str> = list["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["echo", "search_headers"]);
+    }
+
+    #[test]
+    fn anonymous_allowlist_matches_the_issue_192_read_only_data_tools() {
+        // Guards the allowlist against silent drift — every entry here is a data
+        // read scoped to global databases; nothing engine/study/write-shaped.
+        for tool in [
+            "echo",
+            "list_databases",
+            "db_list_games",
+            "db_read_game",
+            "db_position_report",
+            "db_reference_games",
+            "db_export_games",
+            "search_headers",
+        ] {
+            assert!(ANONYMOUS_ALLOWLIST.contains(&tool), "missing {tool}");
+        }
+        assert_eq!(ANONYMOUS_ALLOWLIST.len(), 8);
     }
 
     fn parse_err(body: &[u8]) -> JsonRpcError {

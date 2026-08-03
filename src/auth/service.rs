@@ -105,6 +105,7 @@ impl AuthService {
             user: CurrentUser {
                 id: user.id,
                 is_admin: user.is_admin,
+                public: false,
             },
         })
     }
@@ -134,6 +135,7 @@ impl AuthService {
             user: CurrentUser {
                 id: user.id,
                 is_admin: user.is_admin,
+                public: false,
             },
         })
     }
@@ -169,6 +171,7 @@ impl AuthService {
         Ok(CurrentUser {
             id: user.id,
             is_admin: user.is_admin,
+            public: false,
         })
     }
 

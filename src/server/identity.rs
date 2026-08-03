@@ -23,6 +23,12 @@ use crate::server::state::AppState;
 /// Stable id of the implicit local-mode admin user.
 pub const LOCAL_ADMIN_ID: &str = "local-admin";
 
+/// Stable id stamped on the anonymous public identity (ADR-0043). Never matches
+/// a real `owner_id` (user ids come from `users.id` or [`LOCAL_ADMIN_ID`]), but
+/// `public` is what every check actually gates on — this is just a readable
+/// value for logs.
+pub const ANONYMOUS_ID: &str = "anonymous";
+
 /// The authenticated caller for a request. The one identity type every service
 /// takes; nothing downstream cares how it was resolved.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,6 +36,12 @@ pub struct CurrentUser {
     /// Matches `databases.owner_id` for resources this user owns.
     pub id: String,
     pub is_admin: bool,
+    /// The anonymous public MCP tier (ADR-0043, issue #192): no sign-in, reads
+    /// only, global (`owner_id IS NULL`) rows only. `scope` drops the
+    /// own-rows half of its filter for this caller, and `assert_admin` /
+    /// `assert_can_write` hard-deny regardless of `is_admin` (always `false`
+    /// here anyway).
+    pub public: bool,
 }
 
 impl CurrentUser {
@@ -38,21 +50,41 @@ impl CurrentUser {
         Self {
             id: LOCAL_ADMIN_ID.to_string(),
             is_admin: true,
+            public: false,
+        }
+    }
+
+    /// The anonymous public identity (ADR-0043): no credential presented, data
+    /// reads on global databases only, never writes.
+    pub fn anonymous() -> Self {
+        Self {
+            id: ANONYMOUS_ID.to_string(),
+            is_admin: false,
+            public: true,
         }
     }
 }
 
 /// Read-scope condition for an ownable resource: rows the caller owns plus global
 /// (`owner_id IS NULL`) rows. The one place the ownership rule lives, used by
-/// every service that filters by owner (see ADR 0007 / 0011).
+/// every service that filters by owner (see ADR 0007 / 0011). The anonymous
+/// public caller (ADR-0043) never owns anything, so its scope is `owner_col IS
+/// NULL` only.
 pub fn scope<C: ColumnTrait>(owner_col: C, user: &CurrentUser) -> Condition {
+    if user.public {
+        return Condition::any().add(owner_col.is_null());
+    }
     Condition::any()
         .add(owner_col.eq(user.id.clone()))
         .add(owner_col.is_null())
 }
 
-/// Gate an admin-only action (e.g. writing a global database).
+/// Gate an admin-only action (e.g. writing a global database). The anonymous
+/// public caller is hard-denied (ADR-0043): it can never be an admin.
 pub fn assert_admin(user: &CurrentUser) -> Result<(), AuthError> {
+    if user.public {
+        return Err(AuthError::Unauthorized);
+    }
     if user.is_admin {
         Ok(())
     } else {
@@ -61,12 +93,17 @@ pub fn assert_admin(user: &CurrentUser) -> Result<(), AuthError> {
 }
 
 /// Write guard (ADR 0007 / 0011): a resource is writable only by its owner; a
-/// global resource (`owner_id` NULL) requires admin. Returns the shared
-/// [`AuthError`]; each service maps it onto its own error type.
+/// global resource (`owner_id` NULL) requires admin. The anonymous public
+/// caller is hard-denied before the ownership check (ADR-0043) — it has no
+/// rows of its own to write. Returns the shared [`AuthError`]; each service
+/// maps it onto its own error type.
 pub(crate) fn assert_can_write(
     owner_id: Option<&str>,
     user: &CurrentUser,
 ) -> Result<(), AuthError> {
+    if user.public {
+        return Err(AuthError::Unauthorized);
+    }
     match owner_id {
         None => assert_admin(user),
         Some(owner) if owner == user.id => Ok(()),
@@ -127,6 +164,15 @@ mod tests {
         let u = CurrentUser::local_admin();
         assert_eq!(u.id, LOCAL_ADMIN_ID);
         assert!(u.is_admin);
+        assert!(!u.public);
+    }
+
+    #[test]
+    fn anonymous_is_public_and_never_admin() {
+        let u = CurrentUser::anonymous();
+        assert_eq!(u.id, ANONYMOUS_ID);
+        assert!(!u.is_admin);
+        assert!(u.public);
     }
 
     #[test]
@@ -136,7 +182,40 @@ mod tests {
         let plain = CurrentUser {
             id: "alice".to_string(),
             is_admin: false,
+            public: false,
         };
         assert_eq!(assert_admin(&plain), Err(AuthError::Forbidden));
+    }
+
+    #[test]
+    fn assert_admin_hard_denies_the_anonymous_caller() {
+        assert_eq!(
+            assert_admin(&CurrentUser::anonymous()),
+            Err(AuthError::Unauthorized)
+        );
+    }
+
+    #[test]
+    fn assert_can_write_hard_denies_the_anonymous_caller_even_on_its_own_id() {
+        let anon = CurrentUser::anonymous();
+        // Even a resource "owned" by the anonymous id (which should never occur)
+        // must not be writable — the public check comes first.
+        assert_eq!(
+            assert_can_write(Some(ANONYMOUS_ID), &anon),
+            Err(AuthError::Unauthorized)
+        );
+        assert_eq!(assert_can_write(None, &anon), Err(AuthError::Unauthorized));
+    }
+
+    #[test]
+    fn scope_restricts_the_anonymous_caller_to_global_rows_only() {
+        use crate::db::entities::databases;
+
+        let anon = CurrentUser::anonymous();
+        let cond = scope(databases::Column::OwnerId, &anon);
+        // The anonymous condition must not reference the caller's id at all —
+        // rendered SQL only has an IS NULL check, no equality branch.
+        let sql = format!("{cond:?}");
+        assert!(!sql.contains(ANONYMOUS_ID), "leaked anonymous id: {sql}");
     }
 }

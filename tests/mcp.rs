@@ -262,12 +262,16 @@ async fn engine_analyse_missing_fen_is_a_tool_error() {
     assert_eq!(v["result"]["isError"], json!(true));
 }
 
+/// Local mode's decision (ADR-0043, issue #192): a missing bearer stays `401`
+/// even without the anonymous tier, since the printed local service token is
+/// the only way in. Server mode's missing-bearer behavior changed by this issue
+/// is covered in `tests/mcp_anonymous.rs`.
 #[tokio::test]
-async fn missing_bearer_is_unauthorized_with_resource_metadata() {
+async fn missing_bearer_in_local_mode_is_unauthorized_with_resource_metadata() {
     let db = connect(&DbConfig::in_memory()).await.unwrap();
     let app = build_router(AppState {
         db,
-        mode: Mode::Server,
+        mode: Mode::Local,
         engine_service: None,
         provider_store: None,
         agent: Default::default(),
@@ -360,6 +364,7 @@ async fn tools_call_rejects_mutating_a_non_owned_study() {
     let alice = CurrentUser {
         id: "alice".into(),
         is_admin: false,
+        public: false,
     };
     let study = StudyService::new(db.clone())
         .create(&alice, database.id, "Alice's study", false)

@@ -211,16 +211,23 @@ CLI flags; resolved into `AppConfig` (config) → `AppState` (runtime). The bina
 also exposes an `import-pgn <FILE>` subcommand that runs the `collectors::bulk`
 master importer and exits without serving (issue #4).
 
-## Request identity (ADR 0011)
+## Request identity (ADR 0011, anonymous tier ADR 0043)
 
-`server/identity.rs` defines `CurrentUser { id, is_admin }` — the one identity
-type every service takes — produced by an Axum extractor. Resolution is the only
-mode-dependent part and lives in `AppState::resolve_current_user`: local mode is
-always the implicit admin (`local-admin`); server mode resolves the session token
-through `auth::AuthService` (#14, ADR 0015). Two shared helpers enforce the
+`server/identity.rs` defines `CurrentUser { id, is_admin, public }` — the one
+identity type every service takes — produced by an Axum extractor. Resolution
+is the only mode-dependent part and lives in `AppState::resolve_current_user`:
+local mode is always the implicit admin (`local-admin`); server mode resolves
+the session token through `auth::AuthService` (#14, ADR 0015) — `/api/*` routes
+are unaffected by the anonymous tier below, so a missing/invalid credential
+still `401`s there exactly as before. Three shared helpers enforce the
 ownership model (ADR 0007) in one place: `scope(owner_col, user)` (the
-`owner == caller OR owner IS NULL` read filter) and `assert_admin(user)`. The
-`/api/whoami` route exposes the resolved caller to the SPA.
+`owner == caller OR owner IS NULL` read filter — for the anonymous public
+caller, `owner IS NULL` only), `assert_admin(user)` and `assert_can_write` (both
+hard-deny a public caller before their normal logic runs). The `/api/whoami`
+route exposes the resolved caller to the SPA. `CurrentUser::anonymous()` (issue
+#192) is the public identity minted by `authenticate_mcp` for a credential-less
+**server-mode** `/mcp` request — see "MCP endpoint" below; it never appears on
+the HTTP API.
 
 ## Server-mode auth (ADR 0015)
 
@@ -341,8 +348,24 @@ other new read-only tools run automatically like their pre-existing peers.
 Every `/mcp` call is **authenticated** (ADR 0016): `server/auth.rs::authenticate_mcp`
 resolves an OAuth access token then a service token to the one `CurrentUser`, which
 is threaded into each handler so a tool scopes its reads/writes to the caller (the
-study write-guard rejects mutating a non-owned study). A miss returns `401` with
-`WWW-Authenticate: Bearer resource_metadata="…"`.
+study write-guard rejects mutating a non-owned study). A *present but
+invalid/expired* credential returns `401` with `WWW-Authenticate: Bearer
+resource_metadata="…"`.
+
+**Anonymous public tier (ADR-0043, issue #192).** In **server mode**, a request
+with **no** credential at all is no longer a `401` — it resolves to
+`CurrentUser::anonymous()` (`public: true`), scoped by `identity::scope` to
+global (`owner_id IS NULL`) rows only, never a write. The dispatch layer
+(`server/routes/mcp/mod.rs`) enforces a small allowlist on top of that scoping:
+`list_databases`, `db_list_games`, `db_read_game`, `db_position_report`,
+`db_reference_games`, `db_export_games`, `search_headers`, `echo`. `tools/list`
+filters to this set for an anonymous caller; any other tool — every engine tool
+(Stockfish search is CPU-bound, a DoS surface for an unauthenticated caller),
+every study/folder/game-mutation/import tool — returns a JSON-RPC
+authentication-required error before the registry is even consulted. **Local
+mode is unchanged**: a request with no credential still `401`s, since the
+single implicit user has no "own data" to distinguish from "everyone's data" —
+the printed local service token remains the only door in.
 
 ## MCP auth: OAuth 2.1 + service token (ADR 0016)
 

@@ -63,6 +63,7 @@ impl BridgedTool {
                 Ok(CurrentUser {
                     id: row.id,
                     is_admin: row.is_admin,
+                    public: false,
                 })
             }
         }
