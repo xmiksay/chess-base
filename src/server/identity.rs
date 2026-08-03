@@ -42,6 +42,13 @@ pub struct CurrentUser {
     /// `assert_can_write` hard-deny regardless of `is_admin` (always `false`
     /// here anyway).
     pub public: bool,
+    /// This caller may never write, regardless of ownership (ADR-0044 scoped
+    /// service tokens, issue #193). Independent of `public`.
+    pub read_only: bool,
+    /// This caller's DB read scope drops the "own rows" arm of [`scope`] —
+    /// global (`owner_id IS NULL`) rows only (ADR-0044). Independent of
+    /// `public`, but `public` implies it too.
+    pub global_only: bool,
 }
 
 impl CurrentUser {
@@ -51,16 +58,21 @@ impl CurrentUser {
             id: LOCAL_ADMIN_ID.to_string(),
             is_admin: true,
             public: false,
+            read_only: false,
+            global_only: false,
         }
     }
 
     /// The anonymous public identity (ADR-0043): no credential presented, data
-    /// reads on global databases only, never writes.
+    /// reads on global databases only, never writes. `read_only`/`global_only`
+    /// are explicit here (ADR-0044) rather than riding solely on `public`.
     pub fn anonymous() -> Self {
         Self {
             id: ANONYMOUS_ID.to_string(),
             is_admin: false,
             public: true,
+            read_only: true,
+            global_only: true,
         }
     }
 }
@@ -71,7 +83,7 @@ impl CurrentUser {
 /// public caller (ADR-0043) never owns anything, so its scope is `owner_col IS
 /// NULL` only.
 pub fn scope<C: ColumnTrait>(owner_col: C, user: &CurrentUser) -> Condition {
-    if user.public {
+    if user.public || user.global_only {
         return Condition::any().add(owner_col.is_null());
     }
     Condition::any()
@@ -80,9 +92,10 @@ pub fn scope<C: ColumnTrait>(owner_col: C, user: &CurrentUser) -> Condition {
 }
 
 /// Gate an admin-only action (e.g. writing a global database). The anonymous
-/// public caller is hard-denied (ADR-0043): it can never be an admin.
+/// public caller and any `read_only`-scoped caller are hard-denied (ADR-0043,
+/// ADR-0044): neither can ever be an admin action's caller.
 pub fn assert_admin(user: &CurrentUser) -> Result<(), AuthError> {
-    if user.public {
+    if user.public || user.read_only {
         return Err(AuthError::Unauthorized);
     }
     if user.is_admin {
@@ -94,14 +107,14 @@ pub fn assert_admin(user: &CurrentUser) -> Result<(), AuthError> {
 
 /// Write guard (ADR 0007 / 0011): a resource is writable only by its owner; a
 /// global resource (`owner_id` NULL) requires admin. The anonymous public
-/// caller is hard-denied before the ownership check (ADR-0043) — it has no
-/// rows of its own to write. Returns the shared [`AuthError`]; each service
-/// maps it onto its own error type.
+/// caller and any `read_only`-scoped caller are hard-denied before the
+/// ownership check (ADR-0043, ADR-0044) — neither may ever write. Returns the
+/// shared [`AuthError`]; each service maps it onto its own error type.
 pub(crate) fn assert_can_write(
     owner_id: Option<&str>,
     user: &CurrentUser,
 ) -> Result<(), AuthError> {
-    if user.public {
+    if user.public || user.read_only {
         return Err(AuthError::Unauthorized);
     }
     match owner_id {
@@ -165,6 +178,8 @@ mod tests {
         assert_eq!(u.id, LOCAL_ADMIN_ID);
         assert!(u.is_admin);
         assert!(!u.public);
+        assert!(!u.read_only);
+        assert!(!u.global_only);
     }
 
     #[test]
@@ -173,6 +188,8 @@ mod tests {
         assert_eq!(u.id, ANONYMOUS_ID);
         assert!(!u.is_admin);
         assert!(u.public);
+        assert!(u.read_only);
+        assert!(u.global_only);
     }
 
     #[test]
@@ -183,6 +200,8 @@ mod tests {
             id: "alice".to_string(),
             is_admin: false,
             public: false,
+            read_only: false,
+            global_only: false,
         };
         assert_eq!(assert_admin(&plain), Err(AuthError::Forbidden));
     }
@@ -217,5 +236,43 @@ mod tests {
         // rendered SQL only has an IS NULL check, no equality branch.
         let sql = format!("{cond:?}");
         assert!(!sql.contains(ANONYMOUS_ID), "leaked anonymous id: {sql}");
+    }
+
+    /// A non-public `global_only` caller (e.g. a `global_read`-scoped service
+    /// token, ADR-0044) must be restricted the same way `public` is — its own
+    /// id must never appear in the rendered condition.
+    #[test]
+    fn scope_restricts_a_global_only_caller_to_global_rows_only() {
+        use crate::db::entities::databases;
+
+        let caller = CurrentUser {
+            id: "bob".to_string(),
+            is_admin: false,
+            public: false,
+            read_only: true,
+            global_only: true,
+        };
+        let cond = scope(databases::Column::OwnerId, &caller);
+        let sql = format!("{cond:?}");
+        assert!(!sql.contains("bob"), "leaked caller id: {sql}");
+    }
+
+    /// A `read_only`-scoped caller must be hard-denied on writes/admin actions
+    /// even over its own resources (ADR-0044) — the same hard-deny shape as
+    /// the anonymous public caller.
+    #[test]
+    fn read_only_caller_is_hard_denied_on_write_and_admin_even_for_its_own_resources() {
+        let caller = CurrentUser {
+            id: "bob".to_string(),
+            is_admin: true,
+            public: false,
+            read_only: true,
+            global_only: false,
+        };
+        assert_eq!(assert_admin(&caller), Err(AuthError::Unauthorized));
+        assert_eq!(
+            assert_can_write(Some("bob"), &caller),
+            Err(AuthError::Unauthorized)
+        );
     }
 }

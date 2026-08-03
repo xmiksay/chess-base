@@ -14,6 +14,8 @@ pub mod games;
 pub mod llm_providers;
 pub mod oauth_clients;
 pub mod oauth_codes;
+pub mod oauth_consent_requests;
+pub mod oauth_consents;
 pub mod oauth_tokens;
 pub mod players;
 pub mod position_index;

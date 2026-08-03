@@ -16,7 +16,10 @@ use crate::server::{
 mod engines;
 pub mod mcp;
 mod oauth;
+mod oauth_consent;
+mod oauth_shared;
 mod providers;
+mod service_tokens;
 
 /// Build the application router.
 pub fn router(state: AppState) -> Router {
@@ -50,6 +53,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::studies::merge_danger_route::router(state.clone()))
         .merge(crate::studies::clear_shapes_route::router(state.clone()))
         .merge(providers::router(state.clone()))
+        .merge(service_tokens::router(state.clone()))
         .merge(oauth::router(state.clone()))
         .merge(mcp::router(state))
 }

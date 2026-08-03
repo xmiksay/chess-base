@@ -13,6 +13,8 @@ fn user(id: &str) -> CurrentUser {
         id: id.to_string(),
         is_admin: false,
         public: false,
+        read_only: false,
+        global_only: false,
     }
 }
 
@@ -148,6 +150,8 @@ async fn open_by_a_non_owner_is_not_found_even_for_an_admin() {
         id: "root-admin".to_string(),
         is_admin: true,
         public: false,
+        read_only: false,
+        global_only: false,
     };
     let admin_open = service.open(&admin, &root).await;
     assert!(

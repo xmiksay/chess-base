@@ -169,6 +169,8 @@ fn alice() -> CurrentUser {
         id: "alice".to_string(),
         is_admin: false,
         public: false,
+        read_only: false,
+        global_only: false,
     }
 }
 

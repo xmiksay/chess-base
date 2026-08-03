@@ -23,6 +23,7 @@ pub mod position;
 pub mod review;
 pub mod search;
 pub mod server;
+pub mod service_tokens;
 pub mod settings;
 pub mod studies;
 pub mod study_gen;

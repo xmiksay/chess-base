@@ -10,8 +10,14 @@
 //! identity instead of `401` (ADR-0043, issue #192): [`ANONYMOUS_ALLOWLIST`]
 //! gates both `tools/list` and `tools/call` down to plain data reads — no
 //! engine, no studies, no writes — everything else is scoped to global
-//! (`owner_id IS NULL`) rows via `CurrentUser`'s `public` flag. The tool
-//! builders themselves live in [`tools`].
+//! (`owner_id IS NULL`) rows via `CurrentUser`'s `public` flag. A `read_only`
+//! caller (ADR-0044, e.g. a `read_only`/`global_read`-scoped service token)
+//! gets the same `tools/call` gate on any tool `ai::agent::requires_approval`
+//! flags as mutating, and `tools/list` filters those out too. The tool
+//! builders themselves live in [`tools`]; the registry shape lives in
+//! [`registry`], JSON-RPC framing in [`rpc`], the `initialize` instructions
+//! text in [`instructions`] — split out to keep this file under the
+//! file-size cap.
 
 mod analysis;
 mod db_export_tools;
@@ -19,7 +25,10 @@ mod db_tools;
 mod folder_tools;
 mod game_tools;
 mod import_tools;
+mod instructions;
 mod preprocess;
+mod registry;
+mod rpc;
 mod search_tools;
 mod study_node_tools;
 mod study_repertoire_tools;
@@ -28,8 +37,6 @@ mod study_tools;
 mod symmetry;
 mod tools;
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::{
@@ -40,12 +47,13 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::server::auth::{authenticate_mcp, BearerChallenge};
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
+use instructions::INSTRUCTIONS;
+use rpc::{parse_request, JsonRpcResponse};
 
 const SERVER_NAME: &str = "chess-base";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -67,6 +75,7 @@ const ANONYMOUS_ALLOWLIST: &[&str] = &[
     "search_headers",
 ];
 
+pub use registry::{Tool, ToolOutcome, ToolRegistry};
 pub use tools::default_registry;
 
 /// Mount the `/mcp` endpoint with the default tool registry.
@@ -83,212 +92,6 @@ pub fn router(app: AppState) -> Router {
 struct McpState {
     app: AppState,
     registry: Arc<ToolRegistry>,
-}
-
-// --- Tool registry -------------------------------------------------------
-
-/// The result of running a tool: free text plus the `isError` flag the MCP
-/// envelope carries. Tools build these via [`ToolOutcome::ok`] /
-/// [`ToolOutcome::error`] and stay ignorant of JSON-RPC framing.
-pub struct ToolOutcome {
-    pub text: String,
-    pub is_error: bool,
-}
-
-impl ToolOutcome {
-    pub fn ok(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            is_error: false,
-        }
-    }
-
-    pub fn error(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            is_error: true,
-        }
-    }
-}
-
-/// Boxed async tool handler: `(app state, caller, arguments) -> outcome`.
-type ToolFuture = Pin<Box<dyn Future<Output = ToolOutcome> + Send>>;
-type ToolFn = Arc<dyn Fn(AppState, CurrentUser, Value) -> ToolFuture + Send + Sync>;
-
-/// A registered tool: its `tools/list` metadata plus the dispatch handler.
-pub struct Tool {
-    pub name: &'static str,
-    pub description: &'static str,
-    pub input_schema: Value,
-    handler: ToolFn,
-}
-
-impl Tool {
-    /// Build a tool from metadata and an async handler closure. The handler
-    /// receives the cloned [`AppState`], the resolved [`CurrentUser`], and the raw
-    /// `arguments` object.
-    pub fn new<F, Fut>(
-        name: &'static str,
-        description: &'static str,
-        input_schema: Value,
-        handler: F,
-    ) -> Self
-    where
-        F: Fn(AppState, CurrentUser, Value) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = ToolOutcome> + Send + 'static,
-    {
-        Self {
-            name,
-            description,
-            input_schema,
-            handler: Arc::new(move |state, user, args| Box::pin(handler(state, user, args))),
-        }
-    }
-
-    /// Run this tool's handler. The embedded assistant (issue #20) invokes the
-    /// same handlers in-process as the `/mcp` transport does, so one tool surface
-    /// backs both — no second implementation.
-    pub async fn invoke(&self, app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
-        (self.handler)(app, user, args).await
-    }
-}
-
-/// The set of tools exposed over MCP. Epic 9 issues register their tools here.
-#[derive(Default)]
-pub struct ToolRegistry {
-    tools: Vec<Tool>,
-}
-
-impl ToolRegistry {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn register(&mut self, tool: Tool) {
-        self.tools.push(tool);
-    }
-
-    fn find(&self, name: &str) -> Option<&Tool> {
-        self.tools.iter().find(|t| t.name == name)
-    }
-
-    /// The registered tools, for callers that drive the surface in-process (the
-    /// embedded assistant builds its tool specs from these — issue #20).
-    pub fn tools(&self) -> &[Tool] {
-        &self.tools
-    }
-
-    /// Run the named tool, or `None` if no tool by that name is registered.
-    pub async fn invoke(
-        &self,
-        name: &str,
-        app: AppState,
-        user: CurrentUser,
-        args: Value,
-    ) -> Option<ToolOutcome> {
-        let tool = self.find(name)?;
-        Some(tool.invoke(app, user, args).await)
-    }
-
-    /// The `tools/list` payload: `[{ name, description, inputSchema }]`.
-    pub fn list(&self) -> Value {
-        let tools: Vec<Value> = self
-            .tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "name": t.name,
-                    "description": t.description,
-                    "inputSchema": t.input_schema,
-                })
-            })
-            .collect();
-        json!({ "tools": tools })
-    }
-}
-
-// --- JSON-RPC framing ----------------------------------------------------
-
-/// A validated JSON-RPC request. Built by [`parse_request`] from the raw body so
-/// a malformed body yields a framed `-32700`/`-32600` error instead of axum's
-/// bare-text `400` (issue #97).
-struct JsonRpcRequest {
-    id: Option<Value>,
-    method: String,
-    params: Option<Value>,
-}
-
-#[derive(Serialize)]
-struct JsonRpcResponse {
-    jsonrpc: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<JsonRpcError>,
-}
-
-#[derive(Serialize)]
-struct JsonRpcError {
-    code: i32,
-    message: String,
-}
-
-impl JsonRpcResponse {
-    fn success(id: Option<Value>, result: Value) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            id,
-            result: Some(result),
-            error: None,
-        }
-    }
-
-    fn error(id: Option<Value>, code: i32, message: impl Into<String>) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            id,
-            result: None,
-            error: Some(JsonRpcError {
-                code,
-                message: message.into(),
-            }),
-        }
-    }
-}
-
-// --- Dispatch ------------------------------------------------------------
-
-/// Parse the raw request body into a validated [`JsonRpcRequest`], or a framed
-/// JSON-RPC error response when it is malformed. JSON-RPC clients expect a `200`
-/// carrying `{"error":{"code":-32700/-32600,…}}` — not the bare-text `400` axum's
-/// `Json` extractor would emit — so invalid JSON maps to `-32700` (parse error)
-/// and a structurally-invalid request to `-32600` (invalid request), echoing the
-/// caller's `id` when one can be recovered (issue #97).
-fn parse_request(body: &[u8]) -> Result<JsonRpcRequest, JsonRpcResponse> {
-    let value: Value = serde_json::from_slice(body)
-        .map_err(|_| JsonRpcResponse::error(None, -32700, "Parse error"))?;
-
-    // Recover the id even from an otherwise-invalid request so the client can
-    // correlate the error; a non-scalar id is not a valid id, so drop it.
-    let id = match value.get("id") {
-        Some(v @ (Value::String(_) | Value::Number(_) | Value::Null)) => Some(v.clone()),
-        _ => None,
-    };
-
-    if value.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
-        return Err(JsonRpcResponse::error(id, -32600, "Invalid Request"));
-    }
-    let method = match value.get("method").and_then(Value::as_str) {
-        Some(m) => m.to_string(),
-        None => return Err(JsonRpcResponse::error(id, -32600, "Invalid Request")),
-    };
-
-    // Treat an explicit `null` params the same as an absent one.
-    let params = value.get("params").filter(|p| !p.is_null()).cloned();
-
-    Ok(JsonRpcRequest { id, method, params })
 }
 
 async fn handle(State(state): State<McpState>, headers: HeaderMap, body: Bytes) -> Response {
@@ -318,6 +121,9 @@ async fn handle(State(state): State<McpState>, headers: HeaderMap, body: Bytes) 
             if user.public {
                 restrict_to_allowlist(&mut list);
             }
+            if user.read_only {
+                restrict_to_non_gated(&mut list);
+            }
             JsonRpcResponse::success(req.id, list)
         }
         "tools/call" => tools_call(&state, &user, req.id, req.params).await,
@@ -334,6 +140,19 @@ fn restrict_to_allowlist(list: &mut Value) {
             t["name"]
                 .as_str()
                 .is_some_and(|name| ANONYMOUS_ALLOWLIST.contains(&name))
+        });
+    }
+}
+
+/// Filter a `tools/list` result down to the tools a `read_only` caller
+/// (ADR-0044) can actually invoke: everything `ai::agent::requires_approval`
+/// doesn't flag as mutating.
+fn restrict_to_non_gated(list: &mut Value) {
+    if let Some(tools) = list.get_mut("tools").and_then(Value::as_array_mut) {
+        tools.retain(|t| {
+            t["name"]
+                .as_str()
+                .is_some_and(|name| !crate::ai::agent::requires_approval(name))
         });
     }
 }
@@ -386,13 +205,22 @@ async fn tools_call(
             format!("Authentication required: `{name}` is not available to anonymous callers."),
         );
     }
+    if user.read_only && crate::ai::agent::requires_approval(name) {
+        return JsonRpcResponse::error(
+            id,
+            -32001,
+            format!("This token is read-only and cannot call `{name}`."),
+        );
+    }
 
     let tool = match state.registry.find(name) {
         Some(t) => t,
         None => return JsonRpcResponse::error(id, -32602, format!("Unknown tool: {name}")),
     };
 
-    let outcome = (tool.handler)(state.app.clone(), user.clone(), arguments).await;
+    let outcome = tool
+        .invoke(state.app.clone(), user.clone(), arguments)
+        .await;
     JsonRpcResponse::success(id, tool_envelope(outcome))
 }
 
@@ -406,69 +234,6 @@ fn tool_envelope(outcome: ToolOutcome) -> Value {
     }
     result
 }
-
-// --- Server instructions -------------------------------------------------
-
-/// Returned by `initialize`. Documents the tool surface Epic 9 plugs in and
-/// the `<pgn>` / `<fen>` board directives studies render.
-const INSTRUCTIONS: &str = "\
-# chess-base — MCP Integration
-
-Self-hosted ChessBase replacement. Collect, search and study chess games with \
-engine analysis and AI-assisted studies. This endpoint exposes chess tooling \
-over JSON-RPC; the available tools depend on what is registered (call \
-`tools/list`).
-
-## Anonymous access
-
-A request with no `Authorization` header is served as an anonymous public \
-caller: data reads only (`list_databases`, `db_list_games`, `db_read_game`, \
-`db_position_report`, `db_reference_games`, `db_export_games`, \
-`search_headers`, `echo`), scoped to global (admin-managed) databases only — \
-no engine, no studies, no writes. `tools/list` reflects this reduced set; any \
-other tool returns an authentication-required error. Sign in (OAuth or a \
-service token) for your own databases plus write access.
-
-## Tool surface (Epic 9)
-
-- **Interactive analysis** — `analyse_position` is the one-shot \"explain this \
-  position\" entry point: it bundles engine eval, the database report and factual \
-  feature tags for a single FEN so an explanation cites tool output, not guesses. \
-  `analyse_game` is its whole-game counterpart: walk the engine over a PGN for a \
-  per-ply eval + best-move + classification review. The tools below are the same \
-  sources unbundled, for drilling in further.
-- **Engine** — request Stockfish/Lc0 evaluation of a position (best move, score, \
-  principal variation) to use as ground truth when annotating.
-- **Database** — `list_databases` discovers the collections you can see (with \
-  game counts) and the `database_id`s the study tools need; `db_list_games` / \
-  `db_read_game` page through and read individual games; `db_position_report` / \
-  `db_reference_games` search by position (64-bit Zobrist hash).
-- **Study preprocessing** — engine + DB grounded *data* for study building, \
-  with no language model inside the tool (you are the model — annotate the \
-  output yourself, then persist with the study tools): `opening_tree` builds a \
-  pruned, eval- and stats-tagged variation tree (the opening skeleton); \
-  `danger_map` walks a repertoire spine PGN into an engine-adjudicated danger \
-  tree (Weapon / Caution / Off-book roles); `position_concepts` classifies a \
-  position's pawn structure and key squares.
-- **Studies** — create studies and edit their move-trees: `study_import_pgn` \
-  builds a whole study from PGN in one call, or `study_create` + `study_add_move` \
-  (SAN or UCI, with optional inline comment/NAG) build one move at a time; \
-  `study_get` reads an existing study's tree (with node ids) so you can \
-  `study_annotate` it; `study_export` emits re-importable PGN. Every edit is \
-  scoped to the authenticated caller: you may only mutate your own studies \
-  (global studies require admin).
-
-## Board directives
-
-When writing study text, embed positions and games with these directives:
-
-- `<fen>FEN string</fen>` — render a static board from an inline FEN.
-- `<pgn move=\"N\">PGN moves</pgn>` — render a playable game from inline PGN, \
-  opened at half-move N.
-
-Always ground evaluations and variations in the engine and database tools \
-rather than asserting them unverified.
-";
 
 #[cfg(test)]
 mod tests {
@@ -509,6 +274,26 @@ mod tests {
     }
 
     #[test]
+    fn restrict_to_non_gated_keeps_only_non_mutating_tools() {
+        let mut list = json!({
+            "tools": [
+                { "name": "echo" },
+                { "name": "study_create" },
+                { "name": "study_get" },
+                { "name": "folder_create" },
+            ]
+        });
+        restrict_to_non_gated(&mut list);
+        let names: Vec<&str> = list["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["echo", "study_get"]);
+    }
+
+    #[test]
     fn anonymous_allowlist_matches_the_issue_192_read_only_data_tools() {
         // Guards the allowlist against silent drift — every entry here is a data
         // read scoped to global databases; nothing engine/study/write-shaped.
@@ -525,63 +310,5 @@ mod tests {
             assert!(ANONYMOUS_ALLOWLIST.contains(&tool), "missing {tool}");
         }
         assert_eq!(ANONYMOUS_ALLOWLIST.len(), 8);
-    }
-
-    fn parse_err(body: &[u8]) -> JsonRpcError {
-        parse_request(body)
-            .err()
-            .expect("expected a framed error")
-            .error
-            .expect("error envelope")
-    }
-
-    #[test]
-    fn parse_request_accepts_a_well_formed_request() {
-        let Ok(req) = parse_request(br#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#) else {
-            panic!("expected a valid request");
-        };
-        assert_eq!(req.method, "tools/list");
-        assert_eq!(req.id, Some(json!(7)));
-        assert!(req.params.is_none());
-    }
-
-    #[test]
-    fn parse_request_maps_invalid_json_to_parse_error() {
-        let err = parse_err(b"{not json");
-        assert_eq!(err.code, -32700);
-    }
-
-    #[test]
-    fn parse_request_rejects_a_missing_method_with_invalid_request() {
-        // The id is still echoed so the client can correlate the error.
-        let err = parse_request(br#"{"jsonrpc":"2.0","id":3}"#)
-            .err()
-            .expect("framed error");
-        assert_eq!(err.id, Some(json!(3)));
-        assert_eq!(err.error.expect("envelope").code, -32600);
-    }
-
-    #[test]
-    fn parse_request_rejects_a_wrong_jsonrpc_version() {
-        assert_eq!(
-            parse_err(br#"{"jsonrpc":"1.0","id":1,"method":"x"}"#).code,
-            -32600
-        );
-    }
-
-    #[test]
-    fn parse_request_rejects_a_non_string_method() {
-        assert_eq!(
-            parse_err(br#"{"jsonrpc":"2.0","id":1,"method":42}"#).code,
-            -32600
-        );
-    }
-
-    #[test]
-    fn parse_request_drops_a_non_scalar_id() {
-        let resp = parse_request(br#"{"jsonrpc":"2.0","id":{"a":1},"method":42}"#)
-            .err()
-            .expect("framed error");
-        assert!(resp.id.is_none());
     }
 }

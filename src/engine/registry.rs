@@ -251,6 +251,8 @@ mod tests {
             id: "bob".into(),
             is_admin: false,
             public: false,
+            read_only: false,
+            global_only: false,
         }
     }
 

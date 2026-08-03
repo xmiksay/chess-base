@@ -365,6 +365,8 @@ async fn tools_call_rejects_mutating_a_non_owned_study() {
         id: "alice".into(),
         is_admin: false,
         public: false,
+        read_only: false,
+        global_only: false,
     };
     let study = StudyService::new(db.clone())
         .create(&alice, database.id, "Alice's study", false)
@@ -375,8 +377,10 @@ async fn tools_call_rejects_mutating_a_non_owned_study() {
     let bob_token = "bob-service-token".to_string();
     service_tokens::ActiveModel {
         token: Set(bob_token.clone()),
+        id: Set(bob_token.clone()),
         owner_id: Set("bob".into()),
         is_admin: Set(false),
+        scope: Set(chess_base::server::auth::SERVICE_SCOPE_FULL.to_string()),
         label: Set("bob".into()),
         created_at: Set(Utc::now().naive_utc()),
         expires_at: Set(None),

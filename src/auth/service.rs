@@ -106,6 +106,8 @@ impl AuthService {
                 id: user.id,
                 is_admin: user.is_admin,
                 public: false,
+                read_only: false,
+                global_only: false,
             },
         })
     }
@@ -136,6 +138,8 @@ impl AuthService {
                 id: user.id,
                 is_admin: user.is_admin,
                 public: false,
+                read_only: false,
+                global_only: false,
             },
         })
     }
@@ -172,6 +176,8 @@ impl AuthService {
             id: user.id,
             is_admin: user.is_admin,
             public: false,
+            read_only: false,
+            global_only: false,
         })
     }
 

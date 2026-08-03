@@ -1,6 +1,7 @@
-//! Integration tests for the MCP OAuth 2.1 surface (ADR-0016): discovery
-//! metadata, the full authorization-code + refresh-token dance ending in an
-//! authenticated `/mcp` call, and the local-mode service token.
+//! Integration tests for the MCP OAuth 2.1 surface (ADR-0016, hardened in
+//! ADR-0044): discovery metadata, the full authorization-code + consent +
+//! refresh-token dance ending in an authenticated `/mcp` call, refresh-token
+//! reuse detection, remembered consent, and the local-mode service token.
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
@@ -52,6 +53,131 @@ fn enc(s: &str) -> String {
     out
 }
 
+/// Register a user and return `(session_token, user_id-ish username)`.
+async fn register_user(app: &Router, username: &str) -> String {
+    let (status, _h, reg) = send(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/auth/register")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({"username": username, "password": "password123"}))
+                    .unwrap(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "register {username}: {reg}");
+    reg["token"].as_str().unwrap().to_string()
+}
+
+/// Register an OAuth client while logged in (registration is auth-gated,
+/// ADR-0044) and return its `client_id`.
+async fn register_client(app: &Router, session: &str, redirect_uri: &str) -> String {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/oauth/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, format!("session={session}"))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "client_name": "Claude",
+                        "redirect_uris": [redirect_uri]
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    body["client_id"].as_str().unwrap().to_string()
+}
+
+fn authorize_uri(client_id: &str, state: Option<&str>) -> String {
+    let mut uri = format!(
+        "/oauth/authorize?response_type=code&client_id={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256",
+        enc(client_id),
+        enc(REDIRECT_URI),
+        enc(CHALLENGE),
+    );
+    if let Some(st) = state {
+        uri.push_str(&format!("&state={}", enc(st)));
+    }
+    uri
+}
+
+/// `GET /oauth/authorize` with a session cookie, returning the response so
+/// callers can assert on either a consent redirect or a direct code redirect.
+async fn hit_authorize(app: &Router, session: &str, uri: &str) -> axum::http::Response<Body> {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .header(header::COOKIE, format!("session={session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+fn location_of(resp: &axum::http::Response<Body>) -> String {
+    resp.headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string()
+}
+
+/// Drive `GET /oauth/authorize` → consent screen → `POST /oauth/consent`
+/// (`decision=approve`) for a first-time (user, client) pair, returning the
+/// final redirect location (carrying `code`).
+async fn authorize_and_approve(app: &Router, session: &str, uri: &str) -> String {
+    let resp = hit_authorize(app, session, uri).await;
+    assert!(
+        resp.status().is_redirection(),
+        "authorize should redirect to consent, got {}",
+        resp.status()
+    );
+    let location = location_of(&resp);
+    assert!(
+        location.starts_with("/oauth/consent?"),
+        "expected a consent redirect, got: {location}"
+    );
+    let csrf_token = extract_query(&location, "csrf_token").expect("csrf_token in redirect");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/oauth/consent")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(header::COOKIE, format!("session={session}"))
+                .body(Body::from(format!(
+                    "csrf_token={}&decision=approve",
+                    enc(&csrf_token)
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        resp.status().is_redirection(),
+        "consent approval should redirect, got {}",
+        resp.status()
+    );
+    location_of(&resp)
+}
+
 #[tokio::test]
 async fn well_known_metadata_advertises_endpoints_and_pkce() {
     let app = server_app().await;
@@ -94,73 +220,18 @@ async fn well_known_metadata_advertises_endpoints_and_pkce() {
 async fn full_oauth_dance_then_mcp_and_refresh() {
     let app = server_app().await;
 
-    // A user must exist + be logged in to authorize. The first user is admin.
-    let (status, _h, reg) = send(
-        &app,
-        Request::builder()
-            .method("POST")
-            .uri("/api/auth/register")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                serde_json::to_vec(&json!({"username": "alice", "password": "password123"}))
-                    .unwrap(),
-            ))
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED);
-    let session = reg["token"].as_str().unwrap().to_string();
+    // A user must exist + be logged in to authorize (and, now, to register a
+    // client at all — ADR-0044). The first user is admin.
+    let session = register_user(&app, "alice").await;
 
-    // 1. Dynamic client registration.
-    let (status, _h, client) = send(
-        &app,
-        Request::builder()
-            .method("POST")
-            .uri("/oauth/register")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                serde_json::to_vec(&json!({
-                    "client_name": "Claude",
-                    "redirect_uris": [REDIRECT_URI]
-                }))
-                .unwrap(),
-            ))
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED);
-    let client_id = client["client_id"].as_str().unwrap().to_string();
+    // 1. Dynamic client registration (auth-gated).
+    let client_id = register_client(&app, &session, REDIRECT_URI).await;
 
-    // 2. Authorize (logged-in via session cookie) → redirect carrying the code.
-    let authorize_uri = format!(
-        "/oauth/authorize?response_type=code&client_id={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256&state=xyz",
-        enc(&client_id),
-        enc(REDIRECT_URI),
-        enc(CHALLENGE),
-    );
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(&authorize_uri)
-                .header(header::COOKIE, format!("session={session}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert!(
-        resp.status().is_redirection(),
-        "authorize should redirect, got {}",
-        resp.status()
-    );
-    let location = resp
-        .headers()
-        .get(header::LOCATION)
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
+    // 2. Authorize (logged-in via session cookie) → first time this user sees
+    // this client, so it goes through the consent screen → approve → redirect
+    // carrying the code.
+    let location =
+        authorize_and_approve(&app, &session, &authorize_uri(&client_id, Some("xyz"))).await;
     assert!(location.starts_with(REDIRECT_URI), "location: {location}");
     assert!(location.contains("state=xyz"));
     let code = extract_query(&location, "code").expect("code in redirect");
@@ -233,56 +304,10 @@ async fn full_oauth_dance_then_mcp_and_refresh() {
 async fn authorize_rejects_a_bad_pkce_verifier() {
     let app = server_app().await;
 
-    let (_s, _h, reg) = send(
-        &app,
-        Request::builder()
-            .method("POST")
-            .uri("/api/auth/register")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                serde_json::to_vec(&json!({"username": "alice", "password": "password123"}))
-                    .unwrap(),
-            ))
-            .unwrap(),
-    )
-    .await;
-    let session = reg["token"].as_str().unwrap().to_string();
+    let session = register_user(&app, "alice").await;
+    let client_id = register_client(&app, &session, REDIRECT_URI).await;
 
-    let (_s, _h, client) = send(
-        &app,
-        Request::builder()
-            .method("POST")
-            .uri("/oauth/register")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                serde_json::to_vec(&json!({"redirect_uris": [REDIRECT_URI]})).unwrap(),
-            ))
-            .unwrap(),
-    )
-    .await;
-    let client_id = client["client_id"].as_str().unwrap().to_string();
-
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!(
-                    "/oauth/authorize?response_type=code&client_id={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256",
-                    enc(&client_id), enc(REDIRECT_URI), enc(CHALLENGE),
-                ))
-                .header(header::COOKIE, format!("session={session}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let location = resp
-        .headers()
-        .get(header::LOCATION)
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
+    let location = authorize_and_approve(&app, &session, &authorize_uri(&client_id, None)).await;
     let code = extract_query(&location, "code").unwrap();
 
     // Wrong verifier ⇒ invalid_grant.
@@ -306,40 +331,215 @@ async fn authorize_rejects_a_bad_pkce_verifier() {
 #[tokio::test]
 async fn authorize_without_login_bounces_to_login() {
     let app = server_app().await;
-    let (_s, _h, client) = send(
-        &app,
-        Request::builder()
-            .method("POST")
-            .uri("/oauth/register")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                serde_json::to_vec(&json!({"redirect_uris": [REDIRECT_URI]})).unwrap(),
-            ))
-            .unwrap(),
-    )
-    .await;
-    let client_id = client["client_id"].as_str().unwrap().to_string();
+    // Register the client while logged in (registration is auth-gated), then
+    // hit /oauth/authorize unauthenticated — this test is specifically about
+    // being logged out for *authorize*, not registration.
+    let session = register_user(&app, "alice").await;
+    let client_id = register_client(&app, &session, REDIRECT_URI).await;
 
     let resp = app
         .oneshot(
             Request::builder()
-                .uri(format!(
-                    "/oauth/authorize?response_type=code&client_id={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256",
-                    enc(&client_id), enc(REDIRECT_URI), enc(CHALLENGE),
-                ))
+                .uri(authorize_uri(&client_id, None))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
     assert!(resp.status().is_redirection());
-    let location = resp
-        .headers()
-        .get(header::LOCATION)
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let location = location_of(&resp);
     assert!(location.starts_with("/?next="), "location: {location}");
+}
+
+#[tokio::test]
+async fn authorize_never_issues_a_code_directly_for_a_fresh_client() {
+    let app = server_app().await;
+    let session = register_user(&app, "alice").await;
+    let client_id = register_client(&app, &session, REDIRECT_URI).await;
+
+    let resp = hit_authorize(&app, &session, &authorize_uri(&client_id, None)).await;
+    assert!(resp.status().is_redirection());
+    let location = location_of(&resp);
+    assert!(
+        location.starts_with("/oauth/consent?"),
+        "a fresh client must go through consent, got: {location}"
+    );
+    assert!(
+        extract_query(&location, "code").is_none(),
+        "must not carry a code directly: {location}"
+    );
+}
+
+#[tokio::test]
+async fn consent_post_rejects_a_forged_or_missing_csrf_token() {
+    let app = server_app().await;
+    let session = register_user(&app, "alice").await;
+    let client_id = register_client(&app, &session, REDIRECT_URI).await;
+
+    let resp = hit_authorize(&app, &session, &authorize_uri(&client_id, None)).await;
+    let location = location_of(&resp);
+    assert!(location.starts_with("/oauth/consent?"));
+
+    // A forged (unknown) token is rejected, not silently accepted.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/oauth/consent")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(header::COOKIE, format!("session={session}"))
+                .body(Body::from("csrf_token=not-a-real-token&decision=approve"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // A missing csrf_token field fails to even deserialize as the form body.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/oauth/consent")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(header::COOKIE, format!("session={session}"))
+                .body(Body::from("decision=approve"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(!resp.status().is_success() && !resp.status().is_redirection());
+
+    // The real, valid csrf_token still works — the forged attempt above must
+    // not have consumed it.
+    let csrf_token = extract_query(&location, "csrf_token").unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/oauth/consent")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(header::COOKIE, format!("session={session}"))
+                .body(Body::from(format!(
+                    "csrf_token={}&decision=approve",
+                    enc(&csrf_token)
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        resp.status().is_redirection(),
+        "valid approval should still work"
+    );
+    assert!(location_of(&resp).starts_with(REDIRECT_URI));
+}
+
+#[tokio::test]
+async fn consent_is_remembered_after_the_first_approval() {
+    let app = server_app().await;
+    let session = register_user(&app, "alice").await;
+    let client_id = register_client(&app, &session, REDIRECT_URI).await;
+
+    // First authorization needs consent.
+    let location = authorize_and_approve(&app, &session, &authorize_uri(&client_id, None)).await;
+    assert!(location.starts_with(REDIRECT_URI));
+
+    // Second authorization for the same (user, client) skips the screen and
+    // issues a code directly.
+    let resp = hit_authorize(&app, &session, &authorize_uri(&client_id, None)).await;
+    assert!(resp.status().is_redirection());
+    let location = location_of(&resp);
+    assert!(
+        location.starts_with(REDIRECT_URI),
+        "remembered consent should skip the screen, got: {location}"
+    );
+    assert!(extract_query(&location, "code").is_some());
+}
+
+#[tokio::test]
+async fn replayed_refresh_token_revokes_the_whole_family() {
+    let app = server_app().await;
+    let session = register_user(&app, "alice").await;
+    let client_id = register_client(&app, &session, REDIRECT_URI).await;
+
+    let location = authorize_and_approve(&app, &session, &authorize_uri(&client_id, None)).await;
+    let code = extract_query(&location, "code").unwrap();
+
+    let (status, _h, tokens) = send(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/oauth/token")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(format!(
+                "grant_type=authorization_code&code={}&redirect_uri={}&code_verifier={}&client_id={}",
+                enc(&code), enc(REDIRECT_URI), enc(VERIFIER), enc(&client_id),
+            )))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let original_refresh = tokens["refresh_token"].as_str().unwrap().to_string();
+
+    // Rotate once — this succeeds and revokes `original_refresh` in place.
+    let (status, _h, refreshed) = send(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/oauth/token")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(format!(
+                "grant_type=refresh_token&refresh_token={}",
+                enc(&original_refresh)
+            )))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let new_refresh = refreshed["refresh_token"].as_str().unwrap().to_string();
+    assert_ne!(new_refresh, original_refresh);
+
+    // Replaying the original (now-revoked) refresh token is reuse: rejected,
+    // and the whole family — including the just-minted `new_refresh` — is
+    // revoked as a result.
+    let (status, _h, replay) = send(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/oauth/token")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(format!(
+                "grant_type=refresh_token&refresh_token={}",
+                enc(&original_refresh)
+            )))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(replay["error"], "invalid_grant");
+
+    let (status, _h, blocked) = send(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/oauth/token")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(format!(
+                "grant_type=refresh_token&refresh_token={}",
+                enc(&new_refresh)
+            )))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "the legitimately-rotated token must be revoked too: {blocked}"
+    );
+    assert_eq!(blocked["error"], "invalid_grant");
 }
 
 #[tokio::test]

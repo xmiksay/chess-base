@@ -9,7 +9,9 @@ use tracing_subscriber::EnvFilter;
 use chess_base::collectors::bulk::{find_or_create_master, BulkImporter};
 use chess_base::db::{self, DbConfig};
 use chess_base::engine::EngineConfig;
+use chess_base::server::identity::CurrentUser;
 use chess_base::server::{self, AppConfig, Mode};
+use chess_base::service_tokens::ServiceTokenService;
 
 #[derive(Parser, Debug)]
 #[command(name = "chess-base", version, about)]
@@ -84,6 +86,48 @@ enum Command {
         #[arg(long, default_value_t = 1000)]
         batch_size: usize,
     },
+
+    /// Mint/list/revoke server-mode service tokens (ADR-0044, issue #193) —
+    /// the only way to create a scoped token headlessly, since the HTTP route
+    /// requires an already-admin session.
+    ServiceToken {
+        #[command(subcommand)]
+        action: ServiceTokenAction,
+
+        /// SQLite file to operate on (local mode).
+        #[arg(long, default_value = "chess-base.db")]
+        db_path: String,
+
+        /// Postgres connection URL; overrides --db-path when set.
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ServiceTokenAction {
+    /// Mint a fresh scoped token.
+    Create {
+        /// User id (or `local-admin`) this token acts as.
+        #[arg(long)]
+        owner_id: String,
+        /// Human label shown when listing tokens.
+        #[arg(long)]
+        label: String,
+        /// `full` | `read_only` | `global_read`.
+        #[arg(long, default_value = "full")]
+        scope: String,
+        /// Grant admin (global-resource) rights.
+        #[arg(long)]
+        admin: bool,
+        /// Optional hard expiry, in days from now.
+        #[arg(long)]
+        expires_in_days: Option<i64>,
+    },
+    /// List every service token (never shows the raw secret).
+    List,
+    /// Revoke a token by its non-secret `id`.
+    Revoke { id: String },
 }
 
 /// Run the bulk PGN import subcommand and report its tally.
@@ -113,6 +157,63 @@ async fn run_import(
     Ok(())
 }
 
+/// Run the `service-token` subcommand: mint/list/revoke over `service_tokens`.
+/// The CLI operator already has direct DB/host access, so `CurrentUser::local_admin()`
+/// is used purely to satisfy `ServiceTokenService`'s `assert_admin` gate — the
+/// same reasoning `ImportPgn` uses to bypass HTTP auth entirely.
+async fn run_service_token(
+    action: ServiceTokenAction,
+    db_path: String,
+    database_url: Option<String>,
+) -> Result<()> {
+    let cfg = match database_url {
+        Some(url) => DbConfig::postgres(url),
+        None => DbConfig::sqlite(db_path),
+    };
+    let conn = db::connect(&cfg).await.context("connecting to database")?;
+    let svc = ServiceTokenService::new(conn);
+    let admin = CurrentUser::local_admin();
+
+    match action {
+        ServiceTokenAction::Create {
+            owner_id,
+            label,
+            scope,
+            admin: is_admin,
+            expires_in_days,
+        } => {
+            let minted = svc
+                .create(&admin, &owner_id, &label, &scope, is_admin, expires_in_days)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            println!("Minted service token (shown once — store it now):");
+            println!("  token: {}", minted.token);
+            println!("  id:    {}", minted.view.id);
+            println!("  owner: {}", minted.view.owner_id);
+            println!("  scope: {}", minted.view.scope);
+        }
+        ServiceTokenAction::List => {
+            let tokens = svc.list(&admin).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+            if tokens.is_empty() {
+                println!("no service tokens");
+            }
+            for t in tokens {
+                println!(
+                    "{}  owner={}  scope={}  admin={}  label={:?}",
+                    t.id, t.owner_id, t.scope, t.is_admin, t.label
+                );
+            }
+        }
+        ServiceTokenAction::Revoke { id } => {
+            svc.revoke(&admin, &id)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            println!("revoked service token {id}");
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -132,6 +233,15 @@ async fn main() -> Result<()> {
     }) = cli.command
     {
         return run_import(path, db_path, database_url, name, batch_size).await;
+    }
+
+    if let Some(Command::ServiceToken {
+        action,
+        db_path,
+        database_url,
+    }) = cli.command
+    {
+        return run_service_token(action, db_path, database_url).await;
     }
 
     let (mode, db) = if cli.server {
