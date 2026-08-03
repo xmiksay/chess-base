@@ -10,6 +10,7 @@ vi.mock('../api', () => ({
       annotate: vi.fn(),
       setShapes: vi.fn(),
       analyse: vi.fn(),
+      clearShapes: vi.fn(),
       promote: vi.fn(),
       reorder: vi.fn(),
       deleteNode: vi.fn(),
@@ -164,6 +165,15 @@ describe('studyEditor store', () => {
 
     await editor.analyseStudy(12)
     expect(api.studies.analyse).toHaveBeenCalledWith(10, 12)
+  })
+
+  it('clearShapes removes shapes across the study and refreshes the tree (#191)', async () => {
+    const cleared = sampleStudy()
+    vi.mocked(api.studies.clearShapes).mockResolvedValue(cleared)
+
+    await editor.clearShapes('generated')
+    expect(api.studies.clearShapes).toHaveBeenCalledWith(10, 'generated')
+    expect(studies.current).toEqual(cleared)
   })
 
   it('seeds the board from a set-up start_fen and replays edits from it', () => {

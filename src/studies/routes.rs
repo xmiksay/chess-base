@@ -27,9 +27,11 @@ use crate::server::error::error_response;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 use crate::studies::{AnalyseStats, StudyError, StudyService};
+use crate::study_gen::spine::MultiAnalyzer;
 use crate::study_gen::tree::TreeConfig;
 use crate::study_gen::{
-    generate_study_live, GenerateError, GenerateOutcome, GenerateParams, MAX_PLAN_LINES,
+    generate_study_live, EnginePlanAnalyzer, GenerateError, GenerateOutcome, GenerateParams,
+    ShapeConfig, MAX_PLAN_LINES,
 };
 
 /// Per-position engine search depth used by `POST /api/studies/generate` when the
@@ -423,12 +425,23 @@ async fn export_lichess(
 /// Body for `POST /api/studies/{id}/analyse` — the non-destructive "Analyse
 /// study" pass (#162, full classification #189). Optional `depth` overrides the
 /// per-position engine search depth; everything else is taken from the stored
-/// tree.
+/// tree. `plan_lines`/`threats` additionally regenerate plan/threat arrows in
+/// the same call (issue #191, ADR-0039 addendum): sending either field — even
+/// `{plan_lines: 0, threats: false}` — opts in and strips any node's stale
+/// generated arrows it doesn't replace; omitting both leaves existing shapes
+/// untouched, matching the pre-#191 behavior.
 #[derive(Deserialize, Default)]
 struct AnalyseBody {
     /// Per-position engine search depth (plies); capped server-side.
     #[serde(default)]
     depth: Option<u32>,
+    /// Pin engine "plan" arrows (top-N PV trajectories) on every node; capped
+    /// at [`MAX_PLAN_LINES`]. See [`crate::study_gen::plan_shapes`].
+    #[serde(default)]
+    plan_lines: Option<u8>,
+    /// Pin the static "threats" (hanging-piece) arrows on every node.
+    #[serde(default)]
+    threats: Option<bool>,
 }
 
 /// The response of `POST /api/studies/{id}/analyse`: the refreshed study plus
@@ -462,13 +475,37 @@ async fn analyse(
             .into_response()
     })?;
 
-    let depth = body
-        .and_then(|Json(b)| b.depth)
-        .unwrap_or(DEFAULT_ANALYSE_DEPTH);
-    let (model, stats) = service(&state)
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let depth = body.depth.unwrap_or(DEFAULT_ANALYSE_DEPTH);
+    let svc = service(&state);
+    let (model, stats) = svc
         .analyse_study(engine, &user, id, depth)
         .await
         .map_err(IntoResponse::into_response)?;
+
+    // Optionally regenerate plan/threat arrows in the same call (issue #191):
+    // opt in by sending either field, even `{plan_lines: 0, threats: false}` to
+    // strip the study's generated arrows without an engine detour.
+    let model = if body.plan_lines.is_some() || body.threats.is_some() {
+        let cfg = ShapeConfig {
+            plan_lines: body.plan_lines.unwrap_or(0).min(MAX_PLAN_LINES),
+            threats: body.threats.unwrap_or(false),
+        };
+        let analyzer = (cfg.plan_lines > 0).then(|| {
+            EnginePlanAnalyzer::new(
+                engine,
+                Limits::depth(depth).clamped(),
+                cfg.plan_lines as u16,
+            )
+        });
+        let plans = analyzer.as_ref().map(|a| a as &(dyn MultiAnalyzer + Sync));
+        svc.regenerate_shapes(plans, &user, id, &cfg)
+            .await
+            .map_err(IntoResponse::into_response)?
+    } else {
+        model
+    };
+
     let study = StudyView::try_from(model).map_err(IntoResponse::into_response)?;
     Ok((StatusCode::OK, Json(AnalyseView { study, stats })).into_response())
 }

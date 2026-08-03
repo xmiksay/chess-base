@@ -32,7 +32,10 @@ pub struct ShapeConfig {
 }
 
 impl ShapeConfig {
-    /// Whether the pass needs to run at all.
+    /// Whether there is anything new to pin. Note this is **not** "nothing to
+    /// do": regenerating shapes on an *existing* tree with an off config is a
+    /// legitimate instruction to strip previously generated arrows (issue
+    /// #191) — callers doing that must not use this to skip the pass.
     pub fn is_off(&self) -> bool {
         self.plan_lines == 0 && !self.threats
     }
@@ -41,6 +44,36 @@ impl ShapeConfig {
     fn needs_engine(&self) -> bool {
         self.plan_lines > 0
     }
+}
+
+/// Whether `brush` belongs to this pass's own arrows: the top-`MAX_PLAN_LINES`
+/// plan brushes at full opacity (`plan1..plan3`), their dimmed frontend
+/// live-overlay counterparts (`plan1d..plan3d`, `lib/plansToShapes.ts`), and the
+/// static `threat` brush (`crate::threats`). Anything else is a shape the user
+/// drew themselves. [`merge_shapes`] uses this to replace only what a
+/// generation/analyse pass itself pinned (issue #191).
+fn generated_brush(brush: &str) -> bool {
+    matches!(
+        brush,
+        "plan1" | "plan2" | "plan3" | "plan1d" | "plan2d" | "plan3d" | "threat"
+    )
+}
+
+/// Merge freshly generated shapes into a node's existing ones: every existing
+/// shape whose brush [`generated_brush`] owns is dropped, every other
+/// (user-drawn) shape survives, then `generated` is appended. Passing an empty
+/// `generated` therefore strips a node's generated arrows outright — the
+/// semantics a regenerate pass needs when a layer is off, PV-tracing failed, or
+/// the node is terminal (issue #191): never leave a stale generated arrow
+/// behind, never touch a shape the user drew.
+pub fn merge_shapes(existing: &[Shape], generated: Vec<Shape>) -> Vec<Shape> {
+    let mut merged: Vec<Shape> = existing
+        .iter()
+        .filter(|s| !generated_brush(&s.brush))
+        .cloned()
+        .collect();
+    merged.extend(generated);
+    merged
 }
 
 /// One plan's per-piece trajectories as chessground arrows: an arrow per
@@ -96,20 +129,23 @@ pub fn node_shapes(
     shapes
 }
 
-/// Populate every node's `shapes` with its plan/threat arrows. The engine is
+/// Populate every node's `shapes` with its plan/threat arrows, merging via
+/// [`merge_shapes`] so a node's existing shapes are replaced only in the
+/// generated brushes (issue #191) — harmless here since a freshly built tree's
+/// nodes start with no shapes at all, but this is the same pass a study
+/// re-analyse reuses over an *existing* tree, where it matters. The engine is
 /// queried (via `analyzer`) only when plan lines are requested; threats are a
-/// pure scan over each node's FEN. A no-op when `cfg.is_off()` or — for plans —
-/// when no analyzer is supplied. Per-node engine failures are skipped so one bad
-/// position never aborts the whole study.
+/// pure scan over each node's FEN. Always walks every node — including when
+/// `cfg.is_off()`, which now means "strip any generated arrows" rather than
+/// "skip" — so callers regenerating an existing tree never need a separate
+/// code path for turning a layer off. Per-node engine failures are skipped so
+/// one bad position never aborts the whole study.
 pub async fn apply_shapes(
     analyzer: Option<&(dyn MultiAnalyzer + Sync)>,
     tree: &mut VariationTree,
     cfg: &ShapeConfig,
     mode: CastlingMode,
 ) {
-    if cfg.is_off() {
-        return;
-    }
     let use_engine = cfg.needs_engine() && analyzer.is_some();
 
     for node in &mut tree.nodes {
@@ -125,7 +161,8 @@ pub async fn apply_shapes(
         } else {
             Vec::new()
         };
-        node.shapes = node_shapes(&node.fen, &pvs, cfg.plan_lines, cfg.threats, mode);
+        let generated = node_shapes(&node.fen, &pvs, cfg.plan_lines, cfg.threats, mode);
+        node.shapes = merge_shapes(&node.shapes, generated);
     }
 }
 

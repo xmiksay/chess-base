@@ -210,6 +210,13 @@ export interface AnalyseResult extends Study {
 }
 
 /**
+ * Scope for `POST /api/studies/{id}/clear-shapes` (issue #191): `'generated'`
+ * strips only the plan/threat arrows a generate/analyse pass pinned, keeping
+ * anything drawn by hand; `'all'` clears every shape on every node.
+ */
+export type ClearShapesScope = 'generated' | 'all'
+
+/**
  * Request body for `POST /api/studies/add-line` (issue #173): graft a SAN line
  * from the standard start into a study. `study_id` set ⇒ graft into that study;
  * omitted ⇒ create a new one (`database_id`/`name` both required in that case).

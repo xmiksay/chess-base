@@ -48,6 +48,7 @@ pub fn router(state: AppState) -> Router {
         ))
         .merge(crate::studies::add_line_route::router(state.clone()))
         .merge(crate::studies::merge_danger_route::router(state.clone()))
+        .merge(crate::studies::clear_shapes_route::router(state.clone()))
         .merge(providers::router(state.clone()))
         .merge(oauth::router(state.clone()))
         .merge(mcp::router(state))

@@ -10,12 +10,14 @@ use serde_json::{json, Value};
 use super::db_tools::json_outcome;
 use super::study_tools::study_error;
 use super::{Tool, ToolOutcome, ToolRegistry};
-use crate::engine::MAX_DEPTH;
+use crate::engine::{Limits, MAX_DEPTH};
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
+use crate::studies::clear_shapes::ClearShapesScope;
 use crate::studies::merge_danger::MergeDangerOutcome;
 use crate::studies::StudyService;
-use crate::study_gen::DangerTree;
+use crate::study_gen::spine::MultiAnalyzer;
+use crate::study_gen::{DangerTree, EnginePlanAnalyzer, ShapeConfig, MAX_PLAN_LINES};
 
 /// Per-position engine search depth for `study_analyse` when unspecified;
 /// mirrors the HTTP route's default.
@@ -26,6 +28,7 @@ pub fn register(registry: &mut ToolRegistry) {
     registry.register(study_merge_games_tool());
     registry.register(study_merge_danger_tool());
     registry.register(study_analyse_tool());
+    registry.register(study_clear_shapes_tool());
 }
 
 /// Fold many games' mainlines into one repertoire study.
@@ -179,8 +182,13 @@ fn study_analyse_tool() -> Tool {
          NAG that replaces any prior move-quality NAG. Comments, shapes and \
          positional NAGs are never touched. Useful after `study_import_pgn` or \
          `study_merge_games`, whose trees carry no evals yet. Requires an engine \
-         configured. You may only edit your own studies. Returns the number of \
-         nodes classified plus the per-side accuracy/error-count summary.",
+         configured. You may only edit your own studies. Set `plan_lines`/`threats` \
+         to also regenerate plan/threat arrows on every node in the same call — send \
+         either (even 0/false) to opt in; omitting both leaves existing shapes \
+         untouched. A layer left off, or a node where generation produces nothing, has \
+         its stale generated arrows stripped; user-drawn shapes are never touched \
+         (issue #191). Returns the number of nodes classified plus the per-side \
+         accuracy/error-count summary.",
         json!({
             "type": "object",
             "properties": {
@@ -190,6 +198,14 @@ fn study_analyse_tool() -> Tool {
                     "description": format!(
                         "Per-position engine search depth in plies (default {DEFAULT_ANALYSE_DEPTH}); capped server-side."
                     )
+                },
+                "plan_lines": {
+                    "type": "integer", "minimum": 0, "maximum": MAX_PLAN_LINES,
+                    "description": "Engine PV lines to pin as plan arrows on every node (issue #191); present alongside `threats` to opt into the shapes pass, 0 clears them."
+                },
+                "threats": {
+                    "type": "boolean",
+                    "description": "Pin the static hanging-piece threat arrows on every node (issue #191); present alongside `plan_lines` to opt into the shapes pass, false clears them."
                 }
             },
             "required": ["study_id"]
@@ -202,6 +218,30 @@ async fn study_analyse(app: AppState, user: CurrentUser, args: Value) -> ToolOut
     let Some(study_id) = args.get("study_id").and_then(Value::as_i64) else {
         return ToolOutcome::error("Invalid arguments: missing integer field `study_id`.");
     };
+    let depth = match super::db_tools::opt_bounded_u64(&args, "depth", MAX_DEPTH as u64) {
+        Ok(depth) => depth.map(|d| d as u32).unwrap_or(DEFAULT_ANALYSE_DEPTH),
+        Err(msg) => return ToolOutcome::error(msg),
+    };
+    // `plan_lines: 0` is a legitimate "turn plans off" value, unlike `depth`, so
+    // it can't reuse `opt_bounded_u64` (which rejects 0 as invalid).
+    let plan_lines = match args.get("plan_lines") {
+        None | Some(Value::Null) => None,
+        Some(v) => match v.as_u64() {
+            Some(n) => Some((n as u8).min(MAX_PLAN_LINES)),
+            None => {
+                return ToolOutcome::error("Invalid arguments: `plan_lines` must be an integer.")
+            }
+        },
+    };
+    let threats = match args.get("threats") {
+        None | Some(Value::Null) => None,
+        Some(v) => match v.as_bool() {
+            Some(b) => Some(b),
+            None => return ToolOutcome::error("Invalid arguments: `threats` must be a boolean."),
+        },
+    };
+    let want_shapes = plan_lines.is_some() || threats.is_some();
+
     let engine = match &app.engine_service {
         Some(engine) => engine.clone(),
         None => {
@@ -210,20 +250,84 @@ async fn study_analyse(app: AppState, user: CurrentUser, args: Value) -> ToolOut
             )
         }
     };
-    let depth = match super::db_tools::opt_bounded_u64(&args, "depth", MAX_DEPTH as u64) {
-        Ok(depth) => depth.map(|d| d as u32).unwrap_or(DEFAULT_ANALYSE_DEPTH),
-        Err(msg) => return ToolOutcome::error(msg),
-    };
 
     let service = StudyService::new(app.db.clone());
-    match service
+    let (_, stats) = match service
         .analyse_study(&engine, &user, study_id as i32, depth)
         .await
     {
-        Ok((_, stats)) => json_outcome(&json!({
-            "nodes_analysed": stats.nodes_analysed,
-            "summary": stats.summary,
-        })),
+        Ok(result) => result,
+        Err(e) => return study_error(e),
+    };
+
+    if want_shapes {
+        let cfg = ShapeConfig {
+            plan_lines: plan_lines.unwrap_or(0),
+            threats: threats.unwrap_or(false),
+        };
+        let analyzer = (cfg.plan_lines > 0).then(|| {
+            EnginePlanAnalyzer::new(
+                &engine,
+                Limits::depth(depth).clamped(),
+                cfg.plan_lines as u16,
+            )
+        });
+        let plans = analyzer.as_ref().map(|a| a as &(dyn MultiAnalyzer + Sync));
+        if let Err(e) = service
+            .regenerate_shapes(plans, &user, study_id as i32, &cfg)
+            .await
+        {
+            return study_error(e);
+        }
+    }
+
+    json_outcome(&json!({
+        "nodes_analysed": stats.nodes_analysed,
+        "summary": stats.summary,
+    }))
+}
+
+/// Bulk clear generated/all board shapes across a study.
+fn study_clear_shapes_tool() -> Tool {
+    Tool::new(
+        "study_clear_shapes",
+        "Remove board-shape arrows across every node of one of your studies in one \
+         call (issue #191): `scope: \"generated\"` strips only the plan/threat arrows \
+         a `study_analyse` or generation pass pinned, leaving anything you drew \
+         yourself; `scope: \"all\"` clears every shape regardless of origin. You may \
+         only edit your own studies.",
+        json!({
+            "type": "object",
+            "properties": {
+                "study_id": { "type": "integer", "description": "Study to clear shapes on." },
+                "scope": {
+                    "type": "string", "enum": ["generated", "all"],
+                    "description": "\"generated\" keeps user-drawn shapes; \"all\" clears everything."
+                }
+            },
+            "required": ["study_id", "scope"]
+        }),
+        |app, user, args| async move { study_clear_shapes(app, user, args).await },
+    )
+}
+
+async fn study_clear_shapes(app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
+    let Some(study_id) = args.get("study_id").and_then(Value::as_i64) else {
+        return ToolOutcome::error("Invalid arguments: missing integer field `study_id`.");
+    };
+    let scope = match args.get("scope").and_then(Value::as_str) {
+        Some("generated") => ClearShapesScope::Generated,
+        Some("all") => ClearShapesScope::All,
+        _ => {
+            return ToolOutcome::error(
+                "Invalid arguments: `scope` must be \"generated\" or \"all\".",
+            )
+        }
+    };
+
+    let service = StudyService::new(app.db.clone());
+    match service.clear_shapes(&user, study_id as i32, scope).await {
+        Ok(study) => json_outcome(&json!({ "study_id": study.id })),
         Err(e) => study_error(e),
     }
 }
@@ -242,7 +346,12 @@ mod tests {
     fn registers_the_repertoire_tools() {
         let list = registry().list();
         let tools = list["tools"].as_array().expect("tools array");
-        for expected in ["study_merge_games", "study_merge_danger", "study_analyse"] {
+        for expected in [
+            "study_merge_games",
+            "study_merge_danger",
+            "study_analyse",
+            "study_clear_shapes",
+        ] {
             assert!(
                 tools.iter().any(|t| t["name"] == expected),
                 "missing tool {expected}"
@@ -287,6 +396,41 @@ mod tests {
         .await;
         assert!(outcome.is_error);
         assert!(outcome.text.contains("No engine configured"));
+    }
+
+    #[tokio::test]
+    async fn analyse_rejects_a_malformed_plan_lines() {
+        let outcome = study_analyse(
+            dummy_app().await,
+            CurrentUser::local_admin(),
+            json!({ "study_id": 1, "plan_lines": "three" }),
+        )
+        .await;
+        assert!(outcome.is_error);
+        assert!(outcome.text.contains("`plan_lines`"));
+    }
+
+    #[tokio::test]
+    async fn clear_shapes_rejects_an_unknown_scope() {
+        let outcome = study_clear_shapes(
+            dummy_app().await,
+            CurrentUser::local_admin(),
+            json!({ "study_id": 1, "scope": "bogus" }),
+        )
+        .await;
+        assert!(outcome.is_error);
+        assert!(outcome.text.contains("`scope`"));
+    }
+
+    #[tokio::test]
+    async fn clear_shapes_reports_a_missing_study() {
+        let outcome = study_clear_shapes(
+            dummy_app().await,
+            CurrentUser::local_admin(),
+            json!({ "study_id": 9999, "scope": "all" }),
+        )
+        .await;
+        assert!(outcome.is_error);
     }
 
     async fn dummy_app() -> AppState {

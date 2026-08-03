@@ -7,6 +7,7 @@ import type {
   AnalyseResult,
   ApiSettings,
   AuthResponse,
+  ClearShapesScope,
   Database,
   DatabaseKind,
   EngineConfig,
@@ -182,6 +183,11 @@ export const api = {
     // the classification roll-up; 503 when no engine is configured.
     analyse: (id: number, depth?: number) =>
       send<AnalyseResult>('POST', `/api/studies/${id}/analyse`, depth == null ? {} : { depth }),
+    // Bulk-remove board shapes across the whole tree in one call (issue #191):
+    // "generated" strips only the plan/threat arrows a generate/analyse pass
+    // pinned, keeping anything drawn by hand; "all" clears every shape.
+    clearShapes: (id: number, scope: ClearShapesScope) =>
+      send<Study>('POST', `/api/studies/${id}/clear-shapes`, { scope }),
     rename: (id: number, name: string) => send<Study>('PATCH', `/api/studies/${id}`, { name }),
     remove: (id: number) => send<null>('DELETE', `/api/studies/${id}`),
     // File a study under a folder (issue #164); `folderId` null ⇒ unfile to root.

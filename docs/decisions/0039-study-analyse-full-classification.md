@@ -54,6 +54,9 @@ but the pass takes noticeably longer per call since MultiPV=2 searches more
 lines. A study re-analysed after a manual quality NAG edit loses that manual
 NAG — expected, since the whole point is that the engine's classification is
 now authoritative for that node. `plan_lines`/`threats` shape-pinning (as
-`generate` supports) was considered for `analyse_study` too but is out of
-scope here — no backend seam exists yet to pin PV/threat arrows onto an
-*existing* tree's nodes, and the issue's gate never required it.
+`generate` supports) was considered for `analyse_study` too but was out of
+scope here — no backend seam existed yet to pin PV/threat arrows onto an
+*existing* tree's nodes, and the issue's gate never required it. That gap is
+closed by issue #191/ADR-0042: `POST /api/studies/{id}/analyse` and
+`study_analyse` now take optional `plan_lines`/`threats` and, when sent, also
+run a `regenerate_shapes` pass alongside classification.

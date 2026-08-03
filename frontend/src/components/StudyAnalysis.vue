@@ -37,6 +37,41 @@ async function analyseStudy() {
   }
 }
 
+// Bulk shape-clear (issue #191): "generated" strips only the plan/threat
+// arrows a generate/analyse pass pinned, keeping anything drawn by hand;
+// "all" is destructive to hand-drawn shapes too, so it asks first.
+const clearing = ref(false)
+const clearError = ref<string | null>(null)
+
+async function clearGeneratedShapes() {
+  if (clearing.value) return
+  clearError.value = null
+  clearing.value = true
+  try {
+    await editor.clearShapes('generated')
+  } catch (e) {
+    clearError.value = String((e as Error)?.message ?? e)
+  } finally {
+    clearing.value = false
+  }
+}
+
+async function clearAllShapes() {
+  if (clearing.value) return
+  if (!window.confirm('Remove every arrow/highlight on every node, including ones you drew yourself?')) {
+    return
+  }
+  clearError.value = null
+  clearing.value = true
+  try {
+    await editor.clearShapes('all')
+  } catch (e) {
+    clearError.value = String((e as Error)?.message ?? e)
+  } finally {
+    clearing.value = false
+  }
+}
+
 /** "xx.x%" accuracy for the stats summary. */
 function pct(n: number): string {
   return `${n.toFixed(1)}%`
@@ -121,6 +156,38 @@ async function pinLine(line: EngineLine) {
         </div>
       </div>
     </div>
+
+    <!-- Bulk shape-clear (issue #191): the counterpart to clearing arrows
+         node-by-node — "generated" keeps hand-drawn shapes, "all" doesn't. -->
+    <div class="flex gap-2">
+      <button
+        type="button"
+        data-test="clear-generated-shapes"
+        class="flex-1 rounded border border-border px-3 py-1 text-sm hover:bg-surface-2 disabled:opacity-60"
+        :disabled="clearing"
+        title="Remove plan/threat arrows a generate or analyse pass pinned; shapes you drew yourself are kept"
+        @click="clearGeneratedShapes"
+      >
+        Remove generated arrows
+      </button>
+      <button
+        type="button"
+        data-test="clear-all-shapes"
+        class="flex-1 rounded border border-border px-3 py-1 text-sm hover:bg-surface-2 disabled:opacity-60"
+        :disabled="clearing"
+        title="Remove every arrow/highlight on every node, including ones you drew yourself"
+        @click="clearAllShapes"
+      >
+        Remove all arrows
+      </button>
+    </div>
+    <p
+      v-if="clearError"
+      class="text-sm text-bad"
+      data-test="clear-shapes-error"
+    >
+      {{ clearError }}
+    </p>
 
     <!-- Shared eval/PV display, driven by the selected node's position. -->
     <EnginePanel :fen="editor.fen">
