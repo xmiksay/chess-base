@@ -9,13 +9,15 @@ import {
 import { useAuthStore } from '../stores/auth'
 
 // Lazy-load views so each surface is split into its own chunk. The analysis
-// view (`/`) is the landing page.
+// view (`/`) is the landing page. Games/studies/assistant take an optional id
+// param (issue #212) so every selectable object is URL-addressable; the views
+// hydrate from the param and mirror selection back via `router.replace`.
 export const routes: RouteRecordRaw[] = [
   { path: '/', name: 'analysis', component: () => import('../views/AnalysisView.vue') },
   { path: '/collections', name: 'collections', component: () => import('../views/CollectionsView.vue') },
-  { path: '/games', name: 'games', component: () => import('../views/GamesView.vue') },
-  { path: '/studies', name: 'studies', component: () => import('../views/StudyView.vue') },
-  { path: '/assistant', name: 'assistant', component: () => import('../views/AssistantView.vue') },
+  { path: '/games/:id?', name: 'games', component: () => import('../views/GamesView.vue') },
+  { path: '/studies/:id?', name: 'studies', component: () => import('../views/StudyView.vue') },
+  { path: '/assistant/:sessionId?', name: 'assistant', component: () => import('../views/AssistantView.vue') },
   { path: '/import', name: 'import', component: () => import('../views/ImportView.vue') },
   { path: '/search', name: 'search', component: () => import('../views/SearchView.vue') },
   { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue') },

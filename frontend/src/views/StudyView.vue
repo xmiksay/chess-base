@@ -3,6 +3,7 @@
 // to build a mainline + variations, navigate the tree, and annotate moves. The
 // board (chessground) and tree stay in sync through the study-editor store.
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import Board from '../components/Board.vue'
 import BoardControls from '../components/BoardControls.vue'
 import BoardEvalBar from '../components/BoardEvalBar.vue'
@@ -22,6 +23,7 @@ import { useStudyEditorStore } from '../stores/studyEditor'
 import { useSettingsStore } from '../stores/settings'
 import { useDangerStore } from '../stores/danger'
 import { useBoardOverlays } from '../lib/useBoardOverlays'
+import { numericParam } from '../lib/routeParam'
 import { dangerShapesForFen } from '../lib/dangerShapes'
 import type { DrawShape } from 'chessground/draw'
 import type { BoardMove, Database, Shape } from '../types'
@@ -31,6 +33,8 @@ const folders = useFoldersStore()
 const editor = useStudyEditorStore()
 const settings = useSettingsStore()
 const danger = useDangerStore()
+const router = useRouter()
+const route = useRoute()
 
 // Toggleable overlay layers (plans / threats / master, #123) driven by the
 // selected node's FEN. The engine-PV arrows ride along as the Plans layer, so
@@ -79,6 +83,39 @@ async function onOpenStudy(id: number) {
     loadError.value = String((e as Error)?.message ?? e)
   }
 }
+
+// --- URL addressability (issue #212): /studies/:id? + ?folder= ---------------
+
+// The folder selected in the sidebar (null ⇒ root / "Unfiled"), owned here so
+// it can be hydrated from and mirrored to the URL; the sidebar takes it as a
+// v-model prop. Seeded straight from the query so the first render already
+// shows the linked folder.
+const selectedFolderId = ref<number | null>(numericParam(route.query.folder))
+
+// Selection → URL: mirror the open study and folder. `replace` keeps in-page
+// selection out of the history stack; the guard stops hydration echoes.
+watch(
+  () => [studies.current?.id, selectedFolderId.value] as const,
+  ([id, folderId]) => {
+    if (route.name !== 'studies') return
+    if (numericParam(route.params.id) === (id ?? null) && numericParam(route.query.folder) === folderId) return
+    const query = { ...route.query }
+    if (folderId != null) query.folder = String(folderId)
+    else delete query.folder
+    void router.replace({ name: 'studies', params: id != null ? { id: String(id) } : {}, query })
+  },
+)
+
+// URL → selection: hydrate on back/forward (mount is handled in onMounted).
+watch(
+  () => [route.params.id, route.query.folder] as const,
+  async () => {
+    if (route.name !== 'studies') return
+    selectedFolderId.value = numericParam(route.query.folder)
+    const id = numericParam(route.params.id)
+    if (id != null && id !== studies.current?.id) await onOpenStudy(id)
+  },
+)
 // Capability flags from `/api/health`: LLM gates the generate dialogs; the engine
 // alone gates the engine-only danger overlay (#156). Plus the generate-dialog toggle.
 const llmEnabled = ref(false)
@@ -167,6 +204,9 @@ onMounted(async () => {
   try {
     await Promise.all([studies.refresh(), folders.refresh()])
     databases.value = await api.databases.list()
+    // Deep link straight to a study: /studies/:id (issue #212).
+    const studyId = numericParam(route.params.id)
+    if (studyId != null && studyId !== studies.current?.id) await onOpenStudy(studyId)
   } catch (e) {
     loadError.value = String((e as Error)?.message ?? e)
   }
@@ -243,6 +283,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     <div class="flex flex-col gap-6 lg:flex-row">
       <!-- Folder tree + studies in the selected folder + create (#164) -->
       <StudyFolderSidebar
+        v-model:folder-id="selectedFolderId"
         :databases="databases"
         :current-id="studies.current?.id ?? null"
         :default-db-id="settings.defaultDatabaseId ?? null"
@@ -319,7 +360,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             <span>{{ studies.current?.name }}</span>
             <RouterLink
               v-if="studies.current?.origin_game_id != null"
-              :to="{ name: 'games' }"
+              :to="{ name: 'games', params: { id: String(studies.current.origin_game_id) } }"
               data-test="origin-game-link"
               class="rounded bg-surface-2 px-2 py-0.5 text-xs font-normal text-muted hover:text-fg"
             >
