@@ -4,6 +4,7 @@ import type {
   AddLineBody,
   AddMoveResult,
   Annotation,
+  AnalyseResult,
   ApiSettings,
   AuthResponse,
   Database,
@@ -175,11 +176,12 @@ export const api = {
     // the per-move `[%eval]` annotations; `false` exports plain movetext.
     exportPgn: (id: number, { eval: withEval = true }: { eval?: boolean } = {}) =>
       getText(`/api/studies/${id}/export?eval=${withEval}`),
-    // Fill `[%eval]` on every non-terminal node from the engine (issue #162), so
-    // the exported PGN carries evals Lichess renders. Eval-only: comments / NAGs /
-    // shapes stay put. Returns the refreshed study; 503 when no engine is configured.
+    // Fill `[%eval]` on every non-terminal node and classify each move (issue
+    // #162, #189): a `!`/`?!`/`?`/`??` NAG replaces any prior quality NAG;
+    // comments/shapes/positional NAGs stay put. Returns the refreshed study plus
+    // the classification roll-up; 503 when no engine is configured.
     analyse: (id: number, depth?: number) =>
-      send<Study>('POST', `/api/studies/${id}/analyse`, depth == null ? {} : { depth }),
+      send<AnalyseResult>('POST', `/api/studies/${id}/analyse`, depth == null ? {} : { depth }),
     rename: (id: number, name: string) => send<Study>('PATCH', `/api/studies/${id}`, { name }),
     remove: (id: number) => send<null>('DELETE', `/api/studies/${id}`),
     // File a study under a folder (issue #164); `folderId` null ⇒ unfile to root.

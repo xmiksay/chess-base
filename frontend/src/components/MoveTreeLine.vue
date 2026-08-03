@@ -4,6 +4,7 @@
 // row (a left border + padding) and recurses, so nesting depth = visual indent.
 // Presentational: the parent owns selection and the store edits.
 import { nagGlyph, nagClass } from '../lib/moveTree'
+import { formatEval } from '../lib/dangerShapes'
 import type { MoveTreeItem } from '../lib/moveTree'
 
 interface Props {
@@ -51,6 +52,10 @@ const emit = defineEmits<{
           :key="ni"
           :class="nagClass(n)"
         >{{ nagGlyph(n) }}</span><span
+          v-if="item.token.eval"
+          class="ml-0.5 text-[10px] text-muted"
+          data-test="move-eval"
+        >{{ formatEval(item.token.eval) }}</span><span
           v-if="item.token.comment"
           class="ml-0.5 text-good"
           data-test="comment-marker"

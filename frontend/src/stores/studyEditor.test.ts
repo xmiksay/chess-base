@@ -20,7 +20,7 @@ vi.mock('../api', () => ({
 import { api } from '../api'
 import { useStudiesStore } from './studies'
 import { useStudyEditorStore } from './studyEditor'
-import type { Study } from '../types'
+import type { AnalyseStats, Study } from '../types'
 
 // 1.e4 e5 (1...c5) — mainline plus one variation; ids are dense.
 function sampleStudy(): Study {
@@ -133,15 +133,37 @@ describe('studyEditor store', () => {
     expect(studies.current!.tree.nodes[1].shapes).toEqual(shapes)
   })
 
-  it('analyseStudy fills evals and stores the refreshed study', async () => {
-    const analysed = sampleStudy()
+  it('analyseStudy fills evals, classifies moves, and returns the stats roll-up', async () => {
+    const stats: AnalyseStats = {
+      nodes_analysed: 2,
+      summary: {
+        white: { acpl: 5, accuracy: 98.1, inaccuracies: 0, mistakes: 0, blunders: 0 },
+        black: { acpl: 0, accuracy: 100, inaccuracies: 0, mistakes: 0, blunders: 0 },
+      },
+    }
+    const analysed = { ...sampleStudy(), stats }
     analysed.tree.nodes[1].eval = { cp: 31 }
     analysed.tree.nodes[2].eval = { cp: 18 }
     vi.mocked(api.studies.analyse).mockResolvedValue(analysed)
 
-    await editor.analyseStudy()
-    expect(api.studies.analyse).toHaveBeenCalledWith(10)
+    const result = await editor.analyseStudy()
+    expect(api.studies.analyse).toHaveBeenCalledWith(10, undefined)
     expect(studies.current!.tree.nodes[1].eval).toEqual({ cp: 31 })
+    expect(result).toEqual(stats)
+  })
+
+  it('analyseStudy forwards an explicit depth', async () => {
+    const stats: AnalyseStats = {
+      nodes_analysed: 0,
+      summary: {
+        white: { acpl: 0, accuracy: 100, inaccuracies: 0, mistakes: 0, blunders: 0 },
+        black: { acpl: 0, accuracy: 100, inaccuracies: 0, mistakes: 0, blunders: 0 },
+      },
+    }
+    vi.mocked(api.studies.analyse).mockResolvedValue({ ...sampleStudy(), stats })
+
+    await editor.analyseStudy(12)
+    expect(api.studies.analyse).toHaveBeenCalledWith(10, 12)
   })
 
   it('seeds the board from a set-up start_fen and replays edits from it', () => {

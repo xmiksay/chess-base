@@ -146,4 +146,25 @@ describe('graftReviewVariations', () => {
     expect(grafted.nodes).toHaveLength(5)
     expect(getNode(grafted, 3)!.children).toEqual([4])
   })
+
+  it('writes the classification NAG onto the played mainline move (#189)', () => {
+    const grafted = graftReviewVariations(
+      base(),
+      review([{ ply: 4, san: 'Nc6', eval_cp: -150, classification: 'blunder', explanation: 'bad' }]),
+    )
+    // Nc6 is node 4 (mainline, ply 4) — it gets the "??" glyph ($4) directly.
+    expect(getNode(grafted, 4)!.nags).toEqual([4])
+  })
+
+  it('does not tag a clean move, and replaces a prior quality NAG', () => {
+    let tree = base()
+    tree = { root: tree.root, nodes: tree.nodes.map((n) => (n.id === 4 ? { ...n, nags: [1, 14] } : n)) }
+
+    const grafted = graftReviewVariations(
+      tree,
+      review([{ ply: 4, san: 'Nc6', eval_cp: 20, classification: 'best', explanation: '' }]),
+    )
+    // The stale "!" ($1) is gone but the positional NAG ($14) survives.
+    expect(getNode(grafted, 4)!.nags).toEqual([14])
+  })
 })

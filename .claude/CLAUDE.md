@@ -58,11 +58,18 @@ src/
                    enforced in-app since SQLite FK cascade is inert); GET/POST
                    /api/folders, PATCH (rename/move), DELETE ← unit-tested
   studies/         StudyService: study CRUD + PGN import/export + MoveTree edits;
-                   analyse.rs (#162) pure node_fens + white_eval seam for the
-                   non-destructive "Analyse study" pass — StudyService::analyse_study
-                   engine-fills White-perspective [%eval] on every non-terminal node
-                   (eval-only, never clobbers comments/NAGs/shapes), so an export
-                   carries the evals Lichess renders; POST /api/studies/{id}/analyse;
+                   analyse.rs (#162, full review-grade classification #189, ADR-0039)
+                   pure node_searches/classify_search/set_quality_nag seam for the
+                   "Analyse study" pass — StudyService::analyse_study MultiPV=2
+                   searches the position before *and* after every move (mirrors
+                   review::service::review_game; a node's before-position is its
+                   parent's after-position, so the search is cached by FEN and costs
+                   one call per node, not two), engine-fills a White-perspective
+                   [%eval] on every non-terminal node and classifies the move via
+                   review::classify, replacing any prior move-quality NAG ($1..$6)
+                   with the fresh one (comments/shapes/positional NAGs are never
+                   touched); returns the refreshed study plus an AnalyseStats
+                   classification/accuracy roll-up; POST /api/studies/{id}/analyse;
                    folders (#164, ADR-0030): studies carry folder_id (organize) +
                    origin_game_id (analysis↔game); set_folder, studies_for_game, and
                    create_from_game (mainline → MoveTree, optional engine review via
@@ -213,7 +220,9 @@ frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
                    `.dark`; accents good/warn/bad (green/orange/red) carry move
                    quality (lib/moveTree nagClass). MoveTree renders variations as
                    depth-indented blocks (MoveTreeLine) with per-node promote/demote
-                   /delete actions. Engine options (MultiPV/Threads/Hash) persist
+                   /delete actions; a node's stored [%eval] (issue #189) renders next
+                   to its NAG glyph via lib/dangerShapes' formatEval. Engine options
+                   (MultiPV/Threads/Hash) persist
                    per user via settings (lib/useEnginePrefs); analysis on by default.
                    Assistant (#198): stores/assistant.ts reconnecting WS client over
                    the pure lib/assistantStream.ts fold → AssistantView streaming

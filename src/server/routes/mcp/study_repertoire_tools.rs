@@ -168,15 +168,19 @@ fn merge_danger_outcome(outcome: &MergeDangerOutcome) -> ToolOutcome {
     }))
 }
 
-/// Fill `[%eval]` on every non-terminal node of a study from the engine.
+/// Fill `[%eval]` on every non-terminal node of a study from the engine and
+/// classify each move.
 fn study_analyse_tool() -> Tool {
     Tool::new(
         "study_analyse",
-        "Walk the engine over every move-bearing node of one of your studies and \
-         pin a White-perspective `[%eval]` to each — eval-only, comments/NAGs/shapes \
-         are never touched. Useful after `study_import_pgn` or `study_merge_games`, \
-         whose trees carry no evals yet. Requires an engine configured. You may \
-         only edit your own studies.",
+        "Walk the engine over every move-bearing node of one of your studies: pin a \
+         White-perspective `[%eval]` to each and classify the move played \
+         (best/great/good/inaccuracy/mistake/blunder), writing a `!`/`?!`/`?`/`??` \
+         NAG that replaces any prior move-quality NAG. Comments, shapes and \
+         positional NAGs are never touched. Useful after `study_import_pgn` or \
+         `study_merge_games`, whose trees carry no evals yet. Requires an engine \
+         configured. You may only edit your own studies. Returns the number of \
+         nodes classified plus the per-side accuracy/error-count summary.",
         json!({
             "type": "object",
             "properties": {
@@ -216,7 +220,10 @@ async fn study_analyse(app: AppState, user: CurrentUser, args: Value) -> ToolOut
         .analyse_study(&engine, &user, study_id as i32, depth)
         .await
     {
-        Ok(_) => ToolOutcome::ok("ok"),
+        Ok((_, stats)) => json_outcome(&json!({
+            "nodes_analysed": stats.nodes_analysed,
+            "summary": stats.summary,
+        })),
         Err(e) => study_error(e),
     }
 }
