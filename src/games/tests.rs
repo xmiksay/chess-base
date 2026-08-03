@@ -304,3 +304,88 @@ async fn delete_missing_game_is_not_found() {
         Err(GameError::NotFound)
     ));
 }
+
+#[tokio::test]
+async fn a_public_game_is_readable_across_ownership_but_stays_write_guarded() {
+    let (conn, db_id) = db_for(Some("alice")).await;
+    let ingested = ingest_pgn(&conn, db_id, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .unwrap();
+    let svc = GameService::new(conn);
+    let alice = user("alice");
+    let anon = CurrentUser::anonymous();
+
+    // Before sharing: hidden from a stranger and from the anonymous caller.
+    assert!(matches!(
+        svc.get(&user("bob"), ingested.game_id).await,
+        Err(GameError::NotFound)
+    ));
+    assert!(matches!(
+        svc.get(&anon, ingested.game_id).await,
+        Err(GameError::NotFound)
+    ));
+
+    // The owner shares it; the deep link now works for anyone (public
+    // deliberately overrides the private owning database for reads).
+    let shared = svc
+        .set_public(&alice, ingested.game_id, true)
+        .await
+        .unwrap();
+    assert!(shared.public);
+    assert!(
+        svc.get(&user("bob"), ingested.game_id)
+            .await
+            .unwrap()
+            .public
+    );
+    assert!(svc.get(&anon, ingested.game_id).await.unwrap().public);
+
+    // Reads widen; writes don't — a stranger's id stays hidden, the anonymous
+    // caller is denied, and only the database owner may toggle back.
+    assert!(matches!(
+        svc.set_public(&user("bob"), ingested.game_id, false).await,
+        Err(GameError::NotFound)
+    ));
+    assert!(matches!(
+        svc.delete(&anon, ingested.game_id).await,
+        Err(GameError::NotFound)
+    ));
+    let unshared = svc
+        .set_public(&alice, ingested.game_id, false)
+        .await
+        .unwrap();
+    assert!(!unshared.public);
+}
+
+#[tokio::test]
+async fn set_public_in_a_global_database_requires_admin() {
+    let (conn, global_db) = db_for(None).await;
+    let ingested = ingest_pgn(&conn, global_db, SCHOLARS_MATE)
+        .await
+        .unwrap()
+        .unwrap();
+    let svc = GameService::new(conn);
+
+    // A non-admin sees the global game but may not toggle sharing on it.
+    assert!(matches!(
+        svc.set_public(&user("bob"), ingested.game_id, true).await,
+        Err(GameError::Forbidden)
+    ));
+    // A read_only-scoped caller (ADR-0044) is hard-denied even as admin.
+    let scoped = CurrentUser {
+        read_only: true,
+        ..admin("root")
+    };
+    assert!(matches!(
+        svc.set_public(&scoped, ingested.game_id, true).await,
+        Err(GameError::Forbidden)
+    ));
+    // An admin may.
+    assert!(
+        svc.set_public(&admin("root"), ingested.game_id, true)
+            .await
+            .unwrap()
+            .public
+    );
+}

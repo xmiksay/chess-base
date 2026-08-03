@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,7 @@ use crate::position::STARTPOS_FEN;
 use crate::review::{review_game, ReviewError};
 use crate::server::download::pgn_attachment;
 use crate::server::error::error_response;
-use crate::server::identity::CurrentUser;
+use crate::server::identity::{CurrentUser, PublicUser};
 use crate::server::state::AppState;
 use crate::studies::{StudyError, StudyService};
 
@@ -40,6 +40,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/games", get(list))
         .route("/api/games/{id}", get(get_one).delete(delete_one))
+        .route("/api/games/{id}/public", put(set_public))
         .route("/api/games/{id}/tree", get(get_tree))
         .route("/api/games/{id}/export", get(export_pgn))
         .route("/api/games/export", post(export_many))
@@ -82,13 +83,36 @@ async fn list(
     Ok((StatusCode::OK, Json(page)).into_response())
 }
 
-/// `GET /api/games/{id}` — a single game with its PGN movetext.
+/// `GET /api/games/{id}` — a single game with its PGN movetext. [`PublicUser`]:
+/// a logged-out visitor reaches a `public`-flagged game (issue #211).
 async fn get_one(
     State(state): State<AppState>,
-    user: CurrentUser,
+    PublicUser(user): PublicUser,
     Path(id): Path<i32>,
 ) -> Result<Response, GameError> {
     let game = service(&state).get(&user, id).await?;
+    Ok((StatusCode::OK, Json(game)).into_response())
+}
+
+/// Body for `PUT /api/games/{id}/public`: the new sharing state.
+#[derive(Deserialize)]
+struct PublicBody {
+    public: bool,
+}
+
+/// `PUT /api/games/{id}/public` — toggle a game's public sharing flag (issue
+/// #211). Delete's permission chain: owner of the database, or admin for a
+/// global one. Returns the refreshed [`GameDetail`] (mirrors the study
+/// `PUT /folder` idiom).
+///
+/// [`GameDetail`]: crate::games::GameDetail
+async fn set_public(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+    Json(body): Json<PublicBody>,
+) -> Result<Response, GameError> {
+    let game = service(&state).set_public(&user, id, body.public).await?;
     Ok((StatusCode::OK, Json(game)).into_response())
 }
 
@@ -111,7 +135,7 @@ async fn delete_one(
 /// move failure maps to a clean 422 — no raw `DbErr` or panic leaks.
 async fn get_tree(
     State(state): State<AppState>,
-    user: CurrentUser,
+    PublicUser(user): PublicUser,
     Path(id): Path<i32>,
 ) -> Result<Response, Response> {
     let game = service(&state)
@@ -141,10 +165,18 @@ struct ExportQuery {
 /// a missing engine surfaces its operator guidance verbatim.
 async fn export_pgn(
     State(state): State<AppState>,
-    user: CurrentUser,
+    PublicUser(user): PublicUser,
     Path(id): Path<i32>,
     Query(q): Query<ExportQuery>,
 ) -> Result<Response, Response> {
+    // The verbatim download is a plain read; the annotated one runs the engine,
+    // which the anonymous tier never gets (issue #211, ADR-0045).
+    if q.annotated && user.public {
+        return Err(error_response(
+            StatusCode::UNAUTHORIZED,
+            "authentication required for annotated export",
+        ));
+    }
     let game = service(&state)
         .get(&user, id)
         .await
@@ -233,6 +265,8 @@ struct StudyLink {
     global: bool,
     folder_id: Option<i32>,
     origin_game_id: Option<i32>,
+    /// Shared publicly (issue #211): readable anonymously via its deep link.
+    public: bool,
 }
 
 impl From<studies::Model> for StudyLink {
@@ -245,6 +279,7 @@ impl From<studies::Model> for StudyLink {
             name: m.name,
             folder_id: m.folder_id,
             origin_game_id: m.origin_game_id,
+            public: m.public,
         }
     }
 }
@@ -302,9 +337,10 @@ async fn save_as_study(
 }
 
 /// `GET /api/games/{id}/studies` — the analyses linked to this game.
+/// [`PublicUser`]: a logged-out visitor sees the `public`-flagged ones only.
 async fn linked_studies(
     State(state): State<AppState>,
-    user: CurrentUser,
+    PublicUser(user): PublicUser,
     Path(id): Path<i32>,
 ) -> Result<Response, StudyError> {
     let rows = StudyService::new(state.db.clone())

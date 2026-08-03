@@ -36,6 +36,9 @@ pub struct Model {
     /// re-syncs (issue #95). Unique per `database_id`; `None` for games without a
     /// provider permalink (e.g. manual PGN uploads), which are never deduped.
     pub source_ref: Option<String>,
+    /// Shared publicly (issue #211, ADR-0045): readable by the anonymous HTTP
+    /// tier via its deep link, even when the owning database is private.
+    pub public: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

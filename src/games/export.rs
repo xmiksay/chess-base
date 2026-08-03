@@ -216,6 +216,7 @@ mod tests {
             start_fen: None,
             ply_count: None,
             pgn: Some("1. c4 *".into()),
+            public: false,
         };
         let pgn = to_annotated_pgn(&game, &linear_tree(&sans(&["c4"]))).unwrap();
         assert!(pgn.contains("[White \"Spassky\"]"));

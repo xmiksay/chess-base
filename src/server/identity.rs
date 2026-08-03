@@ -168,6 +168,26 @@ impl FromRequestParts<AppState> for CurrentUser {
     }
 }
 
+/// The caller of a public-readable route (issue #211, ADR-0045): like
+/// [`CurrentUser`], but a server-mode request carrying **no** credential
+/// resolves to [`CurrentUser::anonymous`] instead of `401` — mirroring the MCP
+/// tier's `authenticate_mcp` (ADR-0043). An invalid/expired credential still
+/// `401`s, and local mode is unchanged (always the implicit admin). Only the
+/// handful of read routes that serve `public`-flagged games/studies use this
+/// extractor; everything else keeps [`CurrentUser`]'s hard 401.
+pub struct PublicUser(pub CurrentUser);
+
+impl FromRequestParts<AppState> for PublicUser {
+    type Rejection = AuthError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        state.resolve_public_user(parts).await.map(PublicUser)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -211,7 +211,7 @@ CLI flags; resolved into `AppConfig` (config) → `AppState` (runtime). The bina
 also exposes an `import-pgn <FILE>` subcommand that runs the `collectors::bulk`
 master importer and exits without serving (issue #4).
 
-## Request identity (ADR 0011, anonymous tier ADR 0043, scoped tokens ADR 0044)
+## Request identity (ADR 0011, anonymous tier ADR 0043, scoped tokens ADR 0044, public sharing ADR 0045)
 
 `server/identity.rs` defines `CurrentUser { id, is_admin, public, read_only,
 global_only }` — the one identity type every service takes — produced by an
@@ -231,8 +231,26 @@ enforce the ownership model (ADR 0007) in one place: `scope(owner_col, user)`
 hard-deny when `public || read_only`, before their normal logic runs). The
 `/api/whoami` route exposes the resolved caller to the SPA. `CurrentUser::anonymous()`
 (issue #192) is the public identity minted by `authenticate_mcp` for a
-credential-less **server-mode** `/mcp` request — see "MCP endpoint" below; it
-never appears on the HTTP API.
+credential-less **server-mode** `/mcp` request — see "MCP endpoint" below.
+
+**Public sharing** (issue #211, ADR-0045): `games.public` / `studies.public`
+(migration `m0011_sharing`) are independent per-object flags toggled by
+`PUT /api/games/{id}/public` (delete's permission chain: database owner, or
+admin for a global database) and `PUT /api/studies/{id}/public`
+(`studies/public_route.rs`, the usual study write guard). Six read routes —
+`GET /api/games/{id}`, `/tree`, `/export`, `/api/games/{id}/studies`,
+`GET /api/studies/{id}`, `/export` (+`/export/lichess`) — use the
+`PublicUser` extractor (`AppState::resolve_public_user`), which mirrors
+`authenticate_mcp`'s semantics on the HTTP side: local mode is the implicit
+admin, a server-mode request with **no** credential resolves to
+`CurrentUser::anonymous()` instead of `401`, and an invalid/expired credential
+still `401`s. `GameService::get` serves a `public` game to any caller —
+deliberately overriding a private owning database for reads — while
+`StudyService`'s private `read_scope` widens the ownership scope with the
+`public` arm (for the anonymous caller it is the **only** arm: global,
+non-public studies stay off the anonymous tier, ADR-0043). The annotated game
+export (`?annotated=true`, engine-backed) is denied anonymously with `401`.
+Every other route keeps the plain `CurrentUser` extractor and its hard `401`.
 
 ## Server-mode auth (ADR 0015)
 

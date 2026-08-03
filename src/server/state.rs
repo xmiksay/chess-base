@@ -86,4 +86,84 @@ impl AppState {
             }
         }
     }
+
+    /// Resolve the caller of a public-readable route (issue #211, ADR-0045),
+    /// backing the [`PublicUser`] extractor. Semantics mirror the MCP tier's
+    /// `authenticate_mcp` (ADR-0043): local mode is the implicit admin; a
+    /// server-mode request with **no** credential resolves to
+    /// [`CurrentUser::anonymous`] instead of `401`; a credential that is
+    /// present goes through the normal [`AuthService`] resolution, so an
+    /// invalid/expired token still `401`s (it is a broken credential, not an
+    /// anonymous visitor).
+    ///
+    /// [`PublicUser`]: crate::server::identity::PublicUser
+    /// [`AuthService`]: crate::auth::AuthService
+    pub async fn resolve_public_user(&self, parts: &Parts) -> Result<CurrentUser, AuthError> {
+        match self.mode {
+            Mode::Local => Ok(CurrentUser::local_admin()),
+            Mode::Server => match crate::auth::token_from_headers(&parts.headers) {
+                Some(token) => {
+                    crate::auth::AuthService::new(self.db.clone())
+                        .authenticate(&token)
+                        .await
+                }
+                None => Ok(CurrentUser::anonymous()),
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{connect, DbConfig};
+    use axum::http::Request;
+
+    async fn state(mode: Mode) -> AppState {
+        AppState {
+            db: connect(&DbConfig::in_memory()).await.unwrap(),
+            mode,
+            engine_service: None,
+            provider_store: None,
+            agent: Default::default(),
+        }
+    }
+
+    fn parts(auth: Option<&str>) -> Parts {
+        let mut builder = Request::builder().uri("/");
+        if let Some(value) = auth {
+            builder = builder.header("authorization", value);
+        }
+        builder.body(()).unwrap().into_parts().0
+    }
+
+    #[tokio::test]
+    async fn public_user_in_local_mode_is_the_implicit_admin() {
+        let user = state(Mode::Local)
+            .await
+            .resolve_public_user(&parts(None))
+            .await
+            .unwrap();
+        assert_eq!(user, CurrentUser::local_admin());
+    }
+
+    #[tokio::test]
+    async fn public_user_without_credentials_is_anonymous_in_server_mode() {
+        let user = state(Mode::Server)
+            .await
+            .resolve_public_user(&parts(None))
+            .await
+            .unwrap();
+        assert_eq!(user, CurrentUser::anonymous());
+    }
+
+    #[tokio::test]
+    async fn public_user_with_an_invalid_credential_is_still_unauthorized() {
+        let err = state(Mode::Server)
+            .await
+            .resolve_public_user(&parts(Some("Bearer bogus")))
+            .await
+            .unwrap_err();
+        assert_eq!(err, AuthError::Unauthorized);
+    }
 }

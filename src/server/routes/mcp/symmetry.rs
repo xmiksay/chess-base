@@ -244,6 +244,14 @@ const CARVE_OUTS: &[(&str, &str)] = &[
     ),
     ("* /.well-known/oauth-*", "OAuth discovery/infra"),
     ("* /oauth/*", "OAuth infra"),
+    (
+        "PUT /api/games/{id}/public",
+        "share toggle is a human/UI action (#211, ADR-0045)",
+    ),
+    (
+        "PUT /api/studies/{id}/public",
+        "share toggle is a human/UI action (#211, ADR-0045)",
+    ),
 ];
 
 /// Routes this issue's audit found un-mirrored but left out of scope

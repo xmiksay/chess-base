@@ -21,6 +21,10 @@ pub struct Model {
     pub folder_id: Option<i32>,
     /// The game an analysis was built from (issue #164). `None` ⇒ standalone.
     pub origin_game_id: Option<i32>,
+    /// Shared publicly (issue #211, ADR-0045): readable by the anonymous HTTP
+    /// tier via its deep link. Independent of the global (`owner_id IS NULL`)
+    /// axis — global studies stay off the anonymous tier unless flagged.
+    pub public: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
