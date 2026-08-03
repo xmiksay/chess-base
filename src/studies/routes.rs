@@ -26,7 +26,7 @@ use crate::server::download::pgn_attachment;
 use crate::server::error::error_response;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
-use crate::studies::{StudyError, StudyService};
+use crate::studies::{AnalyseStats, StudyError, StudyService};
 use crate::study_gen::tree::TreeConfig;
 use crate::study_gen::{
     generate_study_live, GenerateError, GenerateOutcome, GenerateParams, MAX_PLAN_LINES,
@@ -421,8 +421,9 @@ async fn export_lichess(
 }
 
 /// Body for `POST /api/studies/{id}/analyse` — the non-destructive "Analyse
-/// study" pass (#162). Optional `depth` overrides the per-position engine search
-/// depth; everything else is taken from the stored tree.
+/// study" pass (#162, full classification #189). Optional `depth` overrides the
+/// per-position engine search depth; everything else is taken from the stored
+/// tree.
 #[derive(Deserialize, Default)]
 struct AnalyseBody {
     /// Per-position engine search depth (plies); capped server-side.
@@ -430,10 +431,21 @@ struct AnalyseBody {
     depth: Option<u32>,
 }
 
-/// Fill `[%eval]` on every non-terminal node of a study and persist it
-/// (`POST /api/studies/{id}/analyse`, #162). Eval-only — comments / NAGs / shapes
-/// stay put. Mirrors `generate`'s engine-from-state 503 guard; returns the
-/// refreshed `StudyView` so the editor re-renders from one response.
+/// The response of `POST /api/studies/{id}/analyse`: the refreshed study plus
+/// the classification roll-up (issue #189), so the editor can render both from
+/// one response.
+#[derive(Serialize)]
+struct AnalyseView {
+    #[serde(flatten)]
+    study: StudyView,
+    stats: AnalyseStats,
+}
+
+/// Fill `[%eval]` on every non-terminal node of a study and classify each move
+/// (`review::classify`) — a `!`/`?!`/`?`/`??` NAG replaces any prior one; user
+/// comments, shapes and positional NAGs are left alone (`POST
+/// /api/studies/{id}/analyse`, #162, #189). Mirrors `generate`'s
+/// engine-from-state 503 guard.
 async fn analyse(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -453,12 +465,12 @@ async fn analyse(
     let depth = body
         .and_then(|Json(b)| b.depth)
         .unwrap_or(DEFAULT_ANALYSE_DEPTH);
-    let model = service(&state)
+    let (model, stats) = service(&state)
         .analyse_study(engine, &user, id, depth)
         .await
         .map_err(IntoResponse::into_response)?;
-    let view = StudyView::try_from(model).map_err(IntoResponse::into_response)?;
-    Ok((StatusCode::OK, Json(view)).into_response())
+    let study = StudyView::try_from(model).map_err(IntoResponse::into_response)?;
+    Ok((StatusCode::OK, Json(AnalyseView { study, stats })).into_response())
 }
 
 async fn rename(

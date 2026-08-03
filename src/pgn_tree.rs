@@ -46,8 +46,10 @@ pub struct Shape {
 }
 
 /// Whether a NAG is a move-quality glyph ($1–$6: !, ?, !!, ??, !?, ?!). These
-/// are mutually exclusive — a move carries at most one.
-fn is_move_quality_nag(nag: u8) -> bool {
+/// are mutually exclusive — a move carries at most one. `pub(crate)` so the
+/// study analyse pass (#189) can replace a stale quality NAG the same way
+/// [`MoveTree::toggle_nag`] does, without disturbing a positional one.
+pub(crate) fn is_move_quality_nag(nag: u8) -> bool {
     (1..=6).contains(&nag)
 }
 

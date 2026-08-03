@@ -29,6 +29,23 @@ export function classificationGlyph(c: MoveClassification): string {
   }
 }
 
+/** The Numeric Annotation Glyph for a move quality (mirrors `Classification::nag`
+ *  in `src/review/classify.rs`), or `null` for a clean move (best/good). */
+export function classificationNag(c: MoveClassification): number | null {
+  switch (c) {
+    case 'great':
+      return 1
+    case 'inaccuracy':
+      return 6
+    case 'mistake':
+      return 2
+    case 'blunder':
+      return 4
+    default:
+      return null
+  }
+}
+
 /** Tailwind text-colour class for a move quality (subtle accent for good play). */
 export function classificationClass(c: MoveClassification): string {
   switch (c) {

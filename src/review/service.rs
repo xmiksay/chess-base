@@ -284,7 +284,7 @@ fn after_eval(
     after
         .and_then(|e| e.lines.first())
         .and_then(|l| l.score)
-        .map(negate)
+        .map(Score::negate)
         .unwrap_or(Score::Cp { value: 0 })
 }
 
@@ -294,21 +294,13 @@ fn white_view(mover_score: Score, mover_white: bool) -> (i32, Option<i32>) {
     let white = if mover_white {
         mover_score
     } else {
-        negate(mover_score)
+        mover_score.negate()
     };
     let mate = match white {
         Score::Mate { value } => Some(value),
         Score::Cp { .. } => None,
     };
     (score_cp(white), mate)
-}
-
-/// Flip a score to the other side's perspective.
-fn negate(score: Score) -> Score {
-    match score {
-        Score::Cp { value } => Score::Cp { value: -value },
-        Score::Mate { value } => Score::Mate { value: -value },
-    }
 }
 
 /// Convert a UCI principal variation to SAN, replaying from `fen` and stopping

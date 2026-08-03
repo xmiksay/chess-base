@@ -11,10 +11,24 @@
 // duplicated, so re-analysing a game does not pile up copies of the same line.
 
 import { appendChild, childWithSan, mainlinePath } from './moveTree'
+import { classificationNag } from './reviewFormat'
 import type { Eval, GameReview, MoveClassification, MoveReview, MoveTree } from '../types'
 
 /** The buckets that earn a grafted engine line (mirrors src/review/classify.rs). */
 const CRITICAL = new Set<MoveClassification>(['inaccuracy', 'mistake', 'blunder'])
+
+/** Replace any prior move-quality NAG ($1..$6) on `id` with `nag` (`null` just
+ *  clears it), leaving positional NAGs alone. Mirrors the backend's
+ *  `analyse::set_quality_nag` (issue #189). */
+function setQualityNag(tree: MoveTree, id: number, nag: number | null): MoveTree {
+  const nodes = tree.nodes.map((n) => {
+    if (n.id !== id) return n
+    const nags = n.nags.filter((existing) => existing < 1 || existing > 6)
+    if (nag != null) nags.push(nag)
+    return { ...n, nags }
+  })
+  return { root: tree.root, nodes }
+}
 
 /** The reviewed eval as a node `Eval` (White's perspective): mate wins over cp. */
 function evalOf(mv: MoveReview): Eval {
@@ -56,15 +70,23 @@ function graftLine(
 }
 
 /**
- * Return a copy of `tree` with the review's critical lines grafted in. The
- * mainline path is read once up front; because grafts only ever add later
- * children, those node ids stay valid for the whole pass.
+ * Return a copy of `tree` with the review's critical lines grafted in, and
+ * every played move's classification NAG written onto its own mainline node
+ * (issue #189) so `!`/`?!`/`?`/`??` glyphs render directly in the notation,
+ * not just in the review side panel. The mainline path is read once up front;
+ * because grafts only ever add later children, those node ids stay valid for
+ * the whole pass.
  */
 export function graftReviewVariations(tree: MoveTree, review: GameReview): MoveTree {
   let result = tree
   // index = ply, value = mainline node id (index 0 = root = start position).
   const mainline = mainlinePath(result)
   for (const mv of review.moves) {
+    const playedId = mainline[mv.ply]
+    if (playedId != null) {
+      result = setQualityNag(result, playedId, classificationNag(mv.classification))
+    }
+
     if (!CRITICAL.has(mv.classification)) continue
     const line = mv.best_line
     if (!line || line.length === 0) continue

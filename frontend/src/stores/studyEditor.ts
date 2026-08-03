@@ -17,7 +17,7 @@ import {
   sanPath,
   siblingIndex,
 } from '../lib/moveTree'
-import type { Annotation, BoardMove, Shape, Square } from '../types'
+import type { Annotation, AnalyseStats, BoardMove, Shape, Square } from '../types'
 
 /** A chess.js seeded from a study's set-up `start_fen`, or the standard start
  *  when absent or malformed (a bad origin must not blank the board). */
@@ -144,12 +144,16 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
   }
 
   /**
-   * Fill `[%eval]` on every non-terminal node via the engine (#162), so the
-   * exported PGN carries evals Lichess renders. Eval-only — comments / NAGs /
-   * shapes are left untouched. Returns the refreshed study into `current`.
+   * Fill `[%eval]` on every non-terminal node and classify each move via the
+   * engine (#162, #189): a `!`/`?!`/`?`/`??` NAG replaces any prior quality
+   * NAG; comments/shapes/positional NAGs are left untouched. Stores the
+   * refreshed study into `current` and returns the classification roll-up for
+   * the caller to display.
    */
-  async function analyseStudy() {
-    studies.current = await api.studies.analyse(studyId.value!)
+  async function analyseStudy(depth?: number): Promise<AnalyseStats> {
+    const result = await api.studies.analyse(studyId.value!, depth)
+    studies.current = result
+    return result.stats
   }
 
   /** Promote a variation toward the mainline. */

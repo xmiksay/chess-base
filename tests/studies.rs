@@ -4,6 +4,8 @@
 //! moves/variations, annotate, promote / reorder / delete). Both exercise the
 //! ownership rules (own vs global-admin vs other-user) through real auth tokens.
 
+use std::sync::Arc;
+
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::Router;
@@ -12,6 +14,7 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use chess_base::db::{connect, DbConfig};
+use chess_base::engine::{EngineConfig, EngineService};
 use chess_base::ingest::ingest_pgn;
 use chess_base::server::{build_router, AppState, Mode};
 use sea_orm::DatabaseConnection;
@@ -32,6 +35,30 @@ async fn server_app_with_db() -> (Router, DatabaseConnection) {
         agent: Default::default(),
     });
     (app, db)
+}
+
+/// Like [`server_app`] but with a real engine wired in, for the gated #189
+/// end-to-end classification test.
+async fn server_app_with_engine(engine: Arc<EngineService>) -> Router {
+    let db = connect(&DbConfig::in_memory()).await.unwrap();
+    build_router(AppState {
+        db,
+        mode: Mode::Server,
+        engine_service: Some(engine),
+        provider_store: None,
+        agent: Default::default(),
+    })
+}
+
+/// Path to a real UCI engine, or `None` to skip (mirrors `tests/review.rs`).
+fn engine_path() -> Option<String> {
+    match std::env::var("CHESS_BASE_TEST_ENGINE") {
+        Ok(p) if !p.trim().is_empty() => Some(p),
+        _ => {
+            eprintln!("skipping: set CHESS_BASE_TEST_ENGINE to a UCI engine binary to run");
+            None
+        }
+    }
 }
 
 async fn send(app: &Router, req: Request<Body>) -> (StatusCode, Value) {
@@ -912,6 +939,52 @@ async fn analyse_study_without_an_engine_is_service_unavailable() {
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("No engine configured"), "body was: {text}");
+}
+
+/// `POST /api/studies/{id}/analyse` end-to-end with a real engine (#189): the
+/// response carries both the refreshed, eval-bearing tree and a classification
+/// roll-up (`stats`). Gated on `CHESS_BASE_TEST_ENGINE`.
+#[tokio::test]
+async fn analyse_study_classifies_moves_with_a_real_engine() {
+    let Some(path) = engine_path() else { return };
+    let engine = Arc::new(EngineService::new(EngineConfig::new("test", path), 1));
+    let app = server_app_with_engine(engine).await;
+    let bob = register(&app, "bob").await;
+    let db_id = make_database(&app, &bob).await;
+
+    // 1. a4 is a well-known feeble opening; the engine should not rate it best.
+    let (status, study) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/studies/import",
+            &bob,
+            json!({"database_id": db_id, "name": "Dubious", "pgn": "1. a4 *"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {study}");
+    let study_id = study["id"].as_i64().unwrap();
+
+    let (status, body) = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("/api/studies/{study_id}/analyse"),
+            &bob,
+            json!({"depth": 10}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+
+    // The response carries both the refreshed tree and the classification stats.
+    assert!(body["stats"]["nodes_analysed"].as_u64().unwrap() >= 1);
+    assert!(body["stats"]["summary"]["white"]["accuracy"].is_number());
+
+    let a4 = body["tree"]["nodes"][1].clone();
+    assert_eq!(a4["san"], "a4");
+    assert!(a4["eval"].is_object(), "a4 carries an eval: {a4}");
 }
 
 const STARTPOS: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";

@@ -194,6 +194,22 @@ export interface Study extends StudySummary {
 }
 
 /**
+ * Classification roll-up returned by `POST /api/studies/{id}/analyse` (issue
+ * #189) alongside the refreshed study: how many nodes were classified and the
+ * per-side accuracy/error-count summary (mirrors the game-review `summary`).
+ */
+export interface AnalyseStats {
+  nodes_analysed: number
+  summary: ReviewSummary
+}
+
+/** Response of `POST /api/studies/{id}/analyse`: the refreshed study plus its
+ *  classification roll-up. */
+export interface AnalyseResult extends Study {
+  stats: AnalyseStats
+}
+
+/**
  * Request body for `POST /api/studies/add-line` (issue #173): graft a SAN line
  * from the standard start into a study. `study_id` set ⇒ graft into that study;
  * omitted ⇒ create a new one (`database_id`/`name` both required in that case).
@@ -230,6 +246,8 @@ export type MoveToken =
       comment: string | null
       number: string | null
       depth: number
+      /** Stored engine eval (issue #189), White's perspective; absent when unanalysed. */
+      eval: Eval | null
     }
   | { type: 'open'; depth: number }
   | { type: 'close'; depth: number }

@@ -25,24 +25,38 @@ pub mod merge_danger;
 pub mod merge_danger_route;
 pub mod routes;
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use crate::db::entities::{folders, studies};
-use crate::engine::{EngineService, Limits};
+use crate::engine::{Analysis, EngineService, Limits};
 use crate::features::features_of_fen;
 use crate::games::{export, GameError, GameService};
 use crate::ingest::parse_pgn;
 use crate::pgn_tree::pgn::{self, PgnError};
 use crate::pgn_tree::{lichess, shapes, MoveTree, Shape, TreeError};
 use crate::position::{
-    apply_san, black_to_move, legal_sans, replay, uci_to_san, CastlingMode, PositionError,
-    STARTPOS_FEN,
+    apply_san, legal_sans, replay, uci_to_san, CastlingMode, PositionError, STARTPOS_FEN,
 };
-use crate::review::{review_game, ReviewError};
+use crate::review::classify::{summarize, MoveCost};
+use crate::review::{review_game, ReviewError, ReviewSummary};
 use crate::server::identity::{assert_admin, assert_can_write, scope, CurrentUser};
 
 /// Studies are standard chess; castling rights parse the normal way.
 const MODE: CastlingMode = CastlingMode::Standard;
+
+/// MultiPV lines searched per position for `analyse_study`'s classification
+/// pass (mirrors `review::service::REVIEW_MULTIPV`): the best move plus its
+/// closest rival, enough to classify the played move and spot an "only move".
+const ANALYSE_MULTIPV: u16 = 2;
+
+/// Roll-up returned by [`StudyService::analyse_study`] alongside the refreshed
+/// study (issue #189): how many nodes were classified and the per-side
+/// accuracy / error-count summary ([`crate::review::classify::summarize`]).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AnalyseStats {
+    pub nodes_analysed: usize,
+    pub summary: ReviewSummary,
+}
 
 /// A move to append to a study node, given either as SAN or as UCI long
 /// algebraic (`g1f3`). UCI sidesteps SAN's strict disambiguation — e.g. a
@@ -512,37 +526,54 @@ impl StudyService {
     }
 
     /// Walk the engine over every move-bearing node of a study the caller may
-    /// write and pin a White-perspective `[%eval]` to each (issue #162), so an
-    /// export carries the evals Lichess renders. **Eval-only**: comments / NAGs /
-    /// shapes are never touched. Terminal positions (checkmate / stalemate) are
-    /// skipped — there is no move to search from them. Returns the refreshed row.
+    /// write: search the position before **and** after each move (MultiPV=2,
+    /// mirroring `review::service::review_game`) to pin a White-perspective
+    /// `[%eval]` *and* classify the move (`review::classify`), replacing any
+    /// prior move-quality NAG ($1..$6) with the fresh one — comments, shapes and
+    /// positional NAGs are never touched (issue #189, extends #162). A node's
+    /// before-position is its parent's after-position, so overlapping search
+    /// windows are cached by FEN: a linear line costs one search per node, not
+    /// two. Terminal after-positions (checkmate/stalemate) are classified from
+    /// the move that reached them without a further search. Returns the
+    /// refreshed row plus the roll-up.
     pub async fn analyse_study(
         &self,
         engine: &EngineService,
         user: &CurrentUser,
         id: i32,
         depth: u32,
-    ) -> Result<studies::Model, StudyError> {
+    ) -> Result<(studies::Model, AnalyseStats), StudyError> {
         let study = self.load_writable(user, id).await?;
         let mut tree: MoveTree = serde_json::from_str(&study.tree_json)?;
 
         let limits = Limits::depth(depth).clamped();
-        let options = BTreeMap::new();
-        for (node_id, fen) in analyse::node_fens(&tree)? {
-            if is_terminal(&fen) {
-                continue;
-            }
-            let result = engine
-                .analyse(&fen, &limits, &options)
-                .await
-                .map_err(StudyError::Engine)?;
-            let Some(score) = result.score else { continue };
-            let white_to_move = !black_to_move(&fen, MODE)?;
-            tree.set_eval(node_id, analyse::white_eval(score, white_to_move));
+        let searches = analyse::node_searches(&tree)?;
+
+        let mut cache: HashMap<String, Vec<Analysis>> = HashMap::new();
+        let mut costs: Vec<MoveCost> = Vec::with_capacity(searches.len());
+        for s in &searches {
+            let before = multipv_cached(engine, &mut cache, &s.fen_before, &limits).await?;
+            let after_top = if is_terminal(&s.fen_after) {
+                None
+            } else {
+                multipv_cached(engine, &mut cache, &s.fen_after, &limits)
+                    .await?
+                    .first()
+                    .and_then(|a| a.score)
+            };
+            let (eval, classification, cost) = analyse::classify_search(s, &before, after_top);
+            tree.set_eval(s.node_id, eval);
+            analyse::set_quality_nag(&mut tree, s.node_id, classification.nag());
+            costs.push(cost);
         }
 
         self.persist(study, &tree).await?;
-        self.get(user, id).await
+        let model = self.get(user, id).await?;
+        let stats = AnalyseStats {
+            nodes_analysed: costs.len(),
+            summary: summarize(&costs),
+        };
+        Ok((model, stats))
     }
 
     /// Promote a variation to the mainline (move it to the front of its parent's
@@ -637,6 +668,26 @@ fn is_terminal(fen: &str) -> bool {
     features_of_fen(fen)
         .map(|f| f.legal_move_count == 0)
         .unwrap_or(false)
+}
+
+/// Run (or reuse a cached) MultiPV=2 search at `fen`, so a node's before/after
+/// windows that land on the same position — the common case along a line —
+/// cost one engine call, not two (issue #189).
+async fn multipv_cached(
+    engine: &EngineService,
+    cache: &mut HashMap<String, Vec<Analysis>>,
+    fen: &str,
+    limits: &Limits,
+) -> Result<Vec<Analysis>, StudyError> {
+    if let Some(lines) = cache.get(fen) {
+        return Ok(lines.clone());
+    }
+    let lines = engine
+        .analyse_multi(fen, limits, ANALYSE_MULTIPV)
+        .await
+        .map_err(StudyError::Engine)?;
+    cache.insert(fen.to_string(), lines.clone());
+    Ok(lines)
 }
 
 /// Resolve a [`MoveInput`] to the canonical SAN stored in the tree, validating

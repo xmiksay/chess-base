@@ -18,6 +18,16 @@ pub enum Score {
     Mate { value: i32 },
 }
 
+impl Score {
+    /// Flip a score to the other side's perspective.
+    pub fn negate(self) -> Score {
+        match self {
+            Score::Cp { value } => Score::Cp { value: -value },
+            Score::Mate { value } => Score::Mate { value: -value },
+        }
+    }
+}
+
 /// One `info` line distilled to the fields the UI shows. All optional because an
 /// engine emits partial `info` lines (e.g. `info depth 1 currmove …`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

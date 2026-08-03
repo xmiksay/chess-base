@@ -233,6 +233,7 @@ export function treeTokens(tree: MoveTree | null): MoveToken[] {
       comment: node.comment ?? null,
       number,
       depth,
+      eval: node.eval ?? null,
     })
   }
 

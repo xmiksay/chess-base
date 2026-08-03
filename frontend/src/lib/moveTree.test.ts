@@ -25,7 +25,7 @@ function sampleTree() {
     root: 0,
     nodes: [
       { id: 0, parent: null, san: null, comment: null, nags: [], children: [1] },
-      { id: 1, parent: 0, san: 'e4', comment: null, nags: [], children: [2, 4] },
+      { id: 1, parent: 0, san: 'e4', comment: null, nags: [], eval: { cp: 30 }, children: [2, 4] },
       { id: 2, parent: 1, san: 'e5', comment: null, nags: [], children: [3] },
       { id: 3, parent: 2, san: 'Nf3', comment: null, nags: [], children: [] },
       { id: 4, parent: 1, san: 'c5', comment: 'Sicilian', nags: [5], children: [5] },
@@ -159,6 +159,18 @@ describe('treeTokens', () => {
     )
     expect(c5!.comment).toBe('Sicilian')
     expect(c5!.nags).toEqual([5])
+  })
+
+  it('carries a stored eval on move tokens, null when unanalysed (#189)', () => {
+    const tokens = treeTokens(sampleTree())
+    const e4 = tokens.find(
+      (t): t is Extract<MoveToken, { type: 'move' }> => t.type === 'move' && t.san === 'e4',
+    )
+    const e5 = tokens.find(
+      (t): t is Extract<MoveToken, { type: 'move' }> => t.type === 'move' && t.san === 'e5',
+    )
+    expect(e4!.eval).toEqual({ cp: 30 })
+    expect(e5!.eval).toBeNull()
   })
 
   it('returns an empty stream for a null or move-less tree', () => {

@@ -9,7 +9,7 @@ import { useEngineStore } from '../stores/engine'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { plansToShapes } from '../lib/plansToShapes'
 import { useEnginePrefs } from '../lib/useEnginePrefs'
-import type { EngineLine, Shape } from '../types'
+import type { AnalyseStats, EngineLine, Shape } from '../types'
 import EnginePanel from './EnginePanel.vue'
 
 const engine = useEngineStore()
@@ -18,22 +18,28 @@ const prefs = useEnginePrefs()
 
 const pinError = ref<string | null>(null)
 
-// "Analyse study" bulk pass (#162): walk the engine over every node and fill
-// `[%eval]` so the exported PGN carries evals Lichess renders.
+// "Analyse study" bulk pass (#162, full classification #189): walk the engine
+// over every node, fill `[%eval]` and classify each move (!/?!/?/??).
 const analysing = ref(false)
 const analyseError = ref<string | null>(null)
+const analyseStats = ref<AnalyseStats | null>(null)
 
 async function analyseStudy() {
   if (analysing.value) return
   analyseError.value = null
   analysing.value = true
   try {
-    await editor.analyseStudy()
+    analyseStats.value = await editor.analyseStudy()
   } catch (e) {
     analyseError.value = String((e as Error)?.message ?? e)
   } finally {
     analysing.value = false
   }
+}
+
+/** "xx.x%" accuracy for the stats summary. */
+function pct(n: number): string {
+  return `${n.toFixed(1)}%`
 }
 
 /** Whether this line has a computed plan to pin (a matching `planline` arrived). */
@@ -72,18 +78,18 @@ async function pinLine(line: EngineLine) {
       {{ pinError }}
     </p>
 
-    <!-- Bulk "fill evals" pass (#162): writes [%eval] on every node so the
-         exported PGN carries evals Lichess renders. -->
+    <!-- Bulk classification pass (#162, #189): writes [%eval] and a
+         !/?!/?/?? NAG on every node from the engine. -->
     <div class="space-y-1">
       <button
         type="button"
         data-test="analyse-study"
         class="w-full rounded border border-border px-3 py-1 text-sm hover:bg-surface-2 disabled:opacity-60"
         :disabled="analysing"
-        title="Run the engine over every move and store a White-perspective eval on each node"
+        title="Run the engine over every move: store an eval and classify the move played"
         @click="analyseStudy"
       >
-        {{ analysing ? 'Analysing…' : 'Analyse study (fill evals)' }}
+        {{ analysing ? 'Analysing…' : 'Analyse study' }}
       </button>
       <p
         v-if="analyseError"
@@ -92,6 +98,28 @@ async function pinLine(line: EngineLine) {
       >
         {{ analyseError }}
       </p>
+      <div
+        v-if="analyseStats"
+        class="grid grid-cols-2 gap-2 text-xs"
+        data-test="analyse-stats"
+      >
+        <div
+          v-for="side in (['white', 'black'] as const)"
+          :key="side"
+          class="rounded border border-border p-2"
+          :data-test="`analyse-stats-${side}`"
+        >
+          <p class="mb-1 font-medium capitalize">
+            {{ side }}
+          </p>
+          <p>Accuracy: {{ pct(analyseStats.summary[side].accuracy) }}</p>
+          <p class="text-muted">
+            {{ analyseStats.summary[side].inaccuracies }} ?! ·
+            {{ analyseStats.summary[side].mistakes }} ? ·
+            {{ analyseStats.summary[side].blunders }} ??
+          </p>
+        </div>
+      </div>
     </div>
 
     <!-- Shared eval/PV display, driven by the selected node's position. -->

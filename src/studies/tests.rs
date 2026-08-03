@@ -562,10 +562,11 @@ fn engine_path() -> Option<String> {
     }
 }
 
-/// `analyse_study` fills `[%eval]` on every non-terminal node and leaves the
-/// existing comment / NAG / shapes alone (issue #162). Gated on a real engine.
+/// `analyse_study` fills `[%eval]` on every non-terminal node, classifies each
+/// move, and leaves the existing comment / positional NAG / shapes alone
+/// (issue #162, full classification #189). Gated on a real engine.
 #[tokio::test]
-async fn analyse_study_fills_evals_and_keeps_annotations() {
+async fn analyse_study_classifies_moves_and_keeps_annotations() {
     use crate::engine::{EngineConfig, EngineService};
     use crate::pgn_tree::Shape;
 
@@ -578,8 +579,13 @@ async fn analyse_study_fills_evals_and_keeps_annotations() {
     let e4 = svc.add_move(&alice, study.id, 0, "e4").await.unwrap();
     let e5 = svc.add_move(&alice, study.id, e4, "e5").await.unwrap();
 
-    // Pin a human annotation we expect the eval-only pass to preserve.
+    // Pin a human comment, a positional (non-quality) NAG and a shape we expect
+    // the classification pass to preserve; a prior *quality* NAG ($1 = "!") is
+    // expected to be replaced by whatever the engine actually classifies e4 as.
     svc.annotate(&alice, study.id, e4, Some("Best by test".into()), Some(1))
+        .await
+        .unwrap();
+    svc.annotate(&alice, study.id, e4, None, Some(14)) // $14 = "White has a slight edge"
         .await
         .unwrap();
     let shape = Shape {
@@ -592,10 +598,13 @@ async fn analyse_study_fills_evals_and_keeps_annotations() {
         .unwrap();
 
     let engine = EngineService::new(EngineConfig::new("test", path), 1);
-    svc.analyse_study(&engine, &alice, study.id, 8)
+    let (_, stats) = svc
+        .analyse_study(&engine, &alice, study.id, 8)
         .await
         .unwrap();
     engine.shutdown().await;
+
+    assert_eq!(stats.nodes_analysed, 2);
 
     let tree = tree_of(&svc, &alice, study.id).await;
     // Both non-terminal nodes now carry an eval…
@@ -603,10 +612,27 @@ async fn analyse_study_fills_evals_and_keeps_annotations() {
     assert!(tree.nodes[e5].eval.is_some(), "e5 eval");
     // …the root (no move) does not.
     assert!(tree.nodes[0].eval.is_none(), "root has no eval");
-    // …and the human annotations are untouched.
+    // …the human comment, shape and positional NAG survive…
     assert_eq!(tree.nodes[e4].comment.as_deref(), Some("Best by test"));
-    assert_eq!(tree.nodes[e4].nags, vec![1]);
     assert_eq!(tree.nodes[e4].shapes, vec![shape]);
+    assert!(
+        tree.nodes[e4].nags.contains(&14),
+        "positional NAG kept: {:?}",
+        tree.nodes[e4].nags
+    );
+    // …and each node carries at most one quality glyph ($1..$6).
+    for id in [e4, e5] {
+        let quality: Vec<_> = tree.nodes[id]
+            .nags
+            .iter()
+            .filter(|n| (1..=6).contains(*n))
+            .collect();
+        assert!(
+            quality.len() <= 1,
+            "node {id} nags: {:?}",
+            tree.nodes[id].nags
+        );
+    }
 }
 
 /// Fresh DB with one owned games database holding a single short game; returns
