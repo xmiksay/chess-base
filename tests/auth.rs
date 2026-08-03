@@ -214,11 +214,15 @@ async fn only_admins_mutate_global_resources() {
         id: "admin".into(),
         is_admin: true,
         public: false,
+        read_only: false,
+        global_only: false,
     };
     let plain = CurrentUser {
         id: "bob".into(),
         is_admin: false,
         public: false,
+        read_only: false,
+        global_only: false,
     };
 
     assert!(studies.create(&admin, db_id, "Global", true).await.is_ok());

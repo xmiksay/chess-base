@@ -205,6 +205,13 @@ src/
                    MoveTree (move_tree_from, carries start_fen) → create_with_tree;
                    backs the data tools' `save_as` (no LLM, no PGN round-trip)  ← unit-tested
   auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
+  service_tokens/  ServiceTokenService (#193, ADR-0044): admin-only mint/list/
+                   revoke over service_tokens — the only way to create a
+                   scoped ("full" | "read_only" | "global_read") token besides
+                   the auto-seeded local one; POST/GET/DELETE
+                   /api/admin/service-tokens (routes/service_tokens.rs) and
+                   `chess-base service-token create|list|revoke` CLI both call
+                   it ← unit-tested
   server/          Axum app: routes, state, embedded SPA, browser launch,
                    MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016;
                    anonymous public tier #192/ADR-0043 — a server-mode request
@@ -215,7 +222,28 @@ src/
                    db_position_report/db_reference_games/db_export_games/
                    search_headers/echo; no engine, no studies, no writes;
                    local mode and an invalid/expired credential are unchanged
-                   — both still 401).
+                   — both still 401; consent screen + CSRF, refresh-token
+                   reuse detection, scoped service tokens #193/ADR-0044:
+                   CurrentUser gains read_only/global_only axes (identity.rs,
+                   compose with `public`) — a read_only caller hard-denies on
+                   assert_admin/assert_can_write and on any MCP tool
+                   ai::agent::requires_approval flags, global_only drops
+                   scope()'s own-rows arm; GET /oauth/authorize no longer
+                   auto-consents — a first-time (user, client) pair is parked
+                   in oauth_consent_requests and redirected to
+                   GET /oauth/consent (routes/oauth_consent.rs, hand-rolled
+                   HTML, client_name HTML-escaped since it's attacker-
+                   controlled from POST /oauth/register), whose csrf_token is
+                   the CSRF defense; approving records oauth_consents so a
+                   later authorize for the same pair skips the screen;
+                   POST /oauth/register is now auth-gated; refresh_token grant
+                   rotation revokes the old row in place instead of deleting
+                   it (oauth_tokens.family_id/revoked) — replaying an already-
+                   rotated-away refresh token revokes the whole family
+                   (reuse detection), and a family has a hard 30-day absolute
+                   lifetime regardless of rotation count; shared OAuth helpers
+                   split into routes/oauth_shared.rs to keep oauth.rs under
+                   the file-size cap).
                    routes/mcp/ tools (40, #125 then #183/ADR-0036 — symmetrical to
                    the HTTP API, one carve-out list in symmetry.rs): engine_analyse +
                    analyse_position/analyse_game; study_tools.rs study_list/create/

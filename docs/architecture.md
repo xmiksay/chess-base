@@ -211,23 +211,28 @@ CLI flags; resolved into `AppConfig` (config) → `AppState` (runtime). The bina
 also exposes an `import-pgn <FILE>` subcommand that runs the `collectors::bulk`
 master importer and exits without serving (issue #4).
 
-## Request identity (ADR 0011, anonymous tier ADR 0043)
+## Request identity (ADR 0011, anonymous tier ADR 0043, scoped tokens ADR 0044)
 
-`server/identity.rs` defines `CurrentUser { id, is_admin, public }` — the one
-identity type every service takes — produced by an Axum extractor. Resolution
-is the only mode-dependent part and lives in `AppState::resolve_current_user`:
-local mode is always the implicit admin (`local-admin`); server mode resolves
-the session token through `auth::AuthService` (#14, ADR 0015) — `/api/*` routes
-are unaffected by the anonymous tier below, so a missing/invalid credential
-still `401`s there exactly as before. Three shared helpers enforce the
-ownership model (ADR 0007) in one place: `scope(owner_col, user)` (the
-`owner == caller OR owner IS NULL` read filter — for the anonymous public
-caller, `owner IS NULL` only), `assert_admin(user)` and `assert_can_write` (both
-hard-deny a public caller before their normal logic runs). The `/api/whoami`
-route exposes the resolved caller to the SPA. `CurrentUser::anonymous()` (issue
-#192) is the public identity minted by `authenticate_mcp` for a credential-less
-**server-mode** `/mcp` request — see "MCP endpoint" below; it never appears on
-the HTTP API.
+`server/identity.rs` defines `CurrentUser { id, is_admin, public, read_only,
+global_only }` — the one identity type every service takes — produced by an
+Axum extractor. Resolution is the only mode-dependent part and lives in
+`AppState::resolve_current_user`: local mode is always the implicit admin
+(`local-admin`); server mode resolves the session token through
+`auth::AuthService` (#14, ADR 0015) — `/api/*` routes are unaffected by the
+anonymous tier below, so a missing/invalid credential still `401`s there
+exactly as before. `read_only`/`global_only` (ADR-0044, issue #193) are
+independent axes only ever set true by MCP credential resolution (a scoped
+service/OAuth-derived caller never appears on the HTTP API): `read_only` means
+this caller may never write regardless of ownership; `global_only` drops
+`scope()`'s own-rows arm the same way `public` does. Three shared helpers
+enforce the ownership model (ADR 0007) in one place: `scope(owner_col, user)`
+(the `owner == caller OR owner IS NULL` read filter — `owner IS NULL` only when
+`public || global_only`), `assert_admin(user)` and `assert_can_write` (both
+hard-deny when `public || read_only`, before their normal logic runs). The
+`/api/whoami` route exposes the resolved caller to the SPA. `CurrentUser::anonymous()`
+(issue #192) is the public identity minted by `authenticate_mcp` for a
+credential-less **server-mode** `/mcp` request — see "MCP endpoint" below; it
+never appears on the HTTP API.
 
 ## Server-mode auth (ADR 0015)
 
@@ -367,19 +372,62 @@ mode is unchanged**: a request with no credential still `401`s, since the
 single implicit user has no "own data" to distinguish from "everyone's data" —
 the printed local service token remains the only door in.
 
-## MCP auth: OAuth 2.1 + service token (ADR 0016)
+## MCP auth: OAuth 2.1 + service token (ADR 0016, hardened ADR-0044)
 
 `server/routes/oauth.rs` is the OAuth 2.1 authorization server and discovery
 metadata for `/mcp`. claude.ai self-onboards: dynamic client registration
-(`POST /oauth/register`, RFC 7591, public/PKCE-only), the authorization-code grant
+(`POST /oauth/register`, RFC 7591, public/PKCE-only, now **auth-gated** — the
+registering caller must be logged in), the authorization-code grant
 (`GET /oauth/authorize` → `POST /oauth/token`, PKCE **S256**) and the
 `refresh_token` grant, with `/.well-known/oauth-protected-resource` (RFC 9728) and
 `/.well-known/oauth-authorization-server` (RFC 8414) built from the request host.
-`authorize` requires a logged-in server-mode session and **auto-consents** (an
-anonymous request bounces to the SPA login). Local mode skips OAuth: it seeds and
-prints a static **service token** at startup (the `claude mcp add … --header
-"Authorization: Bearer …"` line), reused across restarts. Both grants resolve to a
-`CurrentUser`; authorization is by resource ownership (ADR 0007), not OAuth scopes.
+Local mode skips OAuth: it seeds and prints a static **service token** at startup
+(the `claude mcp add … --header "Authorization: Bearer …"` line), reused across
+restarts. Both grants resolve to a `CurrentUser`; authorization is by resource
+ownership (ADR 0007), not OAuth scopes. Shared helpers (the RFC 6749 JSON error
+envelope, the percent-encoder, session resolution) live in `oauth_shared.rs` so
+neither `oauth.rs` nor `oauth_consent.rs` duplicates them, and both stay under
+the file-size cap.
+
+**Consent screen + CSRF (ADR-0044, issue #193).** `authorize` no longer
+auto-consents. A logged-in user hitting it for a client they've never approved
+is redirected to `GET /oauth/consent?csrf_token=…` (`routes/oauth_consent.rs`)
+instead of getting a code immediately — a pending `oauth_consent_requests` row
+(10-minute TTL, single-use) carries the request's parameters, and its
+`csrf_token` PK doubles as the anti-CSRF token: it's delivered only inside the
+rendered consent page (a minimal hand-rolled HTML form, no template engine),
+so a cross-site `POST /oauth/authorize` navigation forced onto the victim
+cannot learn it (same-origin policy) and therefore cannot forge the
+`POST /oauth/consent` approval. The requesting client's name is HTML-escaped
+before rendering (`client_name` is attacker-controlled free text from
+`POST /oauth/register`). Approving records an `oauth_consents` row
+`(user_id, client_id)` so a later authorization for the same pair skips the
+screen; denying (or any decision other than `"approve"`) redirects back with
+`?error=access_denied` (RFC 6749 §4.1.2.1). The consent-request row is deleted
+the moment the POST handler finds it, before the decision is even inspected, so
+a replay of that exact POST always 400s afterward.
+
+**Refresh-token reuse detection (ADR-0044).** `oauth_tokens` carries
+`family_id` (shared across every row descended from one authorization-code
+exchange) and `revoked`. Rotation (`rotate_oauth_tokens`) marks the old row
+`revoked = true` **in place** — never deletes it — then inserts a fresh pair
+reusing the same `family_id`. `refresh` rejects a `revoked` row's refresh token
+as **reuse** and revokes the entire family (so a stolen-and-replayed token
+can't keep racing the legitimate client), and independently caps a family's
+lifetime at `ABSOLUTE_REFRESH_TTL_DAYS` (30) from its oldest row's
+`created_at`, regardless of how many times it has legitimately rotated.
+
+**Scoped service tokens (ADR-0044).** `service_tokens` carries `scope`
+(`"full"` | `"read_only"` | `"global_read"`) and a non-secret `id` (the bearer
+secret stays `token`, the PK). `CurrentUser` gains `read_only`/`global_only`
+axes composing with ADR-0043's `public`: `read_only` hard-denies
+`assert_admin`/`assert_can_write` and any MCP tool `ai::agent::requires_approval`
+flags as mutating (`tools/call` rejects it, `tools/list` filters it out);
+`global_only` drops `scope()`'s own-rows arm the same way `public` already
+does. `service_tokens::ServiceTokenService` (admin-gated create/list/revoke)
+backs `POST`/`GET`/`DELETE /api/admin/service-tokens` and the
+`chess-base service-token create|list|revoke` CLI — the only ways to mint a
+scoped token besides the auto-seeded local one.
 
 ## Engine analysis (ADR 0012)
 
@@ -654,19 +702,34 @@ the key never reaches the SPA either way.
   `password_hash` is an Argon2 PHC string.
 - `sessions(token, user_id, created_at, expires_at)` — opaque bearer/cookie tokens
   with a hard expiry; `user_id` FKs `users.id` (cascade delete). Indexed on `user_id`.
-- `service_tokens(token, owner_id, is_admin, label, created_at, expires_at?)` —
-  static MCP bearers (ADR 0016): the local-mode printed token and admin-issued
-  server tokens. `owner_id` lands in the ownership `scope`; `is_admin` carries the
-  role, so a token resolves to a `CurrentUser` without a `users` lookup.
+- `service_tokens(token, id, owner_id, is_admin, scope, label, created_at,
+  expires_at?)` — static MCP bearers (ADR 0016, scoped ADR-0044): the
+  local-mode printed token and admin-issued server tokens. `owner_id` lands in
+  the ownership `scope`; `is_admin` carries the role, so a token resolves to a
+  `CurrentUser` without a `users` lookup. `scope` (`"full"` | `"read_only"` |
+  `"global_read"`, default `"full"`) maps onto `CurrentUser`'s
+  `read_only`/`global_only` axes; `id` is a non-secret reference id for admin
+  list/revoke — `token` stays the bearer secret/PK and is never re-displayed.
 - `oauth_clients(client_id, client_name, redirect_uris, created_at)` — public,
-  PKCE-only OAuth clients from dynamic registration (RFC 7591). `redirect_uris` is
-  a JSON array.
+  PKCE-only OAuth clients from dynamic registration (RFC 7591, now auth-gated,
+  ADR-0044). `redirect_uris` is a JSON array.
 - `oauth_codes(code, client_id, user_id, redirect_uri, code_challenge,
   code_challenge_method, scope, expires_at, used)` — short-lived, single-use
   authorization codes.
-- `oauth_tokens(access_token, refresh_token, client_id, user_id, scope, created_at,
-  expires_at)` — issued OAuth pairs; the access token is what `authenticate_mcp`
-  checks, the refresh token mints a fresh pair (both rotate on refresh).
+- `oauth_tokens(access_token, refresh_token, client_id, user_id, scope,
+  family_id, revoked, created_at, expires_at)` — issued OAuth pairs; the
+  access token is what `authenticate_mcp` checks, the refresh token mints a
+  fresh pair. Rotation (ADR-0044) marks the old row `revoked` in place instead
+  of deleting it — `family_id` groups every row descended from one code
+  exchange, so a revoked row's refresh token being replayed is detected as
+  reuse and the whole family is revoked.
+- `oauth_consents(user_id, client_id, created_at)` — composite PK — a
+  remembered consent approval (ADR-0044): a later `GET /oauth/authorize` for
+  the same pair skips the consent screen.
+- `oauth_consent_requests(csrf_token, user_id, client_id, redirect_uri,
+  code_challenge, code_challenge_method, scope, state?, expires_at)` —
+  single-use, 10-minute pending-consent record (ADR-0044); `csrf_token` is both
+  its PK and the anti-CSRF token bound to the request.
 - `llm_providers(id, owner_id?, name, wire, base_url?, api_key, model, is_default)`
   — per-user LLM providers (#20, per-user since #198/ADR-0040): `owner_id IS NULL`
   ⇒ an admin-managed global row every user sees; `wire` is the protocol
@@ -698,7 +761,10 @@ extends `llm_providers` with `owner_id`/`wire`/`base_url` (unique index moves to
 `(owner_id, name)`) and adds `agent_grants`/`agent_events`/`agent_sessions`;
 `m0009_sync_cursor_lifecycle` (#197, ADR-0020 update) adds `sync_cursors.username`/
 `last_synced_at`/`last_imported`/`last_duplicates` and moves its unique index to
-`(database_id, source, username)`.
+`(database_id, source, username)`; `m0010_oauth_hardening` (#193, ADR-0044) adds
+`service_tokens.scope`/`id` (backfilled from `token`), `oauth_tokens.family_id`
+(backfilled from `access_token`)/`revoked`, and the two new tables
+`oauth_consents`/`oauth_consent_requests`.
 All run on both SQLite and Postgres.
 
 ### Position search

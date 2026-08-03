@@ -49,3 +49,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0041 | "Clear arrows" targets the live engine overlays, not hand-drawn shapes |
 | 0042 | Generated plan/threat arrows get clear semantics + a bulk clear |
 | 0043 | Anonymous public MCP tier: data reads on global databases only |
+| 0044 | OAuth consent screen + CSRF, refresh-token reuse detection, scoped service tokens |

@@ -12,6 +12,7 @@ mod m0006_assistant;
 mod m0007_folders;
 mod m0008_agent_engine;
 mod m0009_sync_cursor_lifecycle;
+mod m0010_oauth_hardening;
 
 pub struct Migrator;
 
@@ -28,6 +29,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0007_folders::Migration),
             Box::new(m0008_agent_engine::Migration),
             Box::new(m0009_sync_cursor_lifecycle::Migration),
+            Box::new(m0010_oauth_hardening::Migration),
         ]
     }
 }
@@ -40,14 +42,16 @@ mod tests {
     use sea_orm::{ActiveModelTrait, ConnectionTrait, Set};
     use sea_orm_migration::MigratorTrait;
 
-    /// The alter-heavy migrations (m0007 folders, m0008 agent engine) must
-    /// reverse and re-apply cleanly on SQLite — the ALTER-per-statement /
-    /// index-before-column pitfalls live there.
+    /// The alter-heavy migrations (m0008 agent engine, m0009 sync cursor
+    /// lifecycle, m0010 oauth hardening) must reverse and re-apply cleanly on
+    /// SQLite — the ALTER-per-statement / index-before-column pitfalls live
+    /// there.
     #[tokio::test]
     async fn latest_migrations_reverse_and_reapply() {
         let conn = connect(&DbConfig::in_memory()).await.unwrap();
-        // `connect` already migrated up; reverse m0008 + m0007 and re-apply.
-        Migrator::down(&conn, Some(2)).await.unwrap();
+        // `connect` already migrated up; reverse m0010 + m0009 + m0008 and
+        // re-apply.
+        Migrator::down(&conn, Some(3)).await.unwrap();
         Migrator::up(&conn, None).await.unwrap();
     }
 

@@ -64,6 +64,8 @@ impl BridgedTool {
                     id: row.id,
                     is_admin: row.is_admin,
                     public: false,
+                    read_only: false,
+                    global_only: false,
                 })
             }
         }

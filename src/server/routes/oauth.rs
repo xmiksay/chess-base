@@ -1,12 +1,20 @@
 //! OAuth 2.1 authorization server + resource metadata for the `/mcp` endpoint
-//! (ADR-0016). Public-client, PKCE-only: claude.ai self-onboards via dynamic
-//! client registration (RFC 7591), runs the authorization-code grant against the
-//! logged-in user's session, and refreshes with the refresh-token grant. The
-//! resolved access token is what [`authenticate_mcp`] checks on every call.
+//! (ADR-0016, hardened in ADR-0044). Public-client, PKCE-only: claude.ai
+//! self-onboards via dynamic client registration (RFC 7591, now auth-gated —
+//! the registering caller must be logged in), runs the authorization-code
+//! grant against the logged-in user's session, and refreshes with the
+//! refresh-token grant.
 //!
-//! Consent is implicit: a logged-in user hitting `/oauth/authorize` is taken to
-//! have approved (single-tenant, self-hosted). An anonymous request is bounced to
-//! the SPA login carrying its original URL in `next`.
+//! Consent is explicit (ADR-0044): a logged-in user hitting `/oauth/authorize`
+//! for a client they haven't approved before is routed through a consent
+//! screen (`oauth_consent`) rather than a code being minted silently; a
+//! remembered approval (`oauth_consents`) skips the screen on later
+//! authorizations. An anonymous request is still bounced to the SPA login
+//! carrying its original URL in `next`.
+//!
+//! Refresh tokens rotate on every use and carry a `family_id` shared across
+//! rotations; replaying an already-rotated-away refresh token is reuse and
+//! revokes the whole family (`refresh`).
 //!
 //! [`authenticate_mcp`]: crate::server::auth::authenticate_mcp
 
@@ -19,24 +27,35 @@ use axum::{
 };
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder,
+    Set,
 };
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::db::entities::{oauth_clients, oauth_codes, oauth_tokens};
-use crate::server::auth::{base_url, issue_oauth_tokens, new_token, verify_pkce_s256};
-use crate::server::config::Mode;
+use crate::db::entities::{
+    oauth_clients, oauth_codes, oauth_consent_requests, oauth_consents, oauth_tokens,
+};
+use crate::server::auth::{
+    base_url, issue_oauth_tokens, new_token, rotate_oauth_tokens, verify_pkce_s256,
+    ABSOLUTE_REFRESH_TTL_DAYS,
+};
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 
+use super::oauth_consent;
+use super::oauth_shared::{current_user, encode, registered_redirect, token_response, OAuthError};
+
 /// Authorization-code lifetime — short, single-use.
 const CODE_TTL_SECS: i64 = 600;
+/// Pending-consent-request lifetime — short, single-use (ADR-0044).
+const CONSENT_REQUEST_TTL_SECS: i64 = 600;
 /// Scope advertised + granted. Authorization is by resource ownership, not by
 /// granular OAuth scopes, so a single coarse scope suffices.
 const SCOPE: &str = "chess";
 
-/// Mount the well-known metadata + OAuth endpoints.
+/// Mount the well-known metadata + OAuth endpoints, plus the consent screen
+/// (ADR-0044).
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route(
@@ -50,7 +69,8 @@ pub fn router(state: AppState) -> Router {
         .route("/oauth/register", post(register_client))
         .route("/oauth/authorize", get(authorize))
         .route("/oauth/token", post(token))
-        .with_state(state)
+        .with_state(state.clone())
+        .merge(oauth_consent::router(state))
 }
 
 // --- Discovery metadata --------------------------------------------------
@@ -94,8 +114,14 @@ struct RegisterRequest {
 }
 
 /// POST /oauth/register — register a public client with its redirect URIs.
+/// Requires an authenticated caller (ADR-0044): an anonymous/unauthenticated
+/// request `401`s via the [`CurrentUser`] extractor before a client is ever
+/// registered. Local mode still works zero-config, since `CurrentUser` there
+/// is always the implicit admin. The registered client itself has no owner
+/// column — this is purely an auth gate on the registration endpoint.
 async fn register_client(
     State(state): State<AppState>,
+    _caller: CurrentUser,
     Json(req): Json<RegisterRequest>,
 ) -> Result<Response, OAuthError> {
     if req.redirect_uris.is_empty() {
@@ -144,7 +170,9 @@ struct AuthorizeQuery {
 }
 
 /// GET /oauth/authorize — validate the request, ensure the user is logged in
-/// (else bounce to login), then issue a code and redirect back to the client.
+/// (else bounce to login), then either issue a code directly (a remembered
+/// consent, ADR-0044) or park a pending consent request and send the user to
+/// the consent screen.
 async fn authorize(
     State(state): State<AppState>,
     OriginalUri(uri): OriginalUri,
@@ -197,24 +225,90 @@ async fn authorize(
         return Ok(Redirect::to(&format!("/?next={}", encode(next))).into_response());
     };
 
-    let code = new_token();
-    oauth_codes::ActiveModel {
-        code: Set(code.clone()),
+    let scope = q.scope.clone().unwrap_or_else(|| SCOPE.to_string());
+
+    // A prior approval of this exact (user, client) pair skips the consent
+    // screen — this is what keeps refresh/re-auth a one-shot approval rather
+    // than nagging on every sign-in (ADR-0044).
+    let consented = oauth_consents::Entity::find_by_id((user.id.clone(), client_id.to_string()))
+        .one(&state.db)
+        .await?
+        .is_some();
+    if consented {
+        return issue_code_and_redirect(
+            &state.db,
+            client_id,
+            &user.id,
+            redirect_uri,
+            challenge,
+            method,
+            &scope,
+            q.state.as_deref(),
+        )
+        .await;
+    }
+
+    // First time this user is asked about this client: park the request and
+    // send them to the consent screen. `csrf_token` is only ever delivered
+    // inside that rendered page, so it is what makes the screen's POST
+    // forgery-proof.
+    let csrf_token = new_token();
+    oauth_consent_requests::ActiveModel {
+        csrf_token: Set(csrf_token.clone()),
+        user_id: Set(user.id.clone()),
         client_id: Set(client_id.to_string()),
-        user_id: Set(user.id),
         redirect_uri: Set(redirect_uri.to_string()),
         code_challenge: Set(challenge.to_string()),
         code_challenge_method: Set(method.to_string()),
-        scope: Set(q.scope.clone().unwrap_or_else(|| SCOPE.to_string())),
-        expires_at: Set(Utc::now().naive_utc() + chrono::Duration::seconds(CODE_TTL_SECS)),
-        used: Set(false),
+        scope: Set(scope),
+        state: Set(q.state.clone()),
+        expires_at: Set(
+            Utc::now().naive_utc() + chrono::Duration::seconds(CONSENT_REQUEST_TTL_SECS)
+        ),
     }
     .insert(&state.db)
     .await?;
 
+    Ok(Redirect::to(&format!(
+        "/oauth/consent?csrf_token={}",
+        encode(&csrf_token)
+    ))
+    .into_response())
+}
+
+/// Mint an authorization code and build the redirect back to the client. The
+/// shared tail of the authorize-with-remembered-consent path and the
+/// consent-screen approve path (ADR-0044) — both end up here so the code
+/// minting logic lives exactly once.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn issue_code_and_redirect(
+    db: &DatabaseConnection,
+    client_id: &str,
+    user_id: &str,
+    redirect_uri: &str,
+    code_challenge: &str,
+    code_challenge_method: &str,
+    scope: &str,
+    state: Option<&str>,
+) -> Result<Response, OAuthError> {
+    let code = new_token();
+    oauth_codes::ActiveModel {
+        code: Set(code.clone()),
+        client_id: Set(client_id.to_string()),
+        user_id: Set(user_id.to_string()),
+        redirect_uri: Set(redirect_uri.to_string()),
+        code_challenge: Set(code_challenge.to_string()),
+        code_challenge_method: Set(code_challenge_method.to_string()),
+        scope: Set(scope.to_string()),
+        expires_at: Set(Utc::now().naive_utc() + chrono::Duration::seconds(CODE_TTL_SECS)),
+        used: Set(false),
+    }
+    .insert(db)
+    .await?;
+
     let sep = if redirect_uri.contains('?') { '&' } else { '?' };
     let mut target = format!("{redirect_uri}{sep}code={}", encode(&code));
-    if let Some(st) = q.state.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(st) = state.filter(|s| !s.is_empty()) {
         target.push_str(&format!("&state={}", encode(st)));
     }
     Ok(Redirect::to(&target).into_response())
@@ -297,6 +391,12 @@ async fn exchange_code(db: &DatabaseConnection, req: TokenRequest) -> Result<Res
     Ok(token_response(&access, &refresh, expires_in, &scope))
 }
 
+/// `refresh_token` grant (ADR-0044): rotate on success, but first check for
+/// **reuse** (a revoked row's refresh token being presented again — the row
+/// only becomes revoked once rotation has already moved past it) and the
+/// family's absolute lifetime. Either failure revokes the whole family, so a
+/// stolen-and-replayed refresh token can't keep the session alive by racing
+/// the legitimate client.
 async fn refresh(db: &DatabaseConnection, req: TokenRequest) -> Result<Response, OAuthError> {
     let refresh_token = req
         .refresh_token
@@ -309,124 +409,43 @@ async fn refresh(db: &DatabaseConnection, req: TokenRequest) -> Result<Response,
         .await?
         .ok_or_else(|| OAuthError::bad("invalid_grant", "unknown refresh token"))?;
 
-    let client_id = row.client_id.clone();
-    let user_id = row.user_id.clone();
-    let scope = row.scope.clone();
-    // Rotate: drop the old pair, mint a fresh one.
-    oauth_tokens::Entity::delete_by_id(row.access_token.clone())
-        .exec(db)
+    if row.revoked {
+        revoke_family(db, &row.family_id).await?;
+        return Err(OAuthError::bad(
+            "invalid_grant",
+            "refresh token reuse detected; the authorization has been revoked",
+        ));
+    }
+
+    let oldest = oauth_tokens::Entity::find()
+        .filter(oauth_tokens::Column::FamilyId.eq(row.family_id.clone()))
+        .order_by_asc(oauth_tokens::Column::CreatedAt)
+        .one(db)
         .await?;
-    let (access, new_refresh, expires_in) =
-        issue_oauth_tokens(db, &client_id, &user_id, &scope).await?;
+    if let Some(oldest) = oldest {
+        let age = Utc::now().naive_utc() - oldest.created_at;
+        if age > chrono::Duration::days(ABSOLUTE_REFRESH_TTL_DAYS) {
+            revoke_family(db, &row.family_id).await?;
+            return Err(OAuthError::bad("invalid_grant", "refresh token expired"));
+        }
+    }
+
+    let scope = row.scope.clone();
+    let (access, new_refresh, expires_in) = rotate_oauth_tokens(db, &row).await?;
     Ok(token_response(&access, &new_refresh, expires_in, &scope))
 }
 
-/// Build the RFC 6749 token response body.
-fn token_response(access: &str, refresh: &str, expires_in: i64, scope: &str) -> Response {
-    Json(json!({
-        "access_token": access,
-        "token_type": "Bearer",
-        "expires_in": expires_in,
-        "refresh_token": refresh,
-        "scope": scope,
-    }))
-    .into_response()
-}
-
-// --- Helpers -------------------------------------------------------------
-
-/// Resolve the logged-in user from the request (server-mode session/Bearer;
-/// local mode is always the implicit admin). `None` ⇒ anonymous.
-async fn current_user(state: &AppState, headers: &HeaderMap) -> Option<CurrentUser> {
-    match state.mode {
-        Mode::Local => Some(CurrentUser::local_admin()),
-        Mode::Server => {
-            let token = crate::auth::token_from_headers(headers)?;
-            crate::auth::AuthService::new(state.db.clone())
-                .authenticate(&token)
-                .await
-                .ok()
-        }
+/// Revoke every row sharing `family_id` — reuse detected, or the family's
+/// absolute lifetime elapsed (ADR-0044).
+async fn revoke_family(db: &DatabaseConnection, family_id: &str) -> Result<(), DbErr> {
+    let rows = oauth_tokens::Entity::find()
+        .filter(oauth_tokens::Column::FamilyId.eq(family_id))
+        .all(db)
+        .await?;
+    for row in rows {
+        let mut active: oauth_tokens::ActiveModel = row.into();
+        active.revoked = Set(true);
+        active.update(db).await?;
     }
-}
-
-/// Whether `uri` is one of the client's registered redirect URIs.
-fn registered_redirect(client: &oauth_clients::Model, uri: &str) -> bool {
-    serde_json::from_str::<Vec<String>>(&client.redirect_uris)
-        .map(|uris| uris.iter().any(|u| u == uri))
-        .unwrap_or(false)
-}
-
-/// Percent-encode a string for use in a URL query component (RFC 3986 unreserved
-/// set passes through). Dependency-free; used for `code`/`state`/`next`.
-fn encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-/// An OAuth error response (RFC 6749 §5.2). `bad` ⇒ `400` with the error code;
-/// a database failure ⇒ `500` without detail.
-enum OAuthError {
-    Bad(&'static str, String),
-    Server,
-}
-
-impl OAuthError {
-    fn bad(error: &'static str, description: impl Into<String>) -> Self {
-        OAuthError::Bad(error, description.into())
-    }
-}
-
-impl From<DbErr> for OAuthError {
-    fn from(_: DbErr) -> Self {
-        OAuthError::Server
-    }
-}
-
-impl IntoResponse for OAuthError {
-    fn into_response(self) -> Response {
-        match self {
-            OAuthError::Bad(error, description) => (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": error, "error_description": description })),
-            )
-                .into_response(),
-            OAuthError::Server => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "server_error" })),
-            )
-                .into_response(),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn encode_passes_unreserved_and_escapes_the_rest() {
-        assert_eq!(encode("aZ09-_.~"), "aZ09-_.~");
-        assert_eq!(encode("a b/c?"), "a%20b%2Fc%3F");
-    }
-
-    #[test]
-    fn registered_redirect_matches_only_listed_uris() {
-        let client = oauth_clients::Model {
-            client_id: "c".into(),
-            client_name: "n".into(),
-            redirect_uris: r#"["https://a/cb","https://b/cb"]"#.into(),
-            created_at: Utc::now().naive_utc(),
-        };
-        assert!(registered_redirect(&client, "https://a/cb"));
-        assert!(!registered_redirect(&client, "https://evil/cb"));
-    }
+    Ok(())
 }

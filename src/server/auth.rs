@@ -1,18 +1,28 @@
-//! MCP authentication (ADR-0016, anonymous tier ADR-0043): resolve the caller
-//! behind a `/mcp` request and mint the bearer challenge on a miss.
+//! MCP authentication (ADR-0016, anonymous tier ADR-0043, consent/reuse-
+//! detection/scoped-tokens ADR-0044): resolve the caller behind a `/mcp`
+//! request and mint the bearer challenge on a miss.
 //!
 //! A request carries `Authorization: Bearer <token>`. [`authenticate_mcp`] tries
 //! an OAuth 2.1 access token first (server-mode, the claude.ai self-onboarding
 //! path) then falls back to a static **service token** (the local-mode printed
-//! token, or an admin-issued server one). Either resolves to the one
-//! [`CurrentUser`] every service scopes against. A *present but invalid/expired*
-//! credential still gets a `401` with `WWW-Authenticate: Bearer
-//! resource_metadata="…"`, the discovery hook OAuth-aware clients follow to the
-//! authorization server. In **server mode**, a request with **no** credential at
-//! all instead mints [`CurrentUser::anonymous`] (ADR-0043: data reads on global
-//! databases only — the dispatch layer enforces the tool allowlist). Local mode
-//! is unchanged: no credential still 401s, since the printed local service token
-//! is the only way in.
+//! token, or an admin-issued server one, now with a `scope` — full/read-only/
+//! global-read, ADR-0044). Either resolves to the one [`CurrentUser`] every
+//! service scopes against. A *present but invalid/expired/revoked* credential
+//! still gets a `401` with `WWW-Authenticate: Bearer resource_metadata="…"`,
+//! the discovery hook OAuth-aware clients follow to the authorization server.
+//! In **server mode**, a request with **no** credential at all instead mints
+//! [`CurrentUser::anonymous`] (ADR-0043: data reads on global databases only —
+//! the dispatch layer enforces the tool allowlist). Local mode is unchanged: no
+//! credential still 401s, since the printed local service token is the only way
+//! in.
+//!
+//! Refresh tokens rotate on every use and carry a `family_id`: replaying an
+//! already-rotated-away token revokes the whole family (reuse detection), and a
+//! family has a hard [`ABSOLUTE_REFRESH_TTL_DAYS`] lifetime regardless of how
+//! often it rotates. `/oauth/authorize` no longer mints a code the instant a
+//! user is logged in — a first-time client is routed through a consent screen
+//! (`oauth_consent`) guarded by a single-use CSRF token; a remembered consent
+//! (`oauth_consents`) skips it on subsequent authorizations.
 
 use axum::http::{header, HeaderMap};
 use base64::Engine;
@@ -34,6 +44,11 @@ pub const LOCAL_TOKEN_LABEL: &str = "local";
 
 /// Access-token lifetime: short, since a refresh token mints a fresh one.
 const ACCESS_TOKEN_TTL_SECS: i64 = 3600;
+
+/// Hard ceiling on a refresh-token family's lifetime (ADR-0044), checked
+/// against the family's oldest row's `created_at` regardless of how many times
+/// it has rotated since.
+pub const ABSOLUTE_REFRESH_TTL_DAYS: i64 = 30;
 
 /// A `401` bearer challenge: the `WWW-Authenticate` value pointing an MCP client
 /// at the protected-resource metadata so it can discover OAuth.
@@ -75,14 +90,16 @@ fn challenge(headers: &HeaderMap) -> BearerChallenge {
     }
 }
 
-/// Resolve a live OAuth access token to its user (role read from `users`).
+/// Resolve a live, non-revoked OAuth access token to its user (role read from
+/// `users`). A revoked row (reuse-detection fallout, ADR-0044) is treated the
+/// same as an expired one.
 async fn oauth_token_user(db: &DatabaseConnection, token: &str) -> Option<CurrentUser> {
     let row = oauth_tokens::Entity::find_by_id(token.to_string())
         .one(db)
         .await
         .ok()
         .flatten()?;
-    if row.expires_at <= Utc::now().naive_utc() {
+    if row.revoked || row.expires_at <= Utc::now().naive_utc() {
         return None;
     }
     let user = users::Entity::find_by_id(row.user_id)
@@ -94,11 +111,22 @@ async fn oauth_token_user(db: &DatabaseConnection, token: &str) -> Option<Curren
         id: user.id,
         is_admin: user.is_admin,
         public: false,
+        read_only: false,
+        global_only: false,
     })
 }
 
+/// Service-token scopes (ADR-0044): a row's `scope` column maps onto
+/// [`CurrentUser`]'s `read_only`/`global_only` axes.
+pub const SERVICE_SCOPE_FULL: &str = "full";
+pub const SERVICE_SCOPE_READ_ONLY: &str = "read_only";
+pub const SERVICE_SCOPE_GLOBAL_READ: &str = "global_read";
+
 /// Resolve a static service token to its caller. The role rides on the row, so no
 /// `users` lookup is needed (the local-mode token has no `users` row at all).
+/// `scope` (ADR-0044) maps onto the `read_only`/`global_only` axes; an
+/// unrecognized/legacy value defaults to full access, matching pre-ADR-0044
+/// behavior.
 async fn service_token_user(db: &DatabaseConnection, token: &str) -> Option<CurrentUser> {
     let row = service_tokens::Entity::find_by_id(token.to_string())
         .one(db)
@@ -110,10 +138,17 @@ async fn service_token_user(db: &DatabaseConnection, token: &str) -> Option<Curr
             return None;
         }
     }
+    let (read_only, global_only) = match row.scope.as_str() {
+        SERVICE_SCOPE_READ_ONLY => (true, false),
+        SERVICE_SCOPE_GLOBAL_READ => (true, true),
+        _ => (false, false),
+    };
     Some(CurrentUser {
         id: row.owner_id,
         is_admin: row.is_admin,
         public: false,
+        read_only,
+        global_only,
     })
 }
 
@@ -131,8 +166,10 @@ pub async fn ensure_local_service_token(db: &DatabaseConnection) -> Result<Strin
     let token = new_token();
     service_tokens::ActiveModel {
         token: Set(token.clone()),
+        id: Set(token.clone()),
         owner_id: Set(LOCAL_ADMIN_ID.to_string()),
         is_admin: Set(true),
+        scope: Set(SERVICE_SCOPE_FULL.to_string()),
         label: Set(LOCAL_TOKEN_LABEL.to_string()),
         created_at: Set(Utc::now().naive_utc()),
         expires_at: Set(None),
@@ -142,7 +179,10 @@ pub async fn ensure_local_service_token(db: &DatabaseConnection) -> Result<Strin
     Ok(token)
 }
 
-/// Issue a fresh OAuth access/refresh pair for a user and persist it. Returns the
+/// Issue a fresh OAuth access/refresh pair for a user's first grant (code
+/// exchange) and persist it. Starts a fresh token *family* (ADR-0044) — later
+/// rotations of this pair go through [`rotate_oauth_tokens`] instead, which
+/// keeps the family id and revokes-in-place rather than deleting. Returns the
 /// `(access_token, refresh_token, expires_in_secs)`.
 pub async fn issue_oauth_tokens(
     db: &DatabaseConnection,
@@ -152,6 +192,7 @@ pub async fn issue_oauth_tokens(
 ) -> Result<(String, String, i64), DbErr> {
     let access_token = new_token();
     let refresh_token = new_token();
+    let family_id = new_token();
     let now = Utc::now().naive_utc();
     oauth_tokens::ActiveModel {
         access_token: Set(access_token.clone()),
@@ -159,6 +200,40 @@ pub async fn issue_oauth_tokens(
         client_id: Set(client_id.to_string()),
         user_id: Set(user_id.to_string()),
         scope: Set(scope.to_string()),
+        family_id: Set(family_id),
+        revoked: Set(false),
+        created_at: Set(now),
+        expires_at: Set(now + chrono::Duration::seconds(ACCESS_TOKEN_TTL_SECS)),
+    }
+    .insert(db)
+    .await?;
+    Ok((access_token, refresh_token, ACCESS_TOKEN_TTL_SECS))
+}
+
+/// Rotate a refresh grant (ADR-0044): mark `old` revoked **in place** — never
+/// delete it, since the revoked row is exactly what makes a later replay of
+/// `old`'s refresh token detectable as reuse — then insert a fresh pair
+/// reusing `old`'s `family_id`/`client_id`/`user_id`/`scope`. Returns the new
+/// `(access_token, refresh_token, expires_in_secs)`.
+pub async fn rotate_oauth_tokens(
+    db: &DatabaseConnection,
+    old: &oauth_tokens::Model,
+) -> Result<(String, String, i64), DbErr> {
+    let mut active: oauth_tokens::ActiveModel = old.clone().into();
+    active.revoked = Set(true);
+    active.update(db).await?;
+
+    let access_token = new_token();
+    let refresh_token = new_token();
+    let now = Utc::now().naive_utc();
+    oauth_tokens::ActiveModel {
+        access_token: Set(access_token.clone()),
+        refresh_token: Set(refresh_token.clone()),
+        client_id: Set(old.client_id.clone()),
+        user_id: Set(old.user_id.clone()),
+        scope: Set(old.scope.clone()),
+        family_id: Set(old.family_id.clone()),
+        revoked: Set(false),
         created_at: Set(now),
         expires_at: Set(now + chrono::Duration::seconds(ACCESS_TOKEN_TTL_SECS)),
     }
