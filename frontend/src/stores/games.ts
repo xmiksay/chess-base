@@ -161,6 +161,19 @@ export const useGamesStore = defineStore('games', () => {
     await fetchPage()
   }
 
+  /**
+   * Toggle the open game's public sharing flag (issue #213). Stores the
+   * refreshed game from the response (and syncs the list row so the state
+   * survives paging). Throws on failure so the caller can surface a 403.
+   */
+  async function setPublic(pub: boolean) {
+    if (!openGame.value) return
+    const game = await api.games.setPublic(openGame.value.id, pub)
+    openGame.value = game
+    const listRow = games.value.find((g) => g.id === game.id)
+    if (listRow) listRow.public = game.public
+  }
+
   /** Node ids along the mainline; the array index is the ply (0 = start). */
   function mainlinePath(): number[] {
     return mainlinePathOf(board.tree.value)
@@ -230,6 +243,7 @@ export const useGamesStore = defineStore('games', () => {
     setSort,
     open,
     remove,
+    setPublic,
     mainlinePath,
     plyOf,
     nodeAtPly,

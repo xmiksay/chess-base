@@ -252,6 +252,16 @@ non-public studies stay off the anonymous tier, ADR-0043). The annotated game
 export (`?annotated=true`, engine-backed) is denied anonymously with `401`.
 Every other route keeps the plain `CurrentUser` extractor and its hard `401`.
 
+On the SPA side (issue #213), `components/ShareToggle.vue` (a "Public" toggle +
+"Copy link" button) sits on the games board column and the study header, backed
+by `api.games.setPublic` / `api.studies.setPublic` and the matching store
+actions; the router guard (`authRedirect`) lets a logged-out `/games/:id` or
+`/studies/:id` deep link through in server mode, and `GamesView`/`StudyView`
+detect the anonymous caller (`auth.isServerMode && !auth.user`) to skip every
+authenticated fetch and render read-only — board, move tree, comments and PGN
+download only, with all editing/engine chrome hidden (`App.vue` also hides the
+nav for a logged-out visitor).
+
 ## Server-mode auth (ADR 0015)
 
 `auth/` is the server-mode-only authentication layer (inert in local mode). It

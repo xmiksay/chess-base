@@ -13,8 +13,12 @@ import { downloadText } from '../lib/download'
 import { classificationClass, classificationGlyph, formatReviewEval } from '../lib/reviewFormat'
 
 // Engine capability flag from `/api/health` (owned by the parent view); null
-// until fetched, false disables the engine-backed actions.
-defineProps<{ engineEnabled: boolean | null }>()
+// until fetched, false disables the engine-backed actions. `readOnly` (issue
+// #213, anonymous public view) keeps only the verbatim PGN download and the
+// linked-analyses list — everything engine-backed or writing is hidden.
+withDefaults(defineProps<{ engineEnabled: boolean | null; readOnly?: boolean }>(), {
+  readOnly: false,
+})
 
 const games = useGamesStore()
 const review = useReviewStore()
@@ -51,6 +55,7 @@ function onGraphSelect(ply: number) {
   <div>
     <div class="relative flex flex-wrap items-center gap-2">
       <button
+        v-if="!readOnly"
         type="button"
         data-test="analyse"
         class="rounded bg-fg px-3 py-1 text-sm text-surface hover:opacity-90 disabled:opacity-50"
@@ -69,6 +74,7 @@ function onGraphSelect(ply: number) {
         Export PGN
       </button>
       <button
+        v-if="!readOnly"
         type="button"
         data-test="export-annotated"
         class="rounded border border-border px-3 py-1 text-sm hover:bg-surface-2 disabled:opacity-50"
@@ -78,9 +84,12 @@ function onGraphSelect(ply: number) {
       >
         Export with analysis
       </button>
-      <SaveAsAnalysisForm :engine-enabled="engineEnabled" />
+      <SaveAsAnalysisForm
+        v-if="!readOnly"
+        :engine-enabled="engineEnabled"
+      />
       <span
-        v-if="engineEnabled === false"
+        v-if="!readOnly && engineEnabled === false"
         class="text-xs text-muted"
       >
         No engine configured.

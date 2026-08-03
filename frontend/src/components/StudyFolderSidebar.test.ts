@@ -31,7 +31,7 @@ const study = (id: number, folder_id: number | null): StudySummary => ({
   global: false,
   owner_id: null,
   folder_id,
-  origin_game_id: null,
+  origin_game_id: null, public: false,
 })
 
 async function mountSidebar() {

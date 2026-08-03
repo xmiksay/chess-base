@@ -104,7 +104,7 @@ describe('GameReviewPanel — EvalGraph wiring', () => {
         global: false,
         owner_id: null,
         folder_id: null,
-        origin_game_id: 5,
+        origin_game_id: 5, public: false,
       },
     ]
     const wrapper = mount(GameReviewPanel, {
@@ -117,5 +117,35 @@ describe('GameReviewPanel — EvalGraph wiring', () => {
       .findAllComponents(RouterLinkStub)
       .find((l) => l.attributes('data-test') === 'linked-analysis')!
     expect(link.props('to')).toEqual({ name: 'studies', params: { id: '9' } })
+  })
+
+  // Issue #213: the anonymous public view keeps only the verbatim PGN download
+  // and the linked-analyses list — every engine-backed / writing control hides.
+  it('read-only keeps the download and linked analyses, hides the engine parts', async () => {
+    const games = useGamesStore()
+    games.load(lineTree(['e4']), STARTPOS_FEN)
+    games.linkedStudies = [
+      {
+        id: 9,
+        database_id: 1,
+        name: 'Analysis',
+        global: false,
+        owner_id: null,
+        folder_id: null,
+        origin_game_id: 5,
+        public: true,
+      },
+    ]
+    const wrapper = mount(GameReviewPanel, {
+      props: { engineEnabled: false, readOnly: true },
+      global: { stubs: { RouterLink: RouterLinkStub } },
+    })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-test="export"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="linked-analysis"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="analyse"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="export-annotated"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="save-as-analysis"]').exists()).toBe(false)
   })
 })

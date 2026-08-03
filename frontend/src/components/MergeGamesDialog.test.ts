@@ -21,7 +21,7 @@ const existingStudy: StudySummary = {
   global: false,
   owner_id: 'alice',
   folder_id: null,
-  origin_game_id: null,
+  origin_game_id: null, public: false,
 }
 
 async function setup(gameIds = [1, 2]) {

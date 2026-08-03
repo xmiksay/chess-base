@@ -26,14 +26,18 @@ export const routes: RouteRecordRaw[] = [
 
 // Decide where a navigation should land given the auth state. Pure so it can be
 // unit-tested without the router. Returns a redirect target or null to proceed.
-//   - server mode + no session → bounce everything but /login to /login.
+//   - server mode + no session → bounce everything but /login to /login,
+//     except a /games/:id or /studies/:id deep link (issue #213): the backend
+//     serves public-flagged objects anonymously, and a private id just renders
+//     that view's own error rather than a login bounce.
 //   - server mode + signed in, heading to /login → send home.
 //   - local (or unknown) mode → never gate.
 export function authRedirect(
-  to: Pick<RouteLocationNormalized, 'name' | 'fullPath'>,
+  to: Pick<RouteLocationNormalized, 'name' | 'fullPath' | 'params'>,
   { needsAuth, isServerMode }: { needsAuth: boolean; isServerMode: boolean },
 ) {
-  if (needsAuth && to.name !== 'login') {
+  const publicDeepLink = (to.name === 'games' || to.name === 'studies') && !!to.params.id
+  if (needsAuth && to.name !== 'login' && !publicDeepLink) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
   if (isServerMode && !needsAuth && to.name === 'login') {

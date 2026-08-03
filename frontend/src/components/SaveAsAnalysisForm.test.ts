@@ -17,6 +17,8 @@ import type { GameDetail, StudySummary } from '../types'
 
 const openGame = (): GameDetail => ({
   id: 5,
+  database_id: 1,
+  public: false,
   white: 'Alice',
   black: 'Bob',
   result: null,
@@ -34,7 +36,7 @@ const savedStudy: StudySummary = {
   global: false,
   owner_id: null,
   folder_id: null,
-  origin_game_id: 5,
+  origin_game_id: 5, public: false,
 }
 
 async function setup(engineEnabled = true) {

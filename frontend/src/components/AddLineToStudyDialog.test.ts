@@ -23,7 +23,7 @@ const existingStudy: StudySummary = {
   global: false,
   owner_id: null,
   folder_id: null,
-  origin_game_id: null,
+  origin_game_id: null, public: false,
 }
 
 const database: Database = {

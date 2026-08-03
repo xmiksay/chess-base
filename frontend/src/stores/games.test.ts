@@ -11,6 +11,7 @@ vi.mock('../api', () => ({
       exportPgn: vi.fn(),
       saveAsStudy: vi.fn(),
       linkedStudies: vi.fn(),
+      setPublic: vi.fn(),
     },
   },
 }))
@@ -31,7 +32,7 @@ const row = (id: number) => ({
   black_elo: null,
 })
 
-const detail = (id: number) => ({ ...row(id), pgn: '' })
+const detail = (id: number) => ({ ...row(id), database_id: 1, pgn: '', public: false })
 
 /** Build a linear tree from SAN moves (root id 0, then 1, 2, … in order). */
 function lineTree(sans: string[]): MoveTree {
@@ -259,5 +260,48 @@ describe('games store — PGN export', () => {
     const store = useGamesStore()
     await expect(store.exportPgn()).resolves.toBeNull()
     expect(api.games.exportPgn).not.toHaveBeenCalled()
+  })
+})
+
+// Issue #213: toggle the open game's public sharing flag.
+describe('games store — sharing', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    vi.mocked(api.games.linkedStudies).mockResolvedValue([])
+  })
+
+  async function openGame(store: ReturnType<typeof useGamesStore>) {
+    vi.mocked(api.games.get).mockResolvedValue(detail(5))
+    vi.mocked(api.games.tree).mockResolvedValue(lineTree(['e4']))
+    await store.open(5)
+  }
+
+  it('setPublic hits the endpoint and updates the open game and its list row', async () => {
+    const store = useGamesStore()
+    await openGame(store)
+    store.games = [row(5)]
+    vi.mocked(api.games.setPublic).mockResolvedValue({ ...detail(5), public: true })
+
+    await store.setPublic(true)
+
+    expect(api.games.setPublic).toHaveBeenCalledWith(5, true)
+    expect(store.openGame?.public).toBe(true)
+    expect(store.games[0].public).toBe(true)
+  })
+
+  it('setPublic is a no-op with no open game', async () => {
+    const store = useGamesStore()
+    await store.setPublic(true)
+    expect(api.games.setPublic).not.toHaveBeenCalled()
+  })
+
+  it('setPublic propagates a failure (e.g. 403) to the caller', async () => {
+    const store = useGamesStore()
+    await openGame(store)
+    vi.mocked(api.games.setPublic).mockRejectedValue(new Error('not permitted'))
+
+    await expect(store.setPublic(true)).rejects.toThrow('not permitted')
+    expect(store.openGame?.public).toBe(false)
   })
 })

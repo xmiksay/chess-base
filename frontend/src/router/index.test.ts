@@ -71,7 +71,7 @@ describe('router', () => {
 describe('authRedirect', () => {
   it('bounces a gated navigation to /login with the original path', () => {
     const r = authRedirect(
-      { name: 'search', fullPath: '/search' },
+      { name: 'search', fullPath: '/search', params: {} },
       { needsAuth: true, isServerMode: true },
     )
     expect(r).toEqual({ name: 'login', query: { redirect: '/search' } })
@@ -79,15 +79,50 @@ describe('authRedirect', () => {
 
   it('lets a server-mode caller reach /login without a session', () => {
     const r = authRedirect(
-      { name: 'login', fullPath: '/login' },
+      { name: 'login', fullPath: '/login', params: {} },
       { needsAuth: true, isServerMode: true },
     )
     expect(r).toBe(null)
   })
 
+  // Issue #213: a public deep link renders logged-out; the backend decides
+  // whether the object is actually public (a private id 401s in the view).
+  it('lets a logged-out visitor through to a game or study deep link', () => {
+    expect(
+      authRedirect(
+        { name: 'games', fullPath: '/games/5', params: { id: '5' } },
+        { needsAuth: true, isServerMode: true },
+      ),
+    ).toBe(null)
+    expect(
+      authRedirect(
+        { name: 'studies', fullPath: '/studies/7', params: { id: '7' } },
+        { needsAuth: true, isServerMode: true },
+      ),
+    ).toBe(null)
+  })
+
+  it('still bounces the bare games and studies lists when logged out', () => {
+    for (const [name, fullPath] of [
+      ['games', '/games'],
+      ['studies', '/studies'],
+    ] as const) {
+      expect(
+        authRedirect({ name, fullPath, params: {} }, { needsAuth: true, isServerMode: true }),
+      ).toEqual({ name: 'login', query: { redirect: fullPath } })
+    }
+    // The optional param resolves to '' on the bare path — still a bounce.
+    expect(
+      authRedirect(
+        { name: 'games', fullPath: '/games', params: { id: '' } },
+        { needsAuth: true, isServerMode: true },
+      ),
+    ).toEqual({ name: 'login', query: { redirect: '/games' } })
+  })
+
   it('sends an already-signed-in user away from /login', () => {
     const r = authRedirect(
-      { name: 'login', fullPath: '/login' },
+      { name: 'login', fullPath: '/login', params: {} },
       { needsAuth: false, isServerMode: true },
     )
     expect(r).toEqual({ name: 'analysis' })
@@ -95,10 +130,16 @@ describe('authRedirect', () => {
 
   it('never gates in local mode', () => {
     expect(
-      authRedirect({ name: 'settings', fullPath: '/settings' }, { needsAuth: false, isServerMode: false }),
+      authRedirect(
+        { name: 'settings', fullPath: '/settings', params: {} },
+        { needsAuth: false, isServerMode: false },
+      ),
     ).toBe(null)
     expect(
-      authRedirect({ name: 'login', fullPath: '/login' }, { needsAuth: false, isServerMode: false }),
+      authRedirect(
+        { name: 'login', fullPath: '/login', params: {} },
+        { needsAuth: false, isServerMode: false },
+      ),
     ).toBe(null)
   })
 })

@@ -3,7 +3,7 @@
 // the shared variation-tree board (issue #136) and explore it — step the cursor,
 // click moves/variations in the tree, or play an off-line move to branch. The
 // engine review (analyze/export, eval graph, why-note) lives in GameReviewPanel.
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Board from '../components/Board.vue'
 import BoardControls from '../components/BoardControls.vue'
@@ -11,7 +11,9 @@ import MoveTree from '../components/MoveTree.vue'
 import MoveComment from '../components/MoveComment.vue'
 import EnginePanel from '../components/EnginePanel.vue'
 import GameReviewPanel from '../components/GameReviewPanel.vue'
+import ShareToggle from '../components/ShareToggle.vue'
 import { api } from '../api'
+import { useAuthStore } from '../stores/auth'
 import { useGamesStore, type GameSortField } from '../stores/games'
 import { useReviewStore } from '../stores/review'
 import { useSettingsStore } from '../stores/settings'
@@ -19,11 +21,18 @@ import { useBoardOverlays } from '../lib/useBoardOverlays'
 import { numericParam } from '../lib/routeParam'
 import type { BoardMove, Database, GameRow } from '../types'
 
+const auth = useAuthStore()
 const games = useGamesStore()
 const review = useReviewStore()
 const settings = useSettingsStore()
 const router = useRouter()
 const route = useRoute()
+
+// Anonymous public view (issue #213): a logged-out server-mode visitor on a
+// /games/:id deep link. Every authenticated fetch (databases/settings/list) is
+// skipped — only the public game itself renders, read-only.
+const readOnly = computed(() => auth.isServerMode && !auth.user)
+
 
 // Multi-select for merging games into one repertoire study (issue #170). Ids stay
 // valid across the current database's pages, so a selection survives paging.
@@ -62,6 +71,36 @@ const selectedDb = ref<number | null>(null)
 const loadError = ref<string | null>(null)
 // Engine capability flag from `/api/health`; null until fetched.
 const engineEnabled = ref<boolean | null>(null)
+
+// --- sharing (issue #213) ----------------------------------------------------
+
+// Whether the caller may toggle sharing: local mode always; server mode needs a
+// login and either admin or a game living in the caller's own (non-global)
+// database. The server enforces regardless — this only hides a guaranteed 403.
+const canShare = computed(() => {
+  if (!auth.isServerMode) return true
+  if (!auth.user) return false
+  if (auth.user.is_admin) return true
+  const db = databases.value.find((d) => d.id === games.openGame?.database_id)
+  return db != null && !db.global
+})
+
+// The open game's shareable deep link.
+const shareUrl = computed(() =>
+  games.openGame
+    ? window.location.origin +
+      router.resolve({ name: 'games', params: { id: String(games.openGame.id) } }).href
+    : '',
+)
+
+async function onTogglePublic() {
+  if (!games.openGame) return
+  try {
+    await games.setPublic(!games.openGame.public)
+  } catch (e) {
+    loadError.value = String((e as Error)?.message ?? e)
+  }
+}
 
 // Composed overlay layers (plans/threats/master) driven by the board's live FEN.
 // `clearArrows` (issue #190) turns off every layer so the live engine-analysis
@@ -132,7 +171,8 @@ watch(
   async () => {
     if (route.name !== 'games') return
     const db = numericParam(route.query.db)
-    if (db != null && db !== games.databaseId) {
+    // Anonymous visitors can't list a database's games — skip the db switch.
+    if (!readOnly.value && db != null && db !== games.databaseId) {
       selectedDb.value = db
       await games.selectDatabase(db)
     }
@@ -163,6 +203,13 @@ function onKey(e: KeyboardEvent) {
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
   api.health().then((h) => (engineEnabled.value = h.engine === true)).catch(() => {})
+  // Anonymous public view (issue #213): hydrate only the deep-linked game —
+  // the databases list, settings preselect and game list would all 401.
+  if (readOnly.value) {
+    const gameId = numericParam(route.params.id)
+    if (gameId != null) await games.open(gameId)
+    return
+  }
   try {
     databases.value = await api.databases.list()
     // Preselect the URL's ?db= (issue #212), else the user's default database,
@@ -194,6 +241,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         Games
       </h2>
       <select
+        v-if="!readOnly"
         v-model="selectedDb"
         class="rounded border border-border px-2 py-1 text-sm"
         aria-label="Database"
@@ -245,8 +293,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     </div>
 
     <div class="flex flex-col gap-6 lg:flex-row">
-      <!-- Game list -->
-      <section class="lg:w-1/2">
+      <!-- Game list (hidden from anonymous visitors, who can't list games). -->
+      <section
+        v-if="!readOnly"
+        class="lg:w-1/2"
+      >
         <table class="w-full text-sm">
           <thead class="text-left text-muted">
             <tr>
@@ -364,11 +415,20 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         v-if="games.openGame"
         class="lg:w-1/2"
       >
+        <!-- Share control (issue #213): public toggle + copy the deep link. -->
+        <ShareToggle
+          class="mb-2"
+          :is-public="games.openGame.public"
+          :can-toggle="canShare"
+          :url="shareUrl"
+          @toggle="onTogglePublic"
+        />
+
         <Board
           :fen="games.fen"
           :orientation="games.orientation"
           :dests="games.legalDests"
-          :movable="true"
+          :movable="!readOnly"
           :last-move="games.lastMove"
           :board-theme="settings.boardTheme"
           :shapes="boardShapes"
@@ -407,9 +467,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         <GameReviewPanel
           class="mt-4"
           :engine-enabled="engineEnabled"
+          :read-only="readOnly"
         />
 
-        <div class="mt-4">
+        <div
+          v-if="!readOnly"
+          class="mt-4"
+        >
           <EnginePanel :fen="games.fen" />
         </div>
       </section>
