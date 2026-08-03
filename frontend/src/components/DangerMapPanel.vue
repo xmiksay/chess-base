@@ -5,13 +5,13 @@
 // output — Weapon / Caution / Off-book — as board arrows (driven by the parent
 // from the danger store) plus this side panel of tagged moves with their figures.
 // Needs only an engine, so it works on a local / no-key install.
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { api } from '../api'
 import { useDangerStore } from '../stores/danger'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { findNodeByPath } from '../lib/moveTree'
 import { STARTPOS_FEN } from '../lib/fen'
-import { formatEval, type DangerRoleRow } from '../lib/dangerShapes'
+import { dangerLabel, formatEval, inferOurSide, type DangerRoleRow } from '../lib/dangerShapes'
 import type { DangerWalkBody, MergeDangerResult } from '../types'
 
 interface Props {
@@ -35,11 +35,21 @@ const merged = ref(false)
 const mergeSummary = ref<string | null>(null)
 
 const spinePgn = ref('')
-const ourSide = ref<'White' | 'Black'>('White')
+const ourSide = ref<'White' | 'Black'>(inferOurSide(props.startFen || STARTPOS_FEN))
 const maxDepth = ref(8)
 const movetimeMs = ref(500)
 const multipv = ref(2)
 const loadError = ref<string | null>(null)
+
+// Re-prefill `ourSide` when the study switches to a different start position,
+// but only before the user has started filling in a spine — never clobber an
+// in-progress edit (issue #194: smart default, not a forced override).
+watch(
+  () => props.startFen,
+  (fen) => {
+    if (!spinePgn.value.trim()) ourSide.value = inferOurSide(fen || STARTPOS_FEN)
+  },
+)
 
 /** Prefill the spine from the open study's mainline (a plain `.pgn` export). */
 async function useStudyMainline() {
@@ -238,7 +248,7 @@ async function onRowClick(row: DangerRoleRow) {
       <div class="mb-2 flex flex-wrap items-center gap-3 text-xs text-muted">
         <span><span class="inline-block h-2 w-3 rounded-sm bg-good" /> Weapon</span>
         <span><span class="inline-block h-2 w-3 rounded-sm bg-bad" /> Caution</span>
-        <span><span class="inline-block h-2 w-3 rounded-sm bg-warn" /> Off-book</span>
+        <span><span class="inline-block h-2 w-3 rounded-sm bg-warn" /> Not in your repertoire</span>
         <button
           v-if="studyId != null && danger.roles.length"
           type="button"
@@ -290,7 +300,7 @@ async function onRowClick(row: DangerRoleRow) {
                   v-if="r.eval"
                   class="font-mono text-fg"
                 >{{ formatEval(r.eval) }}</span>
-                <span>{{ r.kind }} · {{ r.role }}</span>
+                <span>{{ dangerLabel(r.kind) }} · {{ dangerLabel(r.role) }}</span>
                 <span
                   v-if="r.onlyMoveGap != null"
                   class="text-muted"

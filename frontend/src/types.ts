@@ -510,6 +510,9 @@ export interface DangerWalkBody {
   spine?: SpineConfig
   movetime_ms?: number // per-variation engine budget, capped server-side
   multipv?: number // MultiPV line count, floored at 2 server-side
+  // Scope reachability stats to one database instead of pooling every
+  // database visible to the caller (issue #194); omit for all-visible.
+  database_id?: number
 }
 
 /** Result of the engine danger walk: the full tree + a flat tagged-node digest. */

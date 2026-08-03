@@ -306,7 +306,10 @@ fn role_concept(tag: &DangerTag) -> String {
             "danger caution: this move concedes a pawn storm marching toward your king — warn about the attack".into()
         }
         (DangerKind::OffBook, _) => {
-            "danger off-book: a reply order the repertoire does not yet answer".into()
+            // "Off-book" reads as "outside opening theory"; this is "outside
+            // *your* repertoire" — a mainstream reply your spine hasn't
+            // answered yet (issue #194).
+            "not in your repertoire: a reply order your spine does not yet answer".into()
         }
         _ => "danger: a move the engine and DB flagged as practically tricky".into(),
     }

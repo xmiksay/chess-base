@@ -6,6 +6,7 @@
 
 import { Chess } from 'chess.js'
 import type { DrawShape, DrawBrush } from 'chessground/draw'
+import { sideToMove } from './fen'
 import type { AttackSignal, DangerTree, Eval, TrapVerdict } from '../types'
 
 const WEAPON_COLOR = '#15803d' // green-700  — a prepared, recommendable line
@@ -29,6 +30,28 @@ export function dangerBrushes(): Record<string, DrawBrush> {
     dangerCaution: { key: 'dgc', color: CAUTION_COLOR, opacity: 0.9, lineWidth: 10 },
     dangerOffbook: { key: 'dgo', color: OFFBOOK_COLOR, opacity: 0.85, lineWidth: 10 },
   }
+}
+
+/**
+ * User-facing label for a raw `OffBook` kind/role (issue #194): "Off-book"
+ * reads as "outside opening theory" when the walk actually means "outside
+ * *your* repertoire" — a mainstream reply your spine hasn't answered yet.
+ * Every other kind/role already reads fine as-is.
+ */
+export function dangerLabel(value: string): string {
+  return value === 'OffBook' ? 'Not in your repertoire' : value
+}
+
+/**
+ * Smart default for the walk's `our_side` control (issue #194): a repertoire is
+ * usually recorded starting at the position where it is about to be *our*
+ * move — the standard start for a White repertoire, or the position right
+ * after the opponent's first move for a Black one — so the side to move at
+ * the walk's start position is a reasonable default for "which side do I
+ * play". Still just a prefill: the selector stays user-editable.
+ */
+export function inferOurSide(startFen: string): 'White' | 'Black' {
+  return sideToMove(startFen) === 'black' ? 'Black' : 'White'
 }
 
 /** Board-identity (first four) FEN fields — placement, side, castling, en-passant. */

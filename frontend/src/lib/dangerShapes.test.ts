@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest'
 import {
   brushForRole,
   dangerBrushes,
+  dangerLabel,
   dangerRoles,
   dangerShapesForFen,
   formatEval,
+  inferOurSide,
 } from './dangerShapes'
 import { STARTPOS_FEN } from './fen'
 import type { DangerNode, DangerTree } from '../types'
@@ -107,5 +109,18 @@ describe('dangerShapes', () => {
     expect(formatEval({ cp: 0 })).toBe('+0.00')
     expect(formatEval({ mate: 3 })).toBe('M3')
     expect(formatEval({ mate: -2 })).toBe('-M2')
+  })
+
+  it('rewords the raw OffBook kind/role, leaving every other value untouched', () => {
+    expect(dangerLabel('OffBook')).toBe('Not in your repertoire')
+    expect(dangerLabel('Weapon')).toBe('Weapon')
+    expect(dangerLabel('Caution')).toBe('Caution')
+    expect(dangerLabel('Trap')).toBe('Trap')
+    expect(dangerLabel('OnlyMove')).toBe('OnlyMove')
+  })
+
+  it('infers our_side from the side to move at the walk start position', () => {
+    expect(inferOurSide(STARTPOS_FEN)).toBe('White')
+    expect(inferOurSide(FEN_AFTER_E4)).toBe('Black')
   })
 })

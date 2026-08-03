@@ -68,6 +68,7 @@ fn danger_walk_body_needs_only_a_spine_and_defaults_the_rest() {
     assert!(body.fen.is_none());
     assert!(body.movetime_ms.is_none());
     assert!(body.multipv.is_none());
+    assert!(body.database_id.is_none());
     assert_eq!(body.spine, SpineConfig::default());
 }
 
@@ -78,6 +79,7 @@ fn danger_walk_body_accepts_partial_spine_overrides() {
         "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         "movetime_ms": 250,
         "multipv": 3,
+        "database_id": 3,
         "spine": { "our_side": "Black", "max_depth": 10 }
     }))
     .expect("danger-walk body with overrides deserializes");
@@ -85,6 +87,7 @@ fn danger_walk_body_accepts_partial_spine_overrides() {
     let defaults = SpineConfig::default();
     assert_eq!(body.movetime_ms, Some(250));
     assert_eq!(body.multipv, Some(3));
+    assert_eq!(body.database_id, Some(3));
     assert_eq!(body.spine.our_side, Side::Black);
     assert_eq!(body.spine.max_depth, 10);
     // Untouched fields keep their defaults.

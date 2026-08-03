@@ -140,3 +140,50 @@ budget, and partial `SpineConfig`/`DangerConfig`/`AttackConfig` overrides (all
 > change does not add. The FE danger overlay is labelled **"experimental"**
 > (`DangerMapPanel.vue`) until that measurement pass happens; treat the four
 > thresholds above as reasoned defaults, not validated ones.
+
+> **Update (issue #194).** Off-book semantics are unchanged (still "a human
+> reply the spine does not answer" — never a book/ECO test, per the original
+> decision above); four bugs in the matching and labelling made the walk
+> mislabel completely normal preparation as Off-book:
+>
+> 1. **Exact-SAN matching vs. the DB's normalized suffix.** `position_index`
+>    stores SAN with the trailing `+`/`#` check/mate marker (`position.rs`);
+>    the spine keeps the PGN author's own spelling. `spine.rs`'s reachability
+>    match, the `#176` bait-frequency lookup, and `miss_rate` all compared SAN
+>    strings exactly, so a spine `Bb5` never matched a DB `Bb5+` — the user's
+>    *own* prepared move was tagged Off-book and its subtree was never walked,
+>    a checking best move always reported `miss_rate = 1.0` (inflating
+>    only-move Weapons), and a checking bait always priced at DB frequency
+>    `0.0` (downgrading real traps to Quiet). Fixed by comparing
+>    [`pgn_tree::san_core`](../../src/pgn_tree.rs) (already used by
+>    `graft_subtree`'s dedup) at all three sites instead of the raw SAN.
+> 2. **Reachability only ever walked the *kept* DB replies**, never the
+>    spine's own answered moves that fell out of `kept` — below
+>    `min_frequency`, past the `max_replies` cut, or simply absent because no
+>    game in the scoped DB ever played it. A prepared answer in any of those
+>    three cases silently vanished from the tree instead of being walked.
+>    Fixed by walking `answered ∪ kept`: every spine-answered move is now
+>    expanded, carrying its real DB frequency when known and `0.0` otherwise.
+> 3. **Wording.** "Off-book" reads as "outside opening theory" when the walk
+>    has only ever meant "outside *this* repertoire" — user-facing text now
+>    says **"Not in your repertoire"** (`merge_danger.rs`'s study comment,
+>    `danger_generate.rs`'s LLM role hint, the FE overlay legend and panel
+>    rows via `lib/dangerShapes.ts`'s `dangerLabel`). The wire `DangerRole`/
+>    `DangerKind` enum variant is still literally `OffBook` — only the prose
+>    changed.
+> 4. **Reachability stats pooled every database visible to the caller.**
+>    `walk_danger_spine_live` hardcoded `PositionFilter::default()`, mixing a
+>    personal blitz database with an imported master one. Both engine-only
+>    transports (`POST /api/studies/danger-map`, the MCP `danger_map` tool)
+>    now accept an optional `database_id` that narrows
+>    [`PositionFilter`](../../src/search/position.rs) to one database —
+>    intersected with the caller's own ∪ global visibility, never widening
+>    it. Omitted, behavior is unchanged (every visible database still pools).
+>
+> `our_side` itself was already a first-class, user-selectable field on both
+> the API and the danger-map UI (`DangerMapPanel.vue` / `GenerateDangerMapDialog.vue`);
+> what was missing was a sensible default. Both dialogs now prefill it from the
+> side to move at the walk's start position (`lib/dangerShapes.ts`'s
+> `inferOurSide`) — a repertoire is normally recorded starting where it is
+> about to be *your* move — while leaving the selector fully overridable and
+> never clobbering an in-progress edit.

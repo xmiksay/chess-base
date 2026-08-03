@@ -11,6 +11,7 @@ import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
 import { useStudiesStore } from '../stores/studies'
 import { STARTPOS_FEN } from '../lib/fen'
+import { dangerLabel, inferOurSide } from '../lib/dangerShapes'
 import type { Database, DangerMapBody, DangerMapView } from '../types'
 
 interface Props {
@@ -29,7 +30,7 @@ const databaseId = ref<number | null>(null)
 const name = ref('')
 const spinePgn = ref('')
 const startFen = ref(props.startFen || STARTPOS_FEN)
-const ourSide = ref<'White' | 'Black'>('White')
+const ourSide = ref<'White' | 'Black'>(inferOurSide(startFen.value))
 const maxDepth = ref(8)
 const movetimeMs = ref(500)
 const multipv = ref(2)
@@ -125,7 +126,7 @@ onMounted(async () => {
             class="flex items-center justify-between gap-2 rounded bg-surface-2 px-2 py-1"
           >
             <span class="font-mono">{{ r.san ?? '—' }}</span>
-            <span class="text-muted">{{ r.kind }} · {{ r.role }}</span>
+            <span class="text-muted">{{ dangerLabel(r.kind) }} · {{ dangerLabel(r.role) }}</span>
           </li>
         </ul>
         <div class="mt-4 flex justify-end gap-2">

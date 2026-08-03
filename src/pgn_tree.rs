@@ -52,8 +52,10 @@ fn is_move_quality_nag(nag: u8) -> bool {
 }
 
 /// SAN without its trailing check/mate marker, so `Qh5+` matches a generated
-/// `Qh5` when deduping a graft.
-fn san_core(san: &str) -> &str {
+/// `Qh5` when deduping a graft. `pub(crate)` so other DB-vs-spine SAN
+/// comparisons (e.g. the danger-map walk, issue #194) reuse the same tolerant
+/// match instead of growing their own.
+pub(crate) fn san_core(san: &str) -> &str {
     san.trim_end_matches(['+', '#'])
 }
 

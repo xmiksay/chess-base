@@ -194,6 +194,7 @@ async fn opening_tree(app: AppState, user: CurrentUser, args: Value) -> ToolOutc
             .get("date_to")
             .and_then(Value::as_str)
             .map(str::to_string),
+        database_id: None,
     };
     let reports = PositionReportService::new(app.db.clone());
 
@@ -252,13 +253,15 @@ fn danger_map_tool() -> Tool {
         "Walk an opening repertoire spine (PGN) for dangerous opponent replies and \
          return the engine-adjudicated danger tree — the deterministic classifier \
          output, not an annotated study. Every flagged node carries a Weapon / \
-         Caution / Off-book role and the raw figures behind it (trap verdict, \
-         only-move gap, human miss-rate, pawn-storm signal). Returns structured \
-         data only — no prose: annotate it yourself and persist with the `study_*` \
-         tools. Pass `save_as` to persist the danger tree straight into a study \
-         server-side and get back just an id (no tree JSON) — then layer prose with \
-         `study_annotate`. Scoped to your databases and the global ones. Requires \
-         an engine configured.",
+         Caution / OffBook role (OffBook means the reply is not in *this* \
+         repertoire, not that it is outside opening theory) and the raw figures \
+         behind it (trap verdict, only-move gap, human miss-rate, pawn-storm \
+         signal). Returns structured data only — no prose: annotate it yourself \
+         and persist with the `study_*` tools. Pass `save_as` to persist the \
+         danger tree straight into a study server-side and get back just an id \
+         (no tree JSON) — then layer prose with `study_annotate`. Scoped to your \
+         databases and the global ones, or one `database_id` to narrow the \
+         reachability stats. Requires an engine configured.",
         json!({
             "type": "object",
             "properties": {
@@ -275,6 +278,10 @@ fn danger_map_tool() -> Tool {
                 "spine": {
                     "type": "object",
                     "description": "Optional walk shape + classifier thresholds (our_side, max_depth, min_frequency, max_replies, min_miss_rate, danger{…}, attack{…}); partial overrides over the defaults."
+                },
+                "database_id": {
+                    "type": "integer",
+                    "description": "Scope reachability stats to one database instead of pooling every database visible to you; omit for all-visible."
                 },
                 "save_as": save_as_schema()
             },
@@ -321,6 +328,10 @@ async fn danger_map(app: AppState, user: CurrentUser, args: Value) -> ToolOutcom
         Ok(save_as) => save_as,
         Err(msg) => return ToolOutcome::error(msg),
     };
+    let database_id = args
+        .get("database_id")
+        .and_then(Value::as_i64)
+        .map(|v| v as i32);
     let reports = PositionReportService::new(app.db.clone());
 
     let danger = match walk_danger_spine_live(
@@ -333,6 +344,7 @@ async fn danger_map(app: AppState, user: CurrentUser, args: Value) -> ToolOutcom
         MODE,
         movetime_ms,
         multipv,
+        database_id,
     )
     .await
     {
@@ -508,6 +520,10 @@ mod tests {
             .find(|t| t["name"] == "danger_map")
             .expect("danger_map tool");
         assert_eq!(danger["inputSchema"]["required"][0], "spine_pgn");
+        assert_eq!(
+            danger["inputSchema"]["properties"]["database_id"]["type"],
+            "integer"
+        );
         let concepts = tools
             .iter()
             .find(|t| t["name"] == "position_concepts")

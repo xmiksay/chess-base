@@ -120,7 +120,10 @@ fn danger_comment(tag: &DangerTag) -> String {
     let role = match tag.role {
         DangerRole::Weapon => "Weapon",
         DangerRole::Caution => "Caution",
-        DangerRole::OffBook => "Off-book",
+        // "Off-book" reads as "outside opening theory"; the walk actually means
+        // "outside *your* repertoire" (issue #194) — a mainstream reply your
+        // spine simply hasn't answered yet.
+        DangerRole::OffBook => "Not in your repertoire",
     };
     let detail = match tag.kind {
         DangerKind::Trap => match tag.trap {
@@ -136,7 +139,7 @@ fn danger_comment(tag: &DangerTag) -> String {
             format!("only move{miss}")
         }
         DangerKind::Attack => "pawn storm toward your king".to_string(),
-        DangerKind::OffBook => "no prepared answer in this repertoire".to_string(),
+        DangerKind::OffBook => "a reply order you haven't prepared for".to_string(),
     };
     match tag.eval {
         Some(eval) => format!("{role}: {detail} ({})", format_eval(eval)),

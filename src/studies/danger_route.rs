@@ -227,6 +227,10 @@ struct DangerWalkBody {
     /// MultiPV line count (floored at 2 server-side).
     #[serde(default)]
     multipv: Option<u16>,
+    /// Scope reachability stats to one database instead of pooling every
+    /// database visible to the caller (issue #194); defaults to all-visible.
+    #[serde(default)]
+    database_id: Option<i32>,
 }
 
 /// Response for `POST /api/studies/danger-map`: the full engine-adjudicated
@@ -278,6 +282,7 @@ async fn danger_map(
         MODE,
         movetime_ms,
         multipv,
+        body.database_id,
     )
     .await
     .map_err(spine_error_response)?;
