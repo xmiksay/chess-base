@@ -364,6 +364,82 @@ async fn resolver_maps_the_default_pin_sentinel_to_the_users_default() {
 }
 
 #[tokio::test]
+async fn pending_pin_is_consumed_exactly_once_by_the_sentinel_resolution() {
+    let db = mem_db().await;
+    seed_default(&db, None, "anthropic", "claude-x").await;
+    seed(&db, None, "openai", "openai", "gpt-x", "k", None).await;
+    let store = AgentProviderStore::new_with_env(db, None)
+        .await
+        .expect("build store");
+    let resolver = store.build_resolver(HttpClient::new().expect("http client"));
+    let alice = UserId::new("alice");
+
+    store.set_pending_pin("alice", "openai".into(), "gpt-x".into());
+    // First sentinel resolution consumes the pin…
+    let resolved = resolver(Some(&alice), DEFAULT_PIN, DEFAULT_PIN).expect("pinned resolution");
+    assert_eq!(resolved.provider, "openai");
+    assert_eq!(resolved.model, "gpt-x");
+    // …the next one is back on the default row.
+    let resolved = resolver(Some(&alice), DEFAULT_PIN, DEFAULT_PIN).expect("default resolution");
+    assert_eq!(resolved.provider, "anthropic");
+    assert_eq!(resolved.model, "claude-x");
+
+    // A pin is per-user: another user's sentinel never sees it.
+    store.set_pending_pin("alice", "openai".into(), "gpt-x".into());
+    let bob = UserId::new("bob");
+    let resolved = resolver(Some(&bob), DEFAULT_PIN, DEFAULT_PIN).expect("bob resolution");
+    assert_eq!(resolved.provider, "anthropic");
+}
+
+#[tokio::test]
+async fn explicit_provider_resolution_ignores_a_pending_pin() {
+    let db = mem_db().await;
+    seed_default(&db, None, "anthropic", "claude-x").await;
+    seed(&db, None, "openai", "openai", "gpt-x", "k", None).await;
+    let store = AgentProviderStore::new_with_env(db, None)
+        .await
+        .expect("build store");
+    let resolver = store.build_resolver(HttpClient::new().expect("http client"));
+    let alice = UserId::new("alice");
+
+    store.set_pending_pin("alice", "openai".into(), "gpt-x".into());
+    let resolved = resolver(Some(&alice), "anthropic", "claude-x").expect("explicit resolution");
+    assert_eq!(resolved.provider, "anthropic");
+    // The pin is untouched: the next sentinel resolution still consumes it.
+    let resolved = resolver(Some(&alice), DEFAULT_PIN, DEFAULT_PIN).expect("pinned resolution");
+    assert_eq!(resolved.provider, "openai");
+}
+
+#[tokio::test]
+async fn knows_provider_checks_the_composed_catalog() {
+    let db = mem_db().await;
+    seed(&db, None, "openai", "openai", "gpt-x", "k", None).await;
+    seed(
+        &db,
+        Some("alice"),
+        "zai",
+        "openai",
+        "glm-5",
+        "k",
+        Some("https://z/v1"),
+    )
+    .await;
+    let store = AgentProviderStore::new_with_env(db, None)
+        .await
+        .expect("build store");
+
+    let alice = UserId::new("alice");
+    assert!(store.knows_provider(&alice, "zai"), "own row");
+    assert!(
+        store.knows_provider(&alice, "openai"),
+        "composed global row"
+    );
+    assert!(!store.knows_provider(&alice, "nope"));
+    // A rowless user checks against the house catalog.
+    assert!(store.knows_provider(&UserId::new("carol"), "openai"));
+}
+
+#[tokio::test]
 async fn resolver_falls_back_to_the_house_user() {
     let db = mem_db().await;
     seed(

@@ -8,11 +8,37 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useAssistantStore } from '../stores/assistant'
 import AssistantTranscript from '../components/AssistantTranscript.vue'
+import ModelSelect from '../components/ModelSelect.vue'
+import { api } from '../api'
+import { effectiveDefault } from '../lib/providers'
+import type { ModelChoice } from '../lib/providers'
+import type { ProviderInfo } from '../types'
 
 const store = useAssistantStore()
 const draft = ref('')
 const renamingRoot = ref<string | null>(null)
 const renameDraft = ref('')
+
+// Per-session model choice (issue #215): `newChoice` seeds the next new
+// conversation (null = the default row); the header picker switches the open
+// one mid-session. Provider rows are fetched once and shared by both pickers.
+const newChoice = ref<ModelChoice | null>(null)
+const providerRows = ref<ProviderInfo[]>([])
+
+/** The open conversation's model, folded from the event stream. */
+const currentModel = computed(() => store.transcript.model)
+
+function switchModel(choice: ModelChoice | null) {
+  // Picking the "(default)" entry emits null; resolve it to the concrete
+  // default row so the engine gets an explicit (provider, model) pair.
+  const target =
+    choice ??
+    (() => {
+      const row = effectiveDefault(providerRows.value)
+      return row ? { provider: row.name, model: row.model } : null
+    })()
+  if (target) store.setModel(target.provider, target.model)
+}
 
 const STATUS_LABEL: Record<string, string> = {
   thinking: 'Thinking…',
@@ -47,7 +73,7 @@ function submit() {
   if (!text) return
   draft.value = ''
   if (store.currentRoot) store.send(text)
-  else store.newSession(text)
+  else store.newSession(text, null, newChoice.value)
 }
 
 function startRename(root: string, name: string | null) {
@@ -66,7 +92,14 @@ function confirmDelete(root: string) {
   if (window.confirm('Delete this conversation?')) store.remove(root)
 }
 
-onMounted(() => store.connect())
+onMounted(async () => {
+  store.connect()
+  try {
+    providerRows.value = await api.providers.list()
+  } catch {
+    providerRows.value = [] // the pickers render their disabled placeholder
+  }
+})
 onUnmounted(() => store.disconnect())
 </script>
 
@@ -173,10 +206,25 @@ onUnmounted(() => store.disconnect())
         <h2 class="font-semibold">
           {{ title }}
         </h2>
-        <span
-          v-if="store.current"
-          class="text-xs text-muted"
-        >{{ store.current.agent }}</span>
+        <div class="flex items-center gap-2">
+          <!-- Mid-session model switch: the value tracks the transcript's
+               folded model_changed events, the change ships a set_model. -->
+          <span
+            v-if="store.currentRoot"
+            :title="store.streaming ? 'Applies after the current reply' : undefined"
+            data-test="session-model"
+          >
+            <ModelSelect
+              :model-value="currentModel"
+              :providers="providerRows"
+              @update:model-value="switchModel"
+            />
+          </span>
+          <span
+            v-if="store.current"
+            class="text-xs text-muted"
+          >{{ store.current.agent }}</span>
+        </div>
       </header>
 
       <!-- Transcript -->
@@ -216,6 +264,17 @@ onUnmounted(() => store.disconnect())
         class="mt-3 flex gap-2"
         @submit.prevent="submit"
       >
+        <!-- New-conversation model choice; null keeps the default row. -->
+        <span
+          v-if="!store.currentRoot"
+          class="self-end"
+          data-test="new-model"
+        >
+          <ModelSelect
+            v-model="newChoice"
+            :providers="providerRows"
+          />
+        </span>
         <textarea
           v-model="draft"
           rows="2"

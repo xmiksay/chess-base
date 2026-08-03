@@ -83,10 +83,13 @@ export interface TranscriptState {
   items: TranscriptItem[]
   status: AgentState | null
   usage: UsageTotals | null
+  /** The session's current provider/model, folded from `model_changed`
+   *  (issue #215) — last-wins on history replay; null before the first one. */
+  model: { provider: string; model: string } | null
 }
 
 export function emptyTranscript(): TranscriptState {
-  return { items: [], status: null, usage: null }
+  return { items: [], status: null, usage: null, model: null }
 }
 
 // --- parsing -----------------------------------------------------------------
@@ -281,6 +284,18 @@ export function foldEvent(state: TranscriptState, ev: AssistantOutEvent): Transc
     case 'compacted': {
       const closed = closeBubble(state)
       return withItems(closed, [...closed.items, { type: 'divider', label: 'context compacted' }])
+    }
+    case 'model_changed': {
+      // Last-wins overwrite; a divider marks an actual mid-conversation
+      // switch, not the session-start binding (state.model still null then).
+      const prev = state.model
+      const next = { ...state, model: { provider: ev.provider, model: ev.model } }
+      if (!prev || (prev.provider === ev.provider && prev.model === ev.model)) return next
+      const closed = closeBubble(next)
+      return withItems(closed, [
+        ...closed.items,
+        { type: 'divider', label: `switched to ${ev.model}` },
+      ])
     }
     default:
       return state

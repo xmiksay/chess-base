@@ -19,6 +19,7 @@ import {
   resolveQuestion,
 } from '../lib/assistantStream'
 import type { ApprovalCard, QuestionCard, TranscriptState } from '../lib/assistantStream'
+import type { ModelChoice } from '../lib/providers'
 import type {
   AgentSessionSummary,
   AssistantClientFrame,
@@ -230,11 +231,31 @@ export const useAssistantStore = defineStore('assistant', () => {
     sendFrame({ type: 'list' })
   }
 
-  /** Start a new conversation; its first turn runs on `prompt`. */
-  function newSession(prompt: string, name: string | null = null) {
+  /** Start a new conversation; its first turn runs on `prompt`. An explicit
+   *  `choice` picks the session's starting provider/model (issue #215);
+   *  null ⇒ the caller's default row. */
+  function newSession(
+    prompt: string,
+    name: string | null = null,
+    choice: ModelChoice | null = null,
+  ) {
     error.value = null
     pendingPrompt = prompt
-    sendFrame({ type: 'new', prompt, name })
+    sendFrame({
+      type: 'new',
+      prompt,
+      name,
+      ...(choice ? { provider: choice.provider, model: choice.model } : {}),
+    })
+  }
+
+  /** Switch the open conversation's model mid-session (issue #215): the
+   *  engine applies it at turn end when one is live, then broadcasts
+   *  `model_changed`, which the transcript fold picks up. */
+  function setModel(provider: string, model: string) {
+    if (currentRoot.value) {
+      sendIn({ kind: 'set_model', session: currentRoot.value, provider, model })
+    }
   }
 
   /** Deselect the open conversation (the next send starts a new one). */
@@ -327,6 +348,7 @@ export const useAssistantStore = defineStore('assistant', () => {
     disconnect,
     list,
     newSession,
+    setModel,
     deselect,
     open,
     send,

@@ -204,6 +204,36 @@ describe('foldEvent — questions, status, usage, notices', () => {
       { type: 'divider', label: 'context compacted' },
     ])
   })
+
+  it('model_changed tracks the current model; only a real switch adds a divider', () => {
+    // The session-start binding: model set, no divider.
+    let state = fold([
+      { kind: 'model_changed', session: S, provider: 'anthropic', model: 'claude-a' },
+    ])
+    expect(state.model).toEqual({ provider: 'anthropic', model: 'claude-a' })
+    expect(state.items).toEqual([])
+
+    // A re-announcement of the same model stays silent…
+    state = fold(
+      [{ kind: 'model_changed', session: S, provider: 'anthropic', model: 'claude-a' }],
+      state,
+    )
+    expect(state.items).toEqual([])
+
+    // …a mid-conversation switch closes the bubble and marks the spot.
+    state = fold(
+      [
+        { kind: 'text_delta', session: S, seq: 1, text: 'partial' },
+        { kind: 'model_changed', session: S, provider: 'zai', model: 'glm-5' },
+      ],
+      state,
+    )
+    expect(state.model).toEqual({ provider: 'zai', model: 'glm-5' })
+    expect(state.items).toEqual([
+      { type: 'assistant', text: 'partial', reasoning: '', streaming: false },
+      { type: 'divider', label: 'switched to glm-5' },
+    ])
+  })
 })
 
 describe('foldPrompt / foldHistory', () => {
@@ -226,6 +256,15 @@ describe('foldPrompt / foldHistory', () => {
       { type: 'user', text: 'hello' },
       { type: 'assistant', text: 'hi there', reasoning: '', streaming: false },
     ])
+  })
+
+  it('history replay folds model_changed last-wins, with switch dividers', () => {
+    const state = foldHistory([
+      { dir: 'out', payload: { kind: 'model_changed', session: S, provider: 'anthropic', model: 'claude-a' } },
+      { dir: 'out', payload: { kind: 'model_changed', session: S, provider: 'zai', model: 'glm-5' } },
+    ])
+    expect(state.model).toEqual({ provider: 'zai', model: 'glm-5' })
+    expect(state.items).toEqual([{ type: 'divider', label: 'switched to glm-5' }])
   })
 
   it('closes a bubble a truncated log left streaming', () => {

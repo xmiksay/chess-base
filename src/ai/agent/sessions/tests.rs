@@ -77,6 +77,7 @@ async fn create_inserts_the_row_registers_the_owner_and_marks_live() {
             &alice,
             "build me a repertoire".into(),
             Some("Repertoire".into()),
+            None,
         )
         .await
         .expect("create session");
@@ -112,17 +113,102 @@ async fn create_without_any_provider_surface_is_a_typed_error() {
     let service = SessionService::new(db, holly, SessionUserRegistry::new(), store);
 
     let err = service
-        .create(&user("alice"), "hi".into(), None)
+        .create(&user("alice"), "hi".into(), None, None)
         .await
         .expect_err("must refuse without a provider");
     assert!(matches!(err, SessionError::NoProvider));
+}
+
+/// Like [`service`], but hands back the provider store too so the tests can
+/// observe the pending-pin state through a resolver (#215).
+async fn service_with_store() -> (
+    SessionService,
+    DatabaseConnection,
+    std::sync::Arc<AgentProviderStore>,
+) {
+    let db = crate::db::connect(&DbConfig::in_memory())
+        .await
+        .expect("connect in-memory db");
+    let store = AgentProviderStore::new_with_env(db.clone(), Some("test-key".to_string()))
+        .await
+        .expect("build provider store");
+    let holly = Holly::spawn(EngineConfig {
+        profiles: agent_profiles(),
+        ..EngineConfig::default() // EchoLlm, no model_resolver — the pin stays parked
+    });
+    let service = SessionService::new(db.clone(), holly, SessionUserRegistry::new(), store.clone());
+    (service, db, store)
+}
+
+#[tokio::test]
+async fn create_with_an_unknown_provider_is_refused_with_no_row_and_no_pin() {
+    let (service, db, store) = service_with_store().await;
+
+    let err = service
+        .create(
+            &user("alice"),
+            "hi".into(),
+            None,
+            Some(("nope".into(), "some-model".into())),
+        )
+        .await
+        .expect_err("unknown provider must be refused");
+    assert!(matches!(err, SessionError::UnknownProvider(p) if p == "nope"));
+
+    // Nothing persisted…
+    let rows = agent_sessions::Entity::find()
+        .all(&db)
+        .await
+        .expect("query");
+    assert!(rows.is_empty(), "no session row on a refused create");
+
+    // …and no pin left behind: DEFAULT_PIN resolves the env-house default (a
+    // leftover "nope" pin would make this resolution fail).
+    let resolver =
+        store.build_resolver(entanglement_provider::HttpClient::new().expect("http client"));
+    let resolved = resolver(
+        Some(&UserId::new("alice")),
+        crate::ai::agent::DEFAULT_PIN,
+        crate::ai::agent::DEFAULT_PIN,
+    )
+    .expect("default still resolves");
+    assert_eq!(resolved.provider, "anthropic");
+}
+
+#[tokio::test]
+async fn create_with_a_valid_choice_parks_the_one_shot_pin() {
+    let (service, _db, store) = service_with_store().await;
+
+    // The test engine has no model_resolver, so the session-start pin is
+    // inert and the parked pin survives create for us to observe here.
+    service
+        .create(
+            &user("alice"),
+            "hi".into(),
+            None,
+            Some(("anthropic".into(), "claude-chosen".into())),
+        )
+        .await
+        .expect("create with a valid choice");
+
+    let resolver =
+        store.build_resolver(entanglement_provider::HttpClient::new().expect("http client"));
+    let pin = crate::ai::agent::DEFAULT_PIN;
+    let alice = UserId::new("alice");
+    let resolved = resolver(Some(&alice), pin, pin).expect("pin resolution");
+    assert_eq!(resolved.provider, "anthropic");
+    assert_eq!(resolved.model, "claude-chosen");
+
+    // One-shot: the next resolution is back on the default model.
+    let resolved = resolver(Some(&alice), pin, pin).expect("default resolution");
+    assert_ne!(resolved.model, "claude-chosen");
 }
 
 #[tokio::test]
 async fn list_is_scoped_to_the_calling_user() {
     let (service, _db) = service().await;
     let root = service
-        .create(&user("alice"), "hi".into(), None)
+        .create(&user("alice"), "hi".into(), None, None)
         .await
         .expect("create");
 
@@ -139,7 +225,7 @@ async fn list_is_scoped_to_the_calling_user() {
 async fn open_by_a_non_owner_is_not_found_even_for_an_admin() {
     let (service, _db) = service().await;
     let root = service
-        .create(&user("alice"), "hi".into(), None)
+        .create(&user("alice"), "hi".into(), None, None)
         .await
         .expect("create");
 
@@ -165,7 +251,7 @@ async fn open_returns_the_persisted_out_events_for_a_live_session() {
     let (service, db) = service().await;
     let alice = user("alice");
     let root = service
-        .create(&alice, "hi".into(), None)
+        .create(&alice, "hi".into(), None, None)
         .await
         .expect("create");
 
@@ -186,7 +272,7 @@ async fn open_flags_a_gap_and_returns_only_the_intact_prefix() {
     let (service, db) = service().await;
     let alice = user("alice");
     let root = service
-        .create(&alice, "hi".into(), None)
+        .create(&alice, "hi".into(), None, None)
         .await
         .expect("create");
 
@@ -210,7 +296,7 @@ async fn delete_removes_the_row_the_events_and_the_registrations() {
     let (service, db) = service().await;
     let alice = user("alice");
     let root = service
-        .create(&alice, "hi".into(), None)
+        .create(&alice, "hi".into(), None, None)
         .await
         .expect("create");
     insert_event(&db, &root, 0, out_event_json(&root, 1, "chunk")).await;
@@ -244,7 +330,7 @@ async fn touch_and_rename_update_the_index_row() {
     let (service, db) = service().await;
     let alice = user("alice");
     let root = service
-        .create(&alice, "hi".into(), None)
+        .create(&alice, "hi".into(), None, None)
         .await
         .expect("create");
 

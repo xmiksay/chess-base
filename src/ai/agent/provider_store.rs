@@ -10,7 +10,7 @@
 //! [`AgentProviderStore::invalidate`] after provider CRUD.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use anyhow::Context as _;
 use entanglement_provider::{
@@ -48,6 +48,14 @@ pub struct AgentProviderStore {
     /// `ANTHROPIC_API_KEY` captured once at construction; injectable for tests.
     env_key: Option<String>,
     cache: RwLock<Caches>,
+    /// User id → a **one-shot** `(provider, model)` pin consumed by that
+    /// user's next [`DEFAULT_PIN`] resolution — the creation-time model choice
+    /// (#215, ADR-0046). Set by `SessionService::create` immediately before
+    /// `Spawn`, taken by [`Self::build_resolver`]'s sentinel branch at session
+    /// start. Accepted narrow races (ADR-0046): two simultaneous creates by
+    /// one user can cross pins, and a `Spawn` whose pin never resolves leaves
+    /// an orphan the user's *next* default-pinned session would consume.
+    pending_pins: Mutex<HashMap<String, (String, String)>>,
 }
 
 /// The pre-warmed per-owner caches, rebuilt together by
@@ -84,6 +92,7 @@ impl AgentProviderStore {
             db,
             env_key,
             cache: RwLock::new(Caches::default()),
+            pending_pins: Mutex::new(HashMap::new()),
         });
         store.rebuild().await?;
         Ok(store)
@@ -109,7 +118,8 @@ impl AgentProviderStore {
             let user = user.unwrap_or(&house);
             if provider == DEFAULT_PIN {
                 let (provider, model) = this
-                    .default_for(user)
+                    .take_pending_pin(user.0.as_str())
+                    .or_else(|| this.default_for(user))
                     .ok_or_else(|| "no LLM provider configured".to_string())?;
                 inner(Some(user), &provider, &model)
             } else {
@@ -128,6 +138,32 @@ impl AgentProviderStore {
             .get(user.0.as_str())
             .or_else(|| cache.defaults.get(HOUSE_USER))
             .cloned()
+    }
+
+    /// Park a one-shot `(provider, model)` pin consumed by `user`'s next
+    /// [`DEFAULT_PIN`] resolution — the creation-time model choice seam (#215,
+    /// ADR-0046). Callers must validate `provider` against the user's catalog
+    /// first ([`Self::knows_provider`]): a pin that fails to resolve only
+    /// *warns* and leaves the session on the engine-default `EchoLlm` stub.
+    pub fn set_pending_pin(&self, user: &str, provider: String, model: String) {
+        self.pending_pins
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(user.to_string(), (provider, model));
+    }
+
+    fn take_pending_pin(&self, user: &str) -> Option<(String, String)> {
+        self.pending_pins
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(user)
+    }
+
+    /// Whether `provider` exists in `user`'s composed catalog — a pure cache
+    /// read, the guard `SessionService::create` runs before parking a pin.
+    pub fn knows_provider(&self, user: &UserId, provider: &str) -> bool {
+        self.context(user)
+            .is_some_and(|ctx| ctx.catalog.provider(provider).is_some())
     }
 
     /// Whether *any* provider surface exists (a user row, a global row, or the
