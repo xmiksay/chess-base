@@ -15,18 +15,32 @@ const props = defineProps<{
   databases: Database[]
   currentId: number | null
   defaultDbId: number | null
+  // v-model:folder-id (issue #212): the parent owns the selection so it can
+  // mirror it to the URL (?folder=). Optional so the sidebar still works
+  // standalone with its internal state.
+  folderId?: number | null
 }>()
 
 const emit = defineEmits<{
   (e: 'open', id: number): void
   (e: 'error', message: string): void
+  (e: 'update:folderId', id: number | null): void
 }>()
 
 const studies = useStudiesStore()
 const folders = useFoldersStore()
 
-// null ⇒ root / "Unfiled".
-const selectedFolderId = ref<number | null>(null)
+// null ⇒ root / "Unfiled". Internal state two-way synced with the `folderId`
+// prop: prop changes (URL hydration) flow in, clicks flow out via the emit.
+const selectedFolderId = ref<number | null>(props.folderId ?? null)
+watch(
+  () => props.folderId,
+  (v) => {
+    selectedFolderId.value = v ?? null
+  },
+)
+watch(selectedFolderId, (v) => emit('update:folderId', v))
+
 const newName = ref('')
 const newDb = ref<number | null>(null)
 const newRootFolder = ref('')
@@ -36,8 +50,6 @@ const showNewRootFolder = ref(false)
 const visibleStudies = computed(() =>
   studies.list.filter((s) => (s.folder_id ?? null) === selectedFolderId.value),
 )
-
-defineExpose({ selectedFolderId })
 
 function fail(e: unknown) {
   emit('error', String((e as Error)?.message ?? e))

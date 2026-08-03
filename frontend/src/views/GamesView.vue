@@ -4,7 +4,7 @@
 // click moves/variations in the tree, or play an off-line move to branch. The
 // engine review (analyze/export, eval graph, why-note) lives in GameReviewPanel.
 import { onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import Board from '../components/Board.vue'
 import BoardControls from '../components/BoardControls.vue'
 import MoveTree from '../components/MoveTree.vue'
@@ -16,12 +16,14 @@ import { useGamesStore, type GameSortField } from '../stores/games'
 import { useReviewStore } from '../stores/review'
 import { useSettingsStore } from '../stores/settings'
 import { useBoardOverlays } from '../lib/useBoardOverlays'
+import { numericParam } from '../lib/routeParam'
 import type { BoardMove, Database, GameRow } from '../types'
 
 const games = useGamesStore()
 const review = useReviewStore()
 const settings = useSettingsStore()
 const router = useRouter()
+const route = useRoute()
 
 // Multi-select for merging games into one repertoire study (issue #170). Ids stay
 // valid across the current database's pages, so a selection survives paging.
@@ -106,6 +108,39 @@ async function onSelectDatabase() {
   await games.selectDatabase(selectedDb.value)
 }
 
+// --- URL addressability (issue #212): /games/:id? + ?db= ---------------------
+
+// Selection → URL: mirror the open game and database so the view is deep-
+// linkable. `replace` (not `push`) keeps in-page selection out of the history
+// stack; the equality guard stops hydration from echoing a redundant navigation.
+watch(
+  () => [games.openGame?.id, games.databaseId] as const,
+  ([id, db]) => {
+    if (route.name !== 'games') return
+    if (numericParam(route.params.id) === (id ?? null) && numericParam(route.query.db) === (db ?? null)) return
+    void router.replace({
+      name: 'games',
+      params: id != null ? { id: String(id) } : {},
+      query: db != null ? { ...route.query, db: String(db) } : route.query,
+    })
+  },
+)
+
+// URL → selection: hydrate on back/forward (mount is handled in onMounted).
+watch(
+  () => [route.params.id, route.query.db] as const,
+  async () => {
+    if (route.name !== 'games') return
+    const db = numericParam(route.query.db)
+    if (db != null && db !== games.databaseId) {
+      selectedDb.value = db
+      await games.selectDatabase(db)
+    }
+    const id = numericParam(route.params.id)
+    if (id != null && id !== games.openGame?.id) await games.open(id)
+  },
+)
+
 function onKey(e: KeyboardEvent) {
   if (!games.openGame) return
   const target = e.target as HTMLElement | null
@@ -130,13 +165,20 @@ onMounted(async () => {
   api.health().then((h) => (engineEnabled.value = h.engine === true)).catch(() => {})
   try {
     databases.value = await api.databases.list()
-    // Preselect the user's default database, else the first available.
+    // Preselect the URL's ?db= (issue #212), else the user's default database,
+    // else the first available.
+    const urlDb = numericParam(route.query.db)
     const preferred =
-      databases.value.find((d) => d.id === settings.defaultDatabaseId) ?? databases.value[0]
+      databases.value.find((d) => d.id === urlDb) ??
+      databases.value.find((d) => d.id === settings.defaultDatabaseId) ??
+      databases.value[0]
     if (preferred) {
       selectedDb.value = preferred.id
       await onSelectDatabase()
     }
+    // Deep link straight to a game: /games/:id.
+    const gameId = numericParam(route.params.id)
+    if (gameId != null) await games.open(gameId)
   } catch (e) {
     loadError.value = String(e)
   }
