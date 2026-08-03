@@ -47,3 +47,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0039 | "Analyse study" does full review-grade classification, not just eval |
 | 0040 | Embed the entanglement agent engine (streaming WS assistant, per-user providers) |
 | 0041 | "Clear arrows" targets the live engine overlays, not hand-drawn shapes |
+| 0042 | Generated plan/threat arrows get clear semantics + a bulk clear |

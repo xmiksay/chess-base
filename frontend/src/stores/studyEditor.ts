@@ -17,7 +17,7 @@ import {
   sanPath,
   siblingIndex,
 } from '../lib/moveTree'
-import type { Annotation, AnalyseStats, BoardMove, Shape, Square } from '../types'
+import type { Annotation, AnalyseStats, BoardMove, ClearShapesScope, Shape, Square } from '../types'
 
 /** A chess.js seeded from a study's set-up `start_fen`, or the standard start
  *  when absent or malformed (a bad origin must not blank the board). */
@@ -156,6 +156,15 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
     return result.stats
   }
 
+  /**
+   * Bulk-remove board shapes across the whole study (issue #191): `'generated'`
+   * strips only the plan/threat arrows a generate/analyse pass pinned, keeping
+   * anything drawn by hand; `'all'` clears every shape.
+   */
+  async function clearShapes(scope: ClearShapesScope) {
+    studies.current = await api.studies.clearShapes(studyId.value!, scope)
+  }
+
   /** Promote a variation toward the mainline. */
   async function promote(id: number) {
     studies.current = await api.studies.promote(studyId.value!, id)
@@ -206,6 +215,7 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
     annotate,
     setShapes,
     analyseStudy,
+    clearShapes,
     promote,
     reorder,
     demote,

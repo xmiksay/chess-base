@@ -76,6 +76,11 @@ const ROUTE_MANIFEST: &[RouteEntry] = &[
     },
     RouteEntry {
         method: "POST",
+        path: "/api/studies/{id}/clear-shapes",
+        tool: "study_clear_shapes",
+    },
+    RouteEntry {
+        method: "POST",
         path: "/api/studies/{id}/moves",
         tool: "study_add_move",
     },

@@ -42,6 +42,7 @@ pub const GATED_TOOLS: &[&str] = &[
     "study_merge_games",
     "study_merge_danger",
     "study_analyse",
+    "study_clear_shapes",
     "game_save_as_study",
     "game_delete",
     "folder_create",
@@ -91,6 +92,7 @@ mod tests {
     fn gating_marks_only_mutating_tools() {
         assert!(requires_approval("study_create"));
         assert!(requires_approval("study_annotate"));
+        assert!(requires_approval("study_clear_shapes"));
         // The preprocessing tools return data, not mutations — they run without
         // approval, like the engine/DB reads (ADR-0027).
         assert!(!requires_approval("opening_tree"));
@@ -103,6 +105,6 @@ mod tests {
 
     #[test]
     fn gated_list_covers_the_mutating_surface() {
-        assert_eq!(GATED_TOOLS.len(), 18);
+        assert_eq!(GATED_TOOLS.len(), 19);
     }
 }

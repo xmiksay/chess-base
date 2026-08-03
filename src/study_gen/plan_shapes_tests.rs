@@ -129,10 +129,105 @@ async fn apply_shapes_threats_only_needs_no_analyzer() {
 }
 
 #[tokio::test]
-async fn apply_shapes_off_is_a_noop() {
+async fn apply_shapes_off_adds_nothing_to_an_empty_node() {
     let mut tree = single_node_tree(STARTPOS_FEN);
     apply_shapes(None, &mut tree, &ShapeConfig::default(), STD).await;
     assert!(tree.nodes[0].shapes.is_empty());
+}
+
+#[tokio::test]
+async fn apply_shapes_off_strips_stale_generated_arrows_but_keeps_user_shapes() {
+    // A node carrying a leftover generated arrow (from a prior pass) plus a
+    // shape the user drew themselves (issue #191).
+    let mut tree = single_node_tree(STARTPOS_FEN);
+    let user_shape = Shape {
+        orig: "e2".into(),
+        dest: Some("e4".into()),
+        brush: "green".into(),
+    };
+    tree.nodes[0].shapes = vec![
+        Shape {
+            orig: "g1".into(),
+            dest: Some("f3".into()),
+            brush: "plan1".into(),
+        },
+        Shape {
+            orig: "d5".into(),
+            dest: None,
+            brush: "threat".into(),
+        },
+        user_shape.clone(),
+    ];
+
+    apply_shapes(None, &mut tree, &ShapeConfig::default(), STD).await;
+
+    assert_eq!(tree.nodes[0].shapes, vec![user_shape]);
+}
+
+#[test]
+fn generated_brush_recognizes_plan_dimmed_and_threat() {
+    for brush in [
+        "plan1", "plan2", "plan3", "plan1d", "plan2d", "plan3d", "threat",
+    ] {
+        assert!(
+            generated_brush(brush),
+            "{brush} should be a generated brush"
+        );
+    }
+    for brush in ["green", "red", "plan4", ""] {
+        assert!(
+            !generated_brush(brush),
+            "{brush} should not be a generated brush"
+        );
+    }
+}
+
+#[test]
+fn merge_shapes_replaces_generated_and_keeps_user_shapes() {
+    let user_shape = Shape {
+        orig: "a1".into(),
+        dest: None,
+        brush: "yellow".into(),
+    };
+    let stale_plan = Shape {
+        orig: "g1".into(),
+        dest: Some("f3".into()),
+        brush: "plan1".into(),
+    };
+    let existing = vec![user_shape.clone(), stale_plan];
+    let fresh_plan = Shape {
+        orig: "b1".into(),
+        dest: Some("c3".into()),
+        brush: "plan1".into(),
+    };
+
+    let merged = merge_shapes(&existing, vec![fresh_plan.clone()]);
+
+    assert_eq!(merged, vec![user_shape, fresh_plan]);
+}
+
+#[test]
+fn merge_shapes_with_empty_generated_strips_every_generated_brush() {
+    let user_shape = Shape {
+        orig: "a1".into(),
+        dest: None,
+        brush: "yellow".into(),
+    };
+    let existing = vec![
+        user_shape.clone(),
+        Shape {
+            orig: "g1".into(),
+            dest: Some("f3".into()),
+            brush: "plan2d".into(),
+        },
+        Shape {
+            orig: "d5".into(),
+            dest: None,
+            brush: "threat".into(),
+        },
+    ];
+
+    assert_eq!(merge_shapes(&existing, Vec::new()), vec![user_shape]);
 }
 
 // --- tiny tree builders ---------------------------------------------------

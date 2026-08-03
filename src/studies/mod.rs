@@ -17,12 +17,15 @@ use sea_orm::{
 pub mod add_line;
 pub mod add_line_route;
 pub mod analyse;
+pub mod clear_shapes;
+pub mod clear_shapes_route;
 pub mod danger_route;
 pub mod mark_transpositions;
 pub mod mark_transpositions_route;
 pub mod merge;
 pub mod merge_danger;
 pub mod merge_danger_route;
+pub mod regen_shapes;
 pub mod routes;
 
 use std::collections::HashMap;

@@ -69,7 +69,20 @@ src/
                    review::classify, replacing any prior move-quality NAG ($1..$6)
                    with the fresh one (comments/shapes/positional NAGs are never
                    touched); returns the refreshed study plus an AnalyseStats
-                   classification/accuracy roll-up; POST /api/studies/{id}/analyse;
+                   classification/accuracy roll-up; POST /api/studies/{id}/analyse
+                   also takes optional plan_lines/threats (#191, ADR-0042): sending
+                   either — even 0/false — additionally runs regen_shapes.rs
+                   StudyService::regenerate_shapes, a separate engine walk (own file,
+                   mod.rs/routes.rs are over the file-size cap) that re-runs
+                   study_gen::plan_shapes over the study's *existing* tree and merges
+                   fresh shapes in per node via merge_shapes (drops only the
+                   generated-brush shapes — plan1..plan3/plan1d..plan3d/threat, see
+                   plan_shapes.rs's generated_brush — a node with nothing generated,
+                   or every layer off, has its stale generated arrows stripped;
+                   user-drawn shapes are never touched); clear_shapes.rs
+                   StudyService::clear_shapes (own router in clear_shapes_route.rs)
+                   bulk-removes shapes tree-wide in one call, {scope: "generated" |
+                   "all"}, POST /api/studies/{id}/clear-shapes ← unit-tested;
                    folders (#164, ADR-0030): studies carry folder_id (organize) +
                    origin_game_id (analysis↔game); set_folder, studies_for_game, and
                    create_from_game (mainline → MoveTree, optional engine review via
@@ -142,10 +155,15 @@ src/
                    generate.rs (#115) orchestrator: tree → (optional plan/threat
                    shapes) → annotate/verify → persist a study; exposed via POST
                    /api/studies/generate (NOT MCP, ADR-0027);
-                   plan_shapes.rs (ADR-0028→0029) pure pass: pin engine "plan" PV
-                   trajectories (plan1..plan3) + static "threat" arrows onto every
-                   node as shapes; opt-in via generate `plan_lines`/`threats` and
-                   the MCP `opening_tree` tool;
+                   plan_shapes.rs (ADR-0028→0029, clear semantics #191/ADR-0042)
+                   pure pass: pin engine "plan" PV trajectories (plan1..plan3) +
+                   static "threat" arrows onto every node as shapes; opt-in via
+                   generate `plan_lines`/`threats` and the MCP `opening_tree` tool;
+                   generated_brush recognizes plan1..plan3/plan1d..plan3d (the
+                   frontend live-overlay's dimmed brushes)/threat, and merge_shapes
+                   replaces only those in a node's existing shapes — user-drawn
+                   ones always survive — the seam `studies::regen_shapes` reuses to
+                   regenerate shapes on an *existing* study;
                    danger.rs (#131, ADR-0026) pure "danger-map" classifier — trap
                    weapon/hope-chess + only-move gap (engine as adjudicator);
                    danger_tree.rs (#177) pure DangerNode/DangerTree/DangerTag/
@@ -189,12 +207,14 @@ src/
   auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
   server/          Axum app: routes, state, embedded SPA, browser launch,
                    MCP /mcp + its auth (OAuth 2.1 / service token, ADR 0016).
-                   routes/mcp/ tools (39, #125 then #183/ADR-0036 — symmetrical to
+                   routes/mcp/ tools (40, #125 then #183/ADR-0036 — symmetrical to
                    the HTTP API, one carve-out list in symmetry.rs): engine_analyse +
                    analyse_position/analyse_game; study_tools.rs study_list/create/
                    get/import_pgn/add_move/annotate/export; study_node_tools.rs
                    set_folder/set_shapes/promote_node/reorder_node;
-                   study_repertoire_tools.rs merge_games/merge_danger/analyse;
+                   study_repertoire_tools.rs merge_games/merge_danger/analyse (takes
+                   optional plan_lines/threats too, #191/ADR-0042)/clear_shapes
+                   ({scope: "generated" | "all"}, #191, gated);
                    db_tools.rs list_databases/db_list_games/db_read_game (+
                    `annotated` flag, #120)/db_position_report/db_reference_games;
                    db_export_tools.rs db_export_games (bulk PGN, #171);
@@ -224,6 +244,10 @@ frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
                    to its NAG glyph via lib/dangerShapes' formatEval. Engine options
                    (MultiPV/Threads/Hash) persist
                    per user via settings (lib/useEnginePrefs); analysis on by default.
+                   StudyAnalysis.vue: "Remove generated arrows"/"Remove all arrows"
+                   (#191, ADR-0042) call studyEditor's clearShapes action
+                   (POST .../clear-shapes); "all" confirms first since it also wipes
+                   hand-drawn shapes, "generated" doesn't since it never does.
                    Assistant (#198): stores/assistant.ts reconnecting WS client over
                    the pure lib/assistantStream.ts fold → AssistantView streaming
                    bubbles/tool chips/approval+question cards; ProvidersSettings

@@ -122,4 +122,64 @@ describe('StudyAnalysis', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-test="analyse-error"]').text()).toContain('no engine')
   })
+
+  it('removes generated arrows without asking for confirmation (#191)', async () => {
+    const engine = useEngineStore()
+    vi.spyOn(engine, 'connect').mockImplementation(() => {})
+    vi.spyOn(engine, 'disconnect').mockImplementation(() => {})
+    const confirmSpy = vi.spyOn(window, 'confirm')
+
+    const editor = useStudyEditorStore()
+    const clearShapes = vi.spyOn(editor, 'clearShapes').mockResolvedValue()
+
+    const wrapper = mount(StudyAnalysis)
+    await wrapper.find('[data-test="clear-generated-shapes"]').trigger('click')
+
+    expect(clearShapes).toHaveBeenCalledWith('generated')
+    expect(confirmSpy).not.toHaveBeenCalled()
+  })
+
+  it('asks for confirmation before removing all arrows, and skips the call when declined', async () => {
+    const engine = useEngineStore()
+    vi.spyOn(engine, 'connect').mockImplementation(() => {})
+    vi.spyOn(engine, 'disconnect').mockImplementation(() => {})
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    const editor = useStudyEditorStore()
+    const clearShapes = vi.spyOn(editor, 'clearShapes').mockResolvedValue()
+
+    const wrapper = mount(StudyAnalysis)
+    await wrapper.find('[data-test="clear-all-shapes"]').trigger('click')
+
+    expect(clearShapes).not.toHaveBeenCalled()
+  })
+
+  it('removes all arrows once confirmed', async () => {
+    const engine = useEngineStore()
+    vi.spyOn(engine, 'connect').mockImplementation(() => {})
+    vi.spyOn(engine, 'disconnect').mockImplementation(() => {})
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    const editor = useStudyEditorStore()
+    const clearShapes = vi.spyOn(editor, 'clearShapes').mockResolvedValue()
+
+    const wrapper = mount(StudyAnalysis)
+    await wrapper.find('[data-test="clear-all-shapes"]').trigger('click')
+
+    expect(clearShapes).toHaveBeenCalledWith('all')
+  })
+
+  it('surfaces a clear-shapes error', async () => {
+    const engine = useEngineStore()
+    vi.spyOn(engine, 'connect').mockImplementation(() => {})
+    vi.spyOn(engine, 'disconnect').mockImplementation(() => {})
+
+    const editor = useStudyEditorStore()
+    vi.spyOn(editor, 'clearShapes').mockRejectedValue(new Error('nope'))
+
+    const wrapper = mount(StudyAnalysis)
+    await wrapper.find('[data-test="clear-generated-shapes"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-test="clear-shapes-error"]').text()).toContain('nope')
+  })
 })
