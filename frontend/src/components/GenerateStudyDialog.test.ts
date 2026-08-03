@@ -4,12 +4,28 @@ import { setActivePinia, createPinia } from 'pinia'
 import GenerateStudyDialog from './GenerateStudyDialog.vue'
 import { STARTPOS_FEN } from '../lib/fen'
 
-// Stub the API so the dialog can list databases without a network call.
+// Stub the API so the dialog can list databases (and the ModelSelect its
+// provider rows) without a network call.
 vi.mock('../api', () => ({
   api: {
     databases: {
       list: vi.fn().mockResolvedValue([
         { id: 2, owner_id: null, name: 'Repertoire', kind: 'own', index_depth: null, global: false },
+      ]),
+    },
+    providers: {
+      list: vi.fn().mockResolvedValue([
+        {
+          id: 1,
+          name: 'anthropic',
+          wire: 'anthropic',
+          model: 'claude-a',
+          base_url: null,
+          has_key: true,
+          is_default: true,
+          is_global: false,
+          models: ['claude-a', 'claude-b'],
+        },
       ]),
     },
   },
@@ -76,6 +92,27 @@ describe('GenerateStudyDialog', () => {
 
     expect(generate).toHaveBeenCalledWith(
       expect.objectContaining({ plan_lines: 2, threats: true }),
+    )
+  })
+
+  // The exact-body assertion above doubles as the omission check: with the
+  // default model selected, neither `provider` nor `model` is sent (#214).
+  it('sends provider and model when a non-default model is picked', async () => {
+    const studies = useStudiesStore()
+    const generate = vi
+      .spyOn(studies, 'generate')
+      .mockResolvedValue({ id: 9, database_id: 2, name: 'Najdorf', global: false, node_count: 12, rejected: 0 })
+
+    const wrapper = mount(GenerateStudyDialog, { props: { llmEnabled: true } })
+    await flushPromises()
+
+    await wrapper.find('[data-test="name"]').setValue('Najdorf')
+    await wrapper.find('[data-test="model-select"]').setValue('anthropic\u001fclaude-b')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'anthropic', model: 'claude-b' }),
     )
   })
 

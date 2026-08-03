@@ -168,6 +168,70 @@ async fn resolve_default_prefers_the_users_row_over_the_global_one() {
     );
 }
 
+/// Issue #214: `list` enriches each row with its selectable models — the row's
+/// own model first, then the builtin catalog's donations for a same-named
+/// provider; a name the catalog doesn't know lists the own model only.
+#[tokio::test]
+async fn list_enriches_models_from_the_builtin_catalog() {
+    let svc = ProviderService::new(mem_db().await);
+    let alice = plain("alice");
+    svc.upsert(&alice, input("anthropic", "my-model"))
+        .await
+        .expect("anthropic upsert");
+    svc.upsert(&alice, input("mycustom", "solo-model"))
+        .await
+        .expect("custom upsert");
+
+    let rows = svc.list(&alice).await.expect("list");
+    let anthropic = rows
+        .iter()
+        .find(|r| r.name == "anthropic")
+        .expect("anthropic row");
+    assert_eq!(anthropic.models[0], "my-model", "own model first");
+    assert!(
+        anthropic.models.len() > 1,
+        "builtin anthropic catalog must donate models, got {:?}",
+        anthropic.models
+    );
+    let unique: std::collections::HashSet<&String> = anthropic.models.iter().collect();
+    assert_eq!(unique.len(), anthropic.models.len(), "models are deduped");
+
+    let custom = rows.iter().find(|r| r.name == "mycustom").expect("row");
+    assert_eq!(
+        custom.models,
+        vec!["solo-model".to_string()],
+        "no catalog match ⇒ own model only"
+    );
+}
+
+/// A row whose own model is itself a catalog entry must not list it twice.
+#[tokio::test]
+async fn catalog_model_as_own_model_is_not_duplicated() {
+    let svc = ProviderService::new(mem_db().await);
+    let bob = plain("bob");
+    let catalog_model = Catalog::builtin()
+        .provider("anthropic")
+        .expect("builtin anthropic")
+        .models[0]
+        .id
+        .clone();
+    svc.upsert(&bob, input("anthropic", &catalog_model))
+        .await
+        .expect("upsert");
+
+    let rows = svc.list(&bob).await.expect("list");
+    let dupes = rows[0]
+        .models
+        .iter()
+        .filter(|m| **m == catalog_model)
+        .count();
+    assert_eq!(
+        dupes, 1,
+        "own model doubling as a catalog entry stays unique"
+    );
+    assert_eq!(rows[0].models[0], catalog_model, "own model stays first");
+}
+
 #[tokio::test]
 async fn delete_is_owner_or_admin_for_global() {
     let svc = ProviderService::new(mem_db().await);

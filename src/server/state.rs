@@ -3,6 +3,8 @@
 use std::sync::Arc;
 
 use axum::http::request::Parts;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use sea_orm::DatabaseConnection;
 
 use crate::ai::agent::{AgentEngine, AgentProviderStore};
@@ -64,6 +66,61 @@ impl AppState {
             }
         }
     }
+
+    /// As [`Self::llm_for`], but honoring an explicit per-request `(provider,
+    /// model)` choice (issue #214). No `provider` ⇒ the caller's default row
+    /// (any `model` override is applied downstream, as today); a named
+    /// `provider` resolves that row for this user through the same resolver
+    /// seam the agent engine uses, and requires `model`. A choice the resolver
+    /// rejects (unknown name, unusable row) is the caller's error, distinct
+    /// from "nothing configured".
+    pub fn llm_for_choice(
+        &self,
+        user: &CurrentUser,
+        provider: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<Arc<dyn LlmProvider>, LlmChoiceError> {
+        let Some(name) = provider else {
+            return self.llm_for(user).ok_or(LlmChoiceError::Unconfigured);
+        };
+        let Some(model) = model else {
+            return Err(LlmChoiceError::Invalid(
+                "`provider` requires `model` to be set".to_string(),
+            ));
+        };
+        let engine = self.agent().ok_or(LlmChoiceError::Unconfigured)?;
+        let uid = UserId::new(user.id.clone());
+        let resolved = StackLlmProvider::resolve(&engine.resolver, Some(&uid), name, model)
+            .map_err(|e| LlmChoiceError::Invalid(e.to_string()))?;
+        Ok(Arc::new(resolved))
+    }
+}
+
+/// Why [`AppState::llm_for_choice`] failed — the routes map these onto HTTP
+/// statuses via the [`IntoResponse`] impl below.
+#[derive(Debug)]
+pub enum LlmChoiceError {
+    /// No provider surface at all (no agent engine / nothing configured) — the
+    /// routes' long-standing 503.
+    Unconfigured,
+    /// The caller's explicit provider/model choice is invalid — a 400 carrying
+    /// the resolver's message (never keys or internals).
+    Invalid(String),
+}
+
+impl IntoResponse for LlmChoiceError {
+    fn into_response(self) -> Response {
+        match self {
+            LlmChoiceError::Unconfigured => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "No language model configured: add an LLM provider to enable study generation.",
+            )
+                .into_response(),
+            LlmChoiceError::Invalid(msg) => {
+                crate::server::error::error_response(StatusCode::BAD_REQUEST, msg)
+            }
+        }
+    }
 }
 
 impl AppState {
@@ -87,3 +144,6 @@ impl AppState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

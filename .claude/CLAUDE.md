@@ -122,11 +122,18 @@ src/
                    entanglement.rs StackLlmProvider (#198 step 6): resolves per-user
                    (provider, model) via the agent engine's ModelResolver, drains the
                    backend stream to one CompletionResponse; routes get it per request
-                   from AppState::llm_for(&user) (None ⇒ 503, no process-wide provider)
-                   ← unit-tested
+                   from AppState::llm_for(&user) (None ⇒ 503, no process-wide provider);
+                   AppState::llm_for_choice (#214) honors an explicit per-request
+                   provider/model pick on POST /api/studies/generate{,-danger-map}
+                   (`provider` requires `model`; a bad choice is the caller's 400,
+                   distinct from the unconfigured 503) ← unit-tested
   ai/providers.rs  ownership-aware ProviderService over llm_providers (#20, per-user #198):
                    own + global (admin) rows, keys write-only (has_key flag), per-owner
-                   is_default, resolve_default_for (own → global → None)     ← unit-tested
+                   is_default, resolve_default_for (own → global → None); ProviderInfo
+                   carries `models` (#214: own model first + builtin-catalog donations
+                   for a same-named provider, deduped — the SPA model picker's source,
+                   with FE helpers in lib/providers.ts + shared ModelSelect.vue used by
+                   both generate dialogs)     ← unit-tested
   ai/agent/        embedded entanglement 0.6.0 agent engine (#198, ADR-0040 — replaces
                    the hand-rolled ai/assistant; m0008 drops its tables, adds
                    agent_grants/agent_events/agent_sessions): SYSTEM_PROMPT +

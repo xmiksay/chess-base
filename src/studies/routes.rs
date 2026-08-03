@@ -165,6 +165,10 @@ struct GenerateBody {
     /// LLM model id; defaults to the provider's default model.
     #[serde(default)]
     model: Option<String>,
+    /// Provider row (by name) to run the LLM pass on (issue #214); requires
+    /// `model`. Omitted ⇒ the caller's default provider.
+    #[serde(default)]
+    provider: Option<String>,
     /// Tree pruning thresholds; defaults to [`TreeConfig::default`].
     #[serde(default)]
     tree: Option<TreeConfig>,
@@ -288,9 +292,19 @@ async fn generate(
     user: CurrentUser,
     Json(body): Json<GenerateBody>,
 ) -> Result<Response, Response> {
-    // A missing engine / model is an operator-configuration gap, not a leaked
-    // internal — surface the guidance verbatim (like the analysis WS), rather than
-    // through the 5xx-masking `error_response`.
+    // An explicit provider choice (issue #214) resolves before the engine guard
+    // so a bad choice is the caller's 400 even on an engine-less install; the
+    // default path keeps its engine-first 503 ordering. A missing engine /
+    // model is an operator-configuration gap, not a leaked internal — surface
+    // the guidance verbatim, rather than through the 5xx-masking `error_response`.
+    let chosen = match body.provider.as_deref() {
+        None => None,
+        Some(name) => Some(
+            state
+                .llm_for_choice(&user, Some(name), body.model.as_deref())
+                .map_err(IntoResponse::into_response)?,
+        ),
+    };
     let engine = state.engine_service.as_ref().ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -298,13 +312,12 @@ async fn generate(
         )
             .into_response()
     })?;
-    let provider = state.llm_for(&user).ok_or_else(|| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "No language model configured: add an LLM provider to enable study generation.",
-        )
-            .into_response()
-    })?;
+    let provider = match chosen {
+        Some(p) => p,
+        None => state
+            .llm_for_choice(&user, None, None)
+            .map_err(IntoResponse::into_response)?,
+    };
 
     let color = match body
         .color

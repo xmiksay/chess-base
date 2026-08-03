@@ -72,6 +72,10 @@ struct DangerMapBody {
     /// LLM model id; defaults to the provider's default model.
     #[serde(default)]
     model: Option<String>,
+    /// Provider row (by name) to run the LLM pass on (issue #214); requires
+    /// `model`. Omitted ⇒ the caller's default provider.
+    #[serde(default)]
+    provider: Option<String>,
     /// Walk shape + classifier thresholds; partial overrides over the defaults.
     #[serde(default)]
     spine: SpineConfig,
@@ -157,8 +161,17 @@ async fn generate(
     let spine = from_pgn_with_start(&body.spine_pgn, &start_fen)
         .map_err(|e| error_response(StatusCode::BAD_REQUEST, format!("invalid spine PGN: {e}")))?;
 
-    // A missing engine / model is an operator-configuration gap, not a leaked
-    // internal — surface the guidance verbatim (like `POST /generate`).
+    // An explicit provider choice (issue #214) resolves before the engine guard
+    // so a bad choice is the caller's 400 even on an engine-less install (like
+    // `POST /generate`); a missing engine / model stays a verbatim-guidance 503.
+    let chosen = match body.provider.as_deref() {
+        None => None,
+        Some(name) => Some(
+            state
+                .llm_for_choice(&user, Some(name), body.model.as_deref())
+                .map_err(IntoResponse::into_response)?,
+        ),
+    };
     let engine = state.engine_service.as_ref().ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -166,13 +179,12 @@ async fn generate(
         )
             .into_response()
     })?;
-    let provider = state.llm_for(&user).ok_or_else(|| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "No language model configured: add an LLM provider to enable study generation.",
-        )
-            .into_response()
-    })?;
+    let provider = match chosen {
+        Some(p) => p,
+        None => state
+            .llm_for_choice(&user, None, None)
+            .map_err(IntoResponse::into_response)?,
+    };
 
     let params = DangerStudyParams {
         database_id: body.database_id,

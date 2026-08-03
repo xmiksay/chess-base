@@ -416,6 +416,7 @@ export interface GenerateBody {
   global?: boolean
   start_fen?: string // defaults to startpos server-side
   model?: string
+  provider?: string // provider row (by name) to run the LLM pass on (#214); requires model
   engine_depth?: number // per-position search depth, capped server-side
   tree?: TreeConfig
   plan_lines?: number // pin top-N engine "plan" arrows per node (0–3, 0 = off)
@@ -458,6 +459,7 @@ export interface DangerMapBody {
   global?: boolean
   start_fen?: string // defaults to startpos server-side
   model?: string
+  provider?: string // provider row (by name) to run the LLM pass on (#214); requires model
   spine?: SpineConfig
   movetime_ms?: number // per-variation engine budget, capped server-side
   multipv?: number // MultiPV line count, floored at 2 server-side
@@ -748,6 +750,8 @@ export interface ProviderInfo {
   has_key: boolean
   is_default: boolean
   is_global: boolean
+  /** Selectable models (#214): the row's own model first, then builtin-catalog donations. */
+  models: string[]
 }
 
 /** Create/update body; `api_key` omitted or blank keeps the stored key. */
