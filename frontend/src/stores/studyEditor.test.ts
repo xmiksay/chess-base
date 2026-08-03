@@ -154,7 +154,7 @@ describe('studyEditor store', () => {
     expect(result).toEqual(stats)
   })
 
-  it('analyseStudy forwards an explicit depth', async () => {
+  it('analyseStudy forwards the pass options as-is (#216)', async () => {
     const stats: AnalyseStats = {
       nodes_analysed: 0,
       summary: {
@@ -164,8 +164,12 @@ describe('studyEditor store', () => {
     }
     vi.mocked(api.studies.analyse).mockResolvedValue({ ...sampleStudy(), stats })
 
-    await editor.analyseStudy(12)
-    expect(api.studies.analyse).toHaveBeenCalledWith(10, 12)
+    await editor.analyseStudy({ depth: 12 })
+    expect(api.studies.analyse).toHaveBeenCalledWith(10, { depth: 12 })
+
+    // The explicit strip-arrows case (#191): 0/false must reach the API intact.
+    await editor.analyseStudy({ plan_lines: 0, threats: false })
+    expect(api.studies.analyse).toHaveBeenCalledWith(10, { plan_lines: 0, threats: false })
   })
 
   it('clearShapes removes shapes across the study and refreshes the tree (#191)', async () => {

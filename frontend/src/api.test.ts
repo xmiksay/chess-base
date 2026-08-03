@@ -63,3 +63,27 @@ describe('api token attachment', () => {
     expect(window.localStorage.getItem(TOKEN_KEY)).toBe(null)
   })
 })
+
+// The analyse body must carry exactly the fields the caller set (#216): sending
+// `plan_lines`/`threats` — even 0/false — opts into the #191 shape
+// regeneration, so an absent field has different semantics than a default one.
+describe('api.studies.analyse body', () => {
+  it('sends an empty body by default and only the fields the caller set', async () => {
+    const fetchMock = mockFetch()
+    await api.studies.analyse(5)
+    const [path, opts] = fetchMock.mock.calls[0]
+    expect(path).toBe('/api/studies/5/analyse')
+    expect(JSON.parse(opts.body)).toEqual({})
+
+    await api.studies.analyse(5, { depth: 20 })
+    const [, second] = fetchMock.mock.calls[1]
+    expect(JSON.parse(second.body)).toEqual({ depth: 20 })
+  })
+
+  it('keeps explicit 0/false shape fields — the strip-stale-arrows opt-in', async () => {
+    const fetchMock = mockFetch()
+    await api.studies.analyse(5, { plan_lines: 0, threats: false })
+    const [, opts] = fetchMock.mock.calls[0]
+    expect(JSON.parse(opts.body)).toEqual({ plan_lines: 0, threats: false })
+  })
+})

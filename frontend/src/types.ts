@@ -210,6 +210,19 @@ export interface AnalyseResult extends Study {
 }
 
 /**
+ * Options for `POST /api/studies/{id}/analyse` (#162, shapes #191): `depth`
+ * overrides the per-position search depth (omitted ⇒ server default). Sending
+ * `plan_lines` and/or `threats` — even `0`/`false` — additionally regenerates
+ * the generated plan/threat arrows, stripping a layer's stale arrows when it
+ * is off; omitting both leaves existing shapes untouched.
+ */
+export interface AnalyseOptions {
+  depth?: number
+  plan_lines?: number
+  threats?: boolean
+}
+
+/**
  * Scope for `POST /api/studies/{id}/clear-shapes` (issue #191): `'generated'`
  * strips only the plan/threat arrows a generate/analyse pass pinned, keeping
  * anything drawn by hand; `'all'` clears every shape on every node.

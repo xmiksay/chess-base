@@ -17,7 +17,15 @@ import {
   sanPath,
   siblingIndex,
 } from '../lib/moveTree'
-import type { Annotation, AnalyseStats, BoardMove, ClearShapesScope, Shape, Square } from '../types'
+import type {
+  Annotation,
+  AnalyseOptions,
+  AnalyseStats,
+  BoardMove,
+  ClearShapesScope,
+  Shape,
+  Square,
+} from '../types'
 
 /** A chess.js seeded from a study's set-up `start_fen`, or the standard start
  *  when absent or malformed (a bad origin must not blank the board). */
@@ -148,10 +156,11 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
    * engine (#162, #189): a `!`/`?!`/`?`/`??` NAG replaces any prior quality
    * NAG; comments/shapes/positional NAGs are left untouched. Stores the
    * refreshed study into `current` and returns the classification roll-up for
-   * the caller to display.
+   * the caller to display. Passing `plan_lines`/`threats` in `opts` — even
+   * `0`/`false` — additionally regenerates the generated arrows (#191).
    */
-  async function analyseStudy(depth?: number): Promise<AnalyseStats> {
-    const result = await api.studies.analyse(studyId.value!, depth)
+  async function analyseStudy(opts?: AnalyseOptions): Promise<AnalyseStats> {
+    const result = await api.studies.analyse(studyId.value!, opts)
     studies.current = result
     return result.stats
   }

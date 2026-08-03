@@ -32,6 +32,17 @@ function plan(over: Partial<PlanLine> = {}): PlanLine {
   }
 }
 
+/** A renderable stats roll-up for mocking `analyseStudy` resolutions. */
+function emptyStats(): AnalyseStats {
+  return {
+    nodes_analysed: 0,
+    summary: {
+      white: { acpl: 0, accuracy: 100, inaccuracies: 0, mistakes: 0, blunders: 0 },
+      black: { acpl: 0, accuracy: 100, inaccuracies: 0, mistakes: 0, blunders: 0 },
+    },
+  }
+}
+
 beforeEach(() => {
   window.localStorage.clear()
   setActivePinia(createPinia())
@@ -107,6 +118,53 @@ describe('StudyAnalysis', () => {
     expect(wrapper.find('[data-test="analyse-stats-white"]').text()).toContain('91.2%')
     expect(wrapper.find('[data-test="analyse-stats-black"]').text()).toContain('60.5%')
     expect(wrapper.find('[data-test="analyse-stats-black"]').text()).toContain('1 ??')
+  })
+
+  it('submits an empty options body by default, and only depth when set (#216)', async () => {
+    const engine = useEngineStore()
+    vi.spyOn(engine, 'connect').mockImplementation(() => {})
+    vi.spyOn(engine, 'disconnect').mockImplementation(() => {})
+
+    const editor = useStudyEditorStore()
+    const analyse = vi.spyOn(editor, 'analyseStudy').mockResolvedValue(emptyStats())
+
+    const wrapper = mount(StudyAnalysis)
+    // The shape sub-options stay hidden until the master checkbox is ticked.
+    expect(wrapper.find('[data-test="analyse-shape-options"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="analyse-study"]').trigger('click')
+    expect(analyse).toHaveBeenCalledWith({})
+
+    await wrapper.find('[data-test="analyse-depth"]').setValue(14)
+    await wrapper.find('[data-test="analyse-study"]').trigger('click')
+    expect(analyse).toHaveBeenLastCalledWith({ depth: 14 })
+  })
+
+  it('submits plan_lines/threats once opted in — including the explicit 0/false strip case (#191)', async () => {
+    const engine = useEngineStore()
+    vi.spyOn(engine, 'connect').mockImplementation(() => {})
+    vi.spyOn(engine, 'disconnect').mockImplementation(() => {})
+
+    const editor = useStudyEditorStore()
+    const analyse = vi.spyOn(editor, 'analyseStudy').mockResolvedValue(emptyStats())
+
+    const wrapper = mount(StudyAnalysis)
+    await wrapper.find('[data-test="analyse-regen-shapes"]').setValue(true)
+    await wrapper.find('[data-test="analyse-plan-lines"]').setValue(3)
+    await wrapper.find('[data-test="analyse-threats"]').setValue(true)
+    await wrapper.find('[data-test="analyse-study"]').trigger('click')
+    expect(analyse).toHaveBeenLastCalledWith({ plan_lines: 3, threats: true })
+
+    // 0/false is NOT "omit": it opts in and strips the stale generated arrows.
+    await wrapper.find('[data-test="analyse-plan-lines"]').setValue(0)
+    await wrapper.find('[data-test="analyse-threats"]').setValue(false)
+    await wrapper.find('[data-test="analyse-study"]').trigger('click')
+    expect(analyse).toHaveBeenLastCalledWith({ plan_lines: 0, threats: false })
+
+    // Unticking the master checkbox omits both fields again.
+    await wrapper.find('[data-test="analyse-regen-shapes"]').setValue(false)
+    await wrapper.find('[data-test="analyse-study"]').trigger('click')
+    expect(analyse).toHaveBeenLastCalledWith({})
   })
 
   it('surfaces an analyse error', async () => {

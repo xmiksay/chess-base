@@ -9,7 +9,7 @@ import { useEngineStore } from '../stores/engine'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { plansToShapes } from '../lib/plansToShapes'
 import { useEnginePrefs } from '../lib/useEnginePrefs'
-import type { AnalyseStats, EngineLine, Shape } from '../types'
+import type { AnalyseOptions, AnalyseStats, EngineLine, Shape } from '../types'
 import EnginePanel from './EnginePanel.vue'
 
 const engine = useEngineStore()
@@ -24,12 +24,28 @@ const analysing = ref(false)
 const analyseError = ref<string | null>(null)
 const analyseStats = ref<AnalyseStats | null>(null)
 
+// Pass options (#216): a blank depth defers to the server default. Ticking
+// "Also update generated arrows" opts into the #191 shape regeneration —
+// plan_lines/threats are then always sent, even 0/false, which strips a
+// switched-off layer's stale generated arrows; unticked, both stay omitted
+// so existing shapes are left untouched.
+const analyseDepth = ref<number | ''>('')
+const regenShapes = ref(false)
+const planLines = ref(2)
+const threatArrows = ref(false)
+
 async function analyseStudy() {
   if (analysing.value) return
   analyseError.value = null
   analysing.value = true
+  const opts: AnalyseOptions = {}
+  if (typeof analyseDepth.value === 'number') opts.depth = analyseDepth.value
+  if (regenShapes.value) {
+    opts.plan_lines = planLines.value
+    opts.threats = threatArrows.value
+  }
   try {
-    analyseStats.value = await editor.analyseStudy()
+    analyseStats.value = await editor.analyseStudy(opts)
   } catch (e) {
     analyseError.value = String((e as Error)?.message ?? e)
   } finally {
@@ -135,6 +151,59 @@ async function pinLine(line: EngineLine) {
     <!-- Bulk classification pass (#162, #189): writes [%eval] and a
          !/?!/?/?? NAG on every node from the engine. -->
     <div class="space-y-1">
+      <!-- Pass options (#216): depth override + opt-in shape regeneration. -->
+      <div class="grid grid-cols-2 gap-2 text-xs">
+        <label class="flex flex-col gap-1">
+          Depth
+          <input
+            v-model.number="analyseDepth"
+            data-test="analyse-depth"
+            type="number"
+            min="1"
+            placeholder="default"
+            class="rounded border border-border px-1 py-0.5"
+          >
+        </label>
+        <label class="flex items-center gap-2 self-end pb-1">
+          <input
+            v-model="regenShapes"
+            data-test="analyse-regen-shapes"
+            type="checkbox"
+          >
+          Also update generated arrows
+        </label>
+      </div>
+      <div
+        v-if="regenShapes"
+        class="space-y-1"
+        data-test="analyse-shape-options"
+      >
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <label class="flex flex-col gap-1">
+            Plan lines
+            <input
+              v-model.number="planLines"
+              data-test="analyse-plan-lines"
+              type="number"
+              min="0"
+              max="3"
+              class="rounded border border-border px-1 py-0.5"
+            >
+          </label>
+          <label class="flex items-center gap-2 self-end pb-1">
+            <input
+              v-model="threatArrows"
+              data-test="analyse-threats"
+              type="checkbox"
+            >
+            Threat arrows
+          </label>
+        </div>
+        <p class="text-xs text-muted">
+          0 plan lines / threats off strips that layer's stale generated arrows;
+          shapes you drew yourself are never touched.
+        </p>
+      </div>
       <button
         type="button"
         data-test="analyse-study"

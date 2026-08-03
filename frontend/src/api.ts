@@ -4,6 +4,7 @@ import type {
   AddLineBody,
   AddMoveResult,
   Annotation,
+  AnalyseOptions,
   AnalyseResult,
   ApiSettings,
   AuthResponse,
@@ -184,9 +185,17 @@ export const api = {
     // Fill `[%eval]` on every non-terminal node and classify each move (issue
     // #162, #189): a `!`/`?!`/`?`/`??` NAG replaces any prior quality NAG;
     // comments/shapes/positional NAGs stay put. Returns the refreshed study plus
-    // the classification roll-up; 503 when no engine is configured.
-    analyse: (id: number, depth?: number) =>
-      send<AnalyseResult>('POST', `/api/studies/${id}/analyse`, depth == null ? {} : { depth }),
+    // the classification roll-up; 503 when no engine is configured. Only fields
+    // the caller set reach the body: sending `plan_lines`/`threats` — even
+    // `0`/`false` — opts into regenerating the generated arrows (#191), so an
+    // absent field must stay absent rather than default.
+    analyse: (id: number, opts: AnalyseOptions = {}) => {
+      const body: AnalyseOptions = {}
+      if (opts.depth != null) body.depth = opts.depth
+      if (opts.plan_lines != null) body.plan_lines = opts.plan_lines
+      if (opts.threats != null) body.threats = opts.threats
+      return send<AnalyseResult>('POST', `/api/studies/${id}/analyse`, body)
+    },
     // Bulk-remove board shapes across the whole tree in one call (issue #191):
     // "generated" strips only the plan/threat arrows a generate/analyse pass
     // pinned, keeping anything drawn by hand; "all" clears every shape.
