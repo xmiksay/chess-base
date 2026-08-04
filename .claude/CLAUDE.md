@@ -47,7 +47,10 @@ src/
                    GET /api/games/{id}/export?annotated= — extended-PGN download (#120) ← unit-tested
   games/           GameService: list/get + DELETE /api/games/{id} (writable-scope
                    guard like databases; drops position_index rows first, SQLite FK
-                   is RESTRICT) ← unit-tested
+                   is RESTRICT); sharing (#211, ADR-0045): games.public (m0011) —
+                   get serves a public game to anyone (overrides a private owning
+                   DB for reads), set_public behind delete's permission chain, PUT
+                   /api/games/{id}/public ← unit-tested
   settings/        SettingsService: per-user UI prefs as one JSON blob; persists
                    engine settings engine_multipv (1..=5)/threads (1..=64)/hash_mb
                    (1..=4096), range-validated; GET/PUT /api/settings ← unit-tested
@@ -117,7 +120,12 @@ src/
                    list (games/export::linear_tree) and grafts it via
                    MoveTree::graft_subtree/resolve_line (dedup + an optional stats
                    comment on the line's final node), into a new study or an existing
-                   one, POST /api/studies/add-line (add_line_route.rs) ← unit-tested
+                   one, POST /api/studies/add-line (add_line_route.rs) ← unit-tested;
+                   sharing (#211, ADR-0045): studies.public (m0011) — read_scope
+                   widens get/studies_for_game with the public arm (the anonymous
+                   caller's ONLY arm: global non-public studies stay off the
+                   anonymous tier), set_public via PUT /api/studies/{id}/public
+                   (public_route.rs, own router — routes.rs is over the cap)
   ai/llm/          LlmProvider trait + DTOs (Epic 9 annotation seam); concrete client
                    entanglement.rs StackLlmProvider (#198 step 6): resolves per-user
                    (provider, model) via the agent engine's ModelResolver, drains the
@@ -236,6 +244,12 @@ src/
                    controlled from POST /oauth/register), whose csrf_token is
                    the CSRF defense; approving records oauth_consents so a
                    later authorize for the same pair skips the screen;
+                   public sharing #211/ADR-0045: PublicUser extractor
+                   (identity.rs) + AppState::resolve_public_user — six HTTP read
+                   routes (game get/tree/export/linked-studies, study
+                   get/export) serve public-flagged objects to a credential-less
+                   server-mode request as CurrentUser::anonymous (invalid token
+                   still 401s; annotated export denied anonymously);
                    POST /oauth/register is now auth-gated; refresh_token grant
                    rotation revokes the old row in place instead of deleting
                    it (oauth_tokens.family_id/revoked) — replaying an already-

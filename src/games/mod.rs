@@ -12,8 +12,8 @@ use std::collections::{HashMap, HashSet};
 
 use sea_orm::sea_query::{Expr, Func, SimpleExpr};
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, DbErr, EntityTrait, Order, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect, Select,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, Order, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, Select, Set,
 };
 use serde::Serialize;
 
@@ -120,6 +120,8 @@ pub struct GameSummary {
     pub white_elo: Option<i32>,
     pub black_elo: Option<i32>,
     pub ply_count: Option<i32>,
+    /// Shared publicly (issue #211): readable anonymously via its deep link.
+    pub public: bool,
 }
 
 /// A single game with everything needed to replay it on the board: the PGN
@@ -141,6 +143,8 @@ pub struct GameDetail {
     pub start_fen: Option<String>,
     pub ply_count: Option<i32>,
     pub pgn: Option<String>,
+    /// Shared publicly (issue #211): readable anonymously via its deep link.
+    pub public: bool,
 }
 
 /// One page of an offset-paginated game list, with `total` so the client can
@@ -202,6 +206,7 @@ impl GameService {
                 white_elo: g.white_elo,
                 black_elo: g.black_elo,
                 ply_count: g.ply_count,
+                public: g.public,
             })
             .collect();
         Ok(GamePage {
@@ -212,13 +217,19 @@ impl GameService {
         })
     }
 
-    /// A single game with its PGN, if it is visible to the caller.
+    /// A single game with its PGN, if it is visible to the caller. A game
+    /// flagged `public` (issue #211, ADR-0045) is readable by anyone holding
+    /// its id — deliberately overriding a private owning database for reads,
+    /// since the flag exists to make the deep link shareable. Writes are
+    /// untouched: they still run the full database-ownership chain.
     pub async fn get(&self, user: &CurrentUser, id: i32) -> Result<GameDetail, GameError> {
         let game = games::Entity::find_by_id(id)
             .one(&self.db)
             .await?
             .ok_or(GameError::NotFound)?;
-        self.assert_database_visible(user, game.database_id).await?;
+        if !game.public {
+            self.assert_database_visible(user, game.database_id).await?;
+        }
 
         let names = player_names(&self.db, std::slice::from_ref(&game)).await?;
         Ok(GameDetail {
@@ -237,6 +248,7 @@ impl GameService {
             start_fen: game.start_fen,
             ply_count: game.ply_count,
             pgn: game.pgn,
+            public: game.public,
         })
     }
 
@@ -267,6 +279,34 @@ impl GameService {
             .await?;
         games::Entity::delete_by_id(game.id).exec(&self.db).await?;
         Ok(())
+    }
+
+    /// Toggle a game's `public` sharing flag (issue #211, ADR-0045). Same
+    /// permission chain as [`delete`](Self::delete): the owning database must
+    /// be visible (own ∪ global, else the id stays hidden as `NotFound`) and
+    /// writable (own, or admin for a global one, else `Forbidden`). Returns
+    /// the refreshed detail so the caller re-renders from one response.
+    pub async fn set_public(
+        &self,
+        user: &CurrentUser,
+        id: i32,
+        public: bool,
+    ) -> Result<GameDetail, GameError> {
+        let game = games::Entity::find_by_id(id)
+            .one(&self.db)
+            .await?
+            .ok_or(GameError::NotFound)?;
+        self.assert_database_visible(user, game.database_id).await?;
+        let database = databases::Entity::find_by_id(game.database_id)
+            .one(&self.db)
+            .await?
+            .ok_or(GameError::NotFound)?;
+        assert_can_write(database.owner_id.as_deref(), user).map_err(|_| GameError::Forbidden)?;
+
+        let mut active: games::ActiveModel = game.into();
+        active.public = Set(public);
+        active.update(&self.db).await?;
+        self.get(user, id).await
     }
 
     /// Ensure the database is visible to the caller (own ∪ global), else NotFound.

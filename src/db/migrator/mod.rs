@@ -13,6 +13,7 @@ mod m0007_folders;
 mod m0008_agent_engine;
 mod m0009_sync_cursor_lifecycle;
 mod m0010_oauth_hardening;
+mod m0011_sharing;
 
 pub struct Migrator;
 
@@ -30,6 +31,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0008_agent_engine::Migration),
             Box::new(m0009_sync_cursor_lifecycle::Migration),
             Box::new(m0010_oauth_hardening::Migration),
+            Box::new(m0011_sharing::Migration),
         ]
     }
 }
@@ -42,8 +44,8 @@ mod tests {
     use sea_orm::{ActiveModelTrait, ConnectionTrait, Set};
     use sea_orm_migration::MigratorTrait;
 
-    /// The alter-heavy migrations (m0008 agent engine, m0009 sync cursor
-    /// lifecycle, m0010 oauth hardening) must reverse and re-apply cleanly on
+    /// The alter-heavy migrations (m0009 sync cursor lifecycle, m0010 oauth
+    /// hardening, m0011 sharing flags) must reverse and re-apply cleanly on
     /// SQLite — the ALTER-per-statement / index-before-column pitfalls live
     /// there.
     #[tokio::test]

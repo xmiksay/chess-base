@@ -24,7 +24,7 @@ use crate::search::position::{Color, PositionFilter};
 use crate::search::report::PositionReportService;
 use crate::server::download::pgn_attachment;
 use crate::server::error::error_response;
-use crate::server::identity::CurrentUser;
+use crate::server::identity::{CurrentUser, PublicUser};
 use crate::server::state::AppState;
 use crate::studies::{AnalyseStats, StudyError, StudyService};
 use crate::study_gen::spine::MultiAnalyzer;
@@ -84,6 +84,8 @@ struct StudySummary {
     folder_id: Option<i32>,
     /// The game an analysis was built from (issue #164); `None` ⇒ standalone.
     origin_game_id: Option<i32>,
+    /// Shared publicly (issue #211): readable anonymously via its deep link.
+    public: bool,
 }
 
 impl From<studies::Model> for StudySummary {
@@ -96,6 +98,7 @@ impl From<studies::Model> for StudySummary {
             name: m.name,
             folder_id: m.folder_id,
             origin_game_id: m.origin_game_id,
+            public: m.public,
         }
     }
 }
@@ -376,9 +379,11 @@ fn generate_error_response(error: GenerateError) -> Response {
     error_response(status, error.client_message())
 }
 
+// `PublicUser` on the read-only handlers below (issue #211, ADR-0045): a
+// logged-out visitor reaches a `public`-flagged study through its deep link.
 async fn get_one(
     State(state): State<AppState>,
-    user: CurrentUser,
+    PublicUser(user): PublicUser,
     Path(id): Path<i32>,
 ) -> Result<Response, StudyError> {
     let model = service(&state).get(&user, id).await?;
@@ -402,7 +407,7 @@ fn default_true() -> bool {
 /// (`GET /api/studies/{id}/export?eval=<bool>`).
 async fn export(
     State(state): State<AppState>,
-    user: CurrentUser,
+    PublicUser(user): PublicUser,
     Path(id): Path<i32>,
     Query(q): Query<ExportQuery>,
 ) -> Result<Response, StudyError> {
@@ -415,7 +420,7 @@ async fn export(
 /// annotations (`[%eval]`/NAGs/comments/shapes).
 async fn export_lichess(
     State(state): State<AppState>,
-    user: CurrentUser,
+    PublicUser(user): PublicUser,
     Path(id): Path<i32>,
 ) -> Result<Response, StudyError> {
     let pgn = service(&state).export_lichess(&user, id).await?;

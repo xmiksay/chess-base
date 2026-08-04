@@ -10,8 +10,8 @@
 //! global study requires admin.
 
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder,
-    Set,
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, QueryFilter,
+    QueryOrder, Set,
 };
 
 pub mod add_line;
@@ -25,6 +25,7 @@ pub mod mark_transpositions_route;
 pub mod merge;
 pub mod merge_danger;
 pub mod merge_danger_route;
+pub mod public_route;
 pub mod regen_shapes;
 pub mod routes;
 
@@ -284,15 +285,15 @@ impl StudyService {
         Ok(active.update(&self.db).await?)
     }
 
-    /// Analyses linked to `game_id` and visible to the caller (own ∪ global),
-    /// oldest first.
+    /// Analyses linked to `game_id` and readable by the caller (own ∪ global ∪
+    /// public — anonymous callers see public rows only), oldest first.
     pub async fn studies_for_game(
         &self,
         user: &CurrentUser,
         game_id: i32,
     ) -> Result<Vec<studies::Model>, StudyError> {
         let rows = studies::Entity::find()
-            .filter(scope(studies::Column::OwnerId, user))
+            .filter(read_scope(user))
             .filter(studies::Column::OriginGameId.eq(game_id))
             .order_by_asc(studies::Column::Id)
             .all(&self.db)
@@ -390,13 +391,28 @@ impl StudyService {
         Ok(rows)
     }
 
-    /// A single study, if it is visible to the caller.
+    /// A single study, if it is readable by the caller (own ∪ global, or
+    /// flagged `public` — the one arm the anonymous tier sees, issue #211).
     pub async fn get(&self, user: &CurrentUser, id: i32) -> Result<studies::Model, StudyError> {
         studies::Entity::find_by_id(id)
-            .filter(scope(studies::Column::OwnerId, user))
+            .filter(read_scope(user))
             .one(&self.db)
             .await?
             .ok_or(StudyError::NotFound)
+    }
+
+    /// Toggle a study's `public` sharing flag (issue #211, ADR-0045). Same
+    /// write guard as every other study mutation; returns the refreshed row.
+    pub async fn set_public(
+        &self,
+        user: &CurrentUser,
+        id: i32,
+        public: bool,
+    ) -> Result<studies::Model, StudyError> {
+        let study = self.load_writable(user, id).await?;
+        let mut active: studies::ActiveModel = study.into();
+        active.public = Set(public);
+        Ok(active.update(&self.db).await?)
     }
 
     /// Rename a study the caller may write. Returns the updated row.
@@ -655,6 +671,20 @@ impl StudyService {
     }
 }
 
+/// Read-scope condition for studies (issue #211, ADR-0045): the ownership scope
+/// (own ∪ global) widened with the `public` sharing flag. The anonymous public
+/// caller gets **only** the `public` arm — never the global (`owner_id IS
+/// NULL`) one, which ADR-0043 reserves for game-database reads; a global study
+/// stays off the anonymous tier unless explicitly flagged public.
+fn read_scope(user: &CurrentUser) -> Condition {
+    if user.public {
+        return Condition::any().add(studies::Column::Public.eq(true));
+    }
+    Condition::any()
+        .add(scope(studies::Column::OwnerId, user))
+        .add(studies::Column::Public.eq(true))
+}
+
 /// FEN of the position reached by replaying a node's SAN `line` from the study's
 /// start position (`start_fen`, or the standard start when the study has none).
 fn fen_at(start_fen: &str, line: &[String]) -> Result<String, PositionError> {
@@ -719,5 +749,7 @@ fn san_core(san: &str) -> &str {
     san.trim_end_matches(['+', '#'])
 }
 
+#[cfg(test)]
+mod sharing_tests;
 #[cfg(test)]
 mod tests;
