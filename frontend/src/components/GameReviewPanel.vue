@@ -163,7 +163,7 @@ function onGraphSelect(ply: number) {
           :key="s.id"
         >
           <RouterLink
-            :to="{ name: 'studies' }"
+            :to="{ name: 'studies', params: { id: String(s.id) } }"
             data-test="linked-analysis"
             class="text-fg hover:underline"
           >

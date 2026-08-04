@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import StudyView from './StudyView.vue'
 import Board from '../components/Board.vue'
@@ -18,6 +18,22 @@ vi.mock('../api', () => ({
     studies: { list: vi.fn() },
     folders: { list: vi.fn() },
   },
+}))
+
+// Router mock (issue #212): a mutable route each test seeds before mount, plus
+// push/replace spies for asserting the mirrored navigation.
+const { push, replace, route } = vi.hoisted(() => ({
+  push: vi.fn(),
+  replace: vi.fn(),
+  route: {
+    name: 'studies' as string,
+    params: {} as Record<string, string>,
+    query: {} as Record<string, string>,
+  },
+}))
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push, replace }),
+  useRoute: () => route,
 }))
 
 // One mainline move with a pinned plan arrow on the selected node (#61).
@@ -52,6 +68,9 @@ beforeEach(() => {
   window.localStorage.clear()
   setActivePinia(createPinia())
   vi.clearAllMocks()
+  route.name = 'studies'
+  route.params = {}
+  route.query = {}
   vi.mocked(api.health).mockResolvedValue({ ok: true, llm: false } as never)
   vi.mocked(api.databases.list).mockResolvedValue([])
   vi.mocked(api.studies.list).mockResolvedValue([])
@@ -64,7 +83,7 @@ async function mountWithStudy() {
   vi.spyOn(engine, 'connect').mockImplementation(() => {})
   vi.spyOn(engine, 'disconnect').mockImplementation(() => {})
 
-  const wrapper = mount(StudyView, { global: { stubs: { Board: true, RouterLink: true } } })
+  const wrapper = mount(StudyView, { global: { stubs: { Board: true, RouterLink: RouterLinkStub } } })
   await flushPromises()
 
   // Open a study by populating the stores directly (no network round-trip).
@@ -142,5 +161,38 @@ describe('StudyView', () => {
     expect(board.props('overlayShapes')).toEqual([])
     // The node's persisted pinned shape (the editable `shapes` layer) is untouched.
     expect(board.props('shapes')).toEqual([{ orig: 'd2', dest: 'd4', brush: 'green' }])
+  })
+})
+
+// Issue #212: /studies/:id? + ?folder= — hydrate from the URL, mirror selection.
+describe('StudyView URL addressability', () => {
+  it('opens the study named by /studies/:id on mount', async () => {
+    route.params = { id: '45' }
+    const editor = useStudyEditorStore()
+    const open = vi.spyOn(editor, 'open').mockResolvedValue(undefined)
+
+    mount(StudyView, { global: { stubs: { Board: true, RouterLink: true } } })
+    await flushPromises()
+
+    expect(open).toHaveBeenCalledWith(45)
+  })
+
+  it('mirrors the open study into the URL via router.replace', async () => {
+    await mountWithStudy() // sets studies.current (id 1) after mount
+    expect(replace).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'studies', params: { id: '1' } }),
+    )
+  })
+
+  it('links the origin game with its id in the route params', async () => {
+    const wrapper = await mountWithStudy()
+    const studies = useStudiesStore()
+    studies.current = { ...study(), origin_game_id: 7 }
+    await flushPromises()
+
+    const link = wrapper
+      .findAllComponents(RouterLinkStub)
+      .find((l) => l.attributes('data-test') === 'origin-game-link')!
+    expect(link.props('to')).toEqual({ name: 'games', params: { id: '7' } })
   })
 })

@@ -5,11 +5,14 @@
 // composer starts a new conversation when none is open; Stop cancels the
 // in-flight turn. Approvals/questions resolve through the store's InMsg
 // actions; throttle/gap banners and the usage footer come from stream state.
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAssistantStore } from '../stores/assistant'
 import AssistantTranscript from '../components/AssistantTranscript.vue'
 
 const store = useAssistantStore()
+const router = useRouter()
+const route = useRoute()
 const draft = ref('')
 const renamingRoot = ref<string | null>(null)
 const renameDraft = ref('')
@@ -66,7 +69,49 @@ function confirmDelete(root: string) {
   if (window.confirm('Delete this conversation?')) store.remove(root)
 }
 
-onMounted(() => store.connect())
+// --- URL addressability (issue #212): /assistant/:sessionId? -----------------
+
+/** The session id in the URL, or null. Session ids are opaque strings. */
+function urlSession(): string | null {
+  const v = route.params.sessionId
+  const s = Array.isArray(v) ? v[0] : v
+  return s || null
+}
+
+// Selection → URL: `currentRoot` moves on open, deselect, delete and `created`,
+// so mirroring it covers every path. `replace` keeps selection out of history.
+watch(
+  () => store.currentRoot,
+  (root) => {
+    if (route.name !== 'assistant' || urlSession() === root) return
+    void router.replace({ name: 'assistant', params: root ? { sessionId: root } : {} })
+  },
+)
+
+// URL → selection: hydrate on back/forward. Setting `currentRoot` before the
+// socket is up is fine — the store re-opens the current root on (re)connect,
+// so the deep-linked session loads once the WS session list arrives.
+watch(
+  () => route.params.sessionId,
+  () => {
+    if (route.name !== 'assistant') return
+    const target = urlSession()
+    if (target === store.currentRoot) return
+    if (target) store.open(target)
+    else store.deselect()
+  },
+)
+
+onMounted(() => {
+  const target = urlSession()
+  if (target && target !== store.currentRoot) store.open(target)
+  // Revisiting /assistant with a conversation still selected from a previous
+  // visit: surface it in the URL (the watcher only fires on later changes).
+  else if (!target && store.currentRoot) {
+    void router.replace({ name: 'assistant', params: { sessionId: store.currentRoot } })
+  }
+  store.connect()
+})
 onUnmounted(() => store.disconnect())
 </script>
 

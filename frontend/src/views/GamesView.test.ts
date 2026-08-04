@@ -12,13 +12,26 @@ vi.mock('../api', () => ({
   },
 }))
 
-const push = vi.fn()
-vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }))
+// Router mock (issue #212): a mutable route object each test seeds before
+// mount, plus push/replace spies for asserting the mirrored navigation.
+const { push, replace, route } = vi.hoisted(() => ({
+  push: vi.fn(),
+  replace: vi.fn(),
+  route: {
+    name: 'games' as string,
+    params: {} as Record<string, string>,
+    query: {} as Record<string, string>,
+  },
+}))
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push, replace }),
+  useRoute: () => route,
+}))
 
 import { api } from '../api'
 import GamesView from './GamesView.vue'
 import { useGamesStore } from '../stores/games'
-import type { GameRow, Study } from '../types'
+import type { Database, GameDetail, GameRow, Study } from '../types'
 
 function row(id: number, white: string, black: string): GameRow {
   return {
@@ -48,6 +61,9 @@ describe('GamesView merge selection', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    route.name = 'games'
+    route.params = {}
+    route.query = {}
     vi.mocked(api.health).mockResolvedValue({ mode: 'server', engine: false })
     vi.mocked(api.databases.list).mockResolvedValue([])
   })
@@ -89,5 +105,81 @@ describe('GamesView merge selection', () => {
     // The selection clears after a successful merge.
     expect(wrapper.find('[data-test="merge-games"]').exists()).toBe(false)
     promptSpy.mockRestore()
+  })
+})
+
+// Issue #212: /games/:id? + ?db= — hydrate from the URL, mirror selection back.
+describe('GamesView URL addressability', () => {
+  const db = (id: number): Database => ({
+    id,
+    owner_id: null,
+    name: `DB ${id}`,
+    kind: 'own',
+    index_depth: null,
+    global: false,
+  })
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    route.name = 'games'
+    route.params = {}
+    route.query = {}
+    vi.mocked(api.health).mockResolvedValue({ mode: 'server', engine: false })
+    vi.mocked(api.databases.list).mockResolvedValue([db(1), db(2)])
+  })
+
+  it('hydrates the database and game from /games/5?db=2 on mount', async () => {
+    route.params = { id: '5' }
+    route.query = { db: '2' }
+    const games = useGamesStore()
+    const selectDatabase = vi.spyOn(games, 'selectDatabase').mockResolvedValue(undefined)
+    const open = vi.spyOn(games, 'open').mockResolvedValue(undefined)
+
+    mount(GamesView, { global: { stubs } })
+    await flushPromises()
+
+    // The URL's ?db= wins over the settings default (which would be DB 1).
+    expect(selectDatabase).toHaveBeenCalledWith(2)
+    expect(open).toHaveBeenCalledWith(5)
+  })
+
+  it('mirrors an opened game into the URL via router.replace', async () => {
+    const games = useGamesStore()
+    vi.spyOn(games, 'selectDatabase').mockResolvedValue(undefined)
+    vi.spyOn(games, 'open').mockImplementation(async (id: number) => {
+      games.openGame = { id } as GameDetail
+    })
+    games.games = [row(3, 'Carlsen', 'Ding')]
+    games.total = 1
+
+    const wrapper = mount(GamesView, { global: { stubs } })
+    await flushPromises()
+    replace.mockClear()
+
+    await wrapper.find('tbody tr').trigger('click')
+    await flushPromises()
+
+    expect(replace).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'games', params: { id: '3' } }),
+    )
+  })
+
+  it('mirrors the selected database into ?db=', async () => {
+    const games = useGamesStore()
+    vi.spyOn(games, 'selectDatabase').mockImplementation(async (id: number) => {
+      games.databaseId = id
+    })
+
+    const wrapper = mount(GamesView, { global: { stubs } })
+    await flushPromises()
+    replace.mockClear()
+
+    await wrapper.find('select[aria-label="Database"]').setValue(2)
+    await flushPromises()
+
+    expect(replace).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'games', query: { db: '2' } }),
+    )
   })
 })
