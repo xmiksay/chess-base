@@ -17,7 +17,15 @@ import {
   sanPath,
   siblingIndex,
 } from '../lib/moveTree'
-import type { Annotation, AnalyseStats, BoardMove, ClearShapesScope, Shape, Square } from '../types'
+import type {
+  Annotation,
+  AnalyseOptions,
+  AnalyseStats,
+  BoardMove,
+  ClearShapesScope,
+  Shape,
+  Square,
+} from '../types'
 
 /** A chess.js seeded from a study's set-up `start_fen`, or the standard start
  *  when absent or malformed (a bad origin must not blank the board). */
@@ -148,10 +156,11 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
    * engine (#162, #189): a `!`/`?!`/`?`/`??` NAG replaces any prior quality
    * NAG; comments/shapes/positional NAGs are left untouched. Stores the
    * refreshed study into `current` and returns the classification roll-up for
-   * the caller to display.
+   * the caller to display. Passing `plan_lines`/`threats` in `opts` — even
+   * `0`/`false` — additionally regenerates the generated arrows (#191).
    */
-  async function analyseStudy(depth?: number): Promise<AnalyseStats> {
-    const result = await api.studies.analyse(studyId.value!, depth)
+  async function analyseStudy(opts?: AnalyseOptions): Promise<AnalyseStats> {
+    const result = await api.studies.analyse(studyId.value!, opts)
     studies.current = result
     return result.stats
   }
@@ -163,6 +172,16 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
    */
   async function clearShapes(scope: ClearShapesScope) {
     studies.current = await api.studies.clearShapes(studyId.value!, scope)
+  }
+
+  /**
+   * Re-run the transposition pass over the whole study (issue #174): a node
+   * whose position was already reached earlier in the tree gets a "Transposes
+   * to …" comment appended. The pass only touches comments — node ids are
+   * stable — so the current selection is kept.
+   */
+  async function markTranspositions() {
+    studies.current = await api.studies.markTranspositions(studyId.value!)
   }
 
   /** Promote a variation toward the mainline. */
@@ -216,6 +235,7 @@ export const useStudyEditorStore = defineStore('studyEditor', () => {
     setShapes,
     analyseStudy,
     clearShapes,
+    markTranspositions,
     promote,
     reorder,
     demote,

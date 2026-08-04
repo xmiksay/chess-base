@@ -144,6 +144,19 @@ async function onExport(withEval: boolean) {
   }
 }
 
+// Lichess-flavoured export (issue #216): header tags plus the full annotations
+// ([%eval]/NAGs/comments/shapes) — ready to import as a Lichess study chapter.
+async function onExportLichess() {
+  const study = studies.current
+  if (!study) return
+  try {
+    const pgn = await studies.exportLichess(study.id)
+    downloadText(`study-${study.id}-lichess.pgn`, pgn)
+  } catch (e) {
+    loadError.value = String((e as Error)?.message ?? e)
+  }
+}
+
 // Pinned plan arrows on the selected node (#61); the stored `Shape` model
 // matches chessground's `DrawShape` (orig/dest/brush). Copy the array — Board
 // hands it straight to chessground, which mutates its shapes layer in place
@@ -239,6 +252,16 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         @click="onExport(true)"
       >
         Export with eval
+      </button>
+      <button
+        v-if="hasStudy"
+        type="button"
+        data-test="export-lichess"
+        class="rounded border border-border px-3 py-1 text-sm hover:bg-surface-2"
+        title="PGN with header tags plus every annotation ([%eval], NAGs, comments, arrows) — ready to import as a Lichess study chapter"
+        @click="onExportLichess"
+      >
+        Export for Lichess
       </button>
       <button
         type="button"

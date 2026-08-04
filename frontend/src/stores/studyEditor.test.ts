@@ -11,6 +11,7 @@ vi.mock('../api', () => ({
       setShapes: vi.fn(),
       analyse: vi.fn(),
       clearShapes: vi.fn(),
+      markTranspositions: vi.fn(),
       promote: vi.fn(),
       reorder: vi.fn(),
       deleteNode: vi.fn(),
@@ -153,7 +154,7 @@ describe('studyEditor store', () => {
     expect(result).toEqual(stats)
   })
 
-  it('analyseStudy forwards an explicit depth', async () => {
+  it('analyseStudy forwards the pass options as-is (#216)', async () => {
     const stats: AnalyseStats = {
       nodes_analysed: 0,
       summary: {
@@ -163,8 +164,12 @@ describe('studyEditor store', () => {
     }
     vi.mocked(api.studies.analyse).mockResolvedValue({ ...sampleStudy(), stats })
 
-    await editor.analyseStudy(12)
-    expect(api.studies.analyse).toHaveBeenCalledWith(10, 12)
+    await editor.analyseStudy({ depth: 12 })
+    expect(api.studies.analyse).toHaveBeenCalledWith(10, { depth: 12 })
+
+    // The explicit strip-arrows case (#191): 0/false must reach the API intact.
+    await editor.analyseStudy({ plan_lines: 0, threats: false })
+    expect(api.studies.analyse).toHaveBeenCalledWith(10, { plan_lines: 0, threats: false })
   })
 
   it('clearShapes removes shapes across the study and refreshes the tree (#191)', async () => {
@@ -174,6 +179,19 @@ describe('studyEditor store', () => {
     await editor.clearShapes('generated')
     expect(api.studies.clearShapes).toHaveBeenCalledWith(10, 'generated')
     expect(studies.current).toEqual(cleared)
+  })
+
+  it('markTranspositions refreshes the tree and keeps the selection (#174)', async () => {
+    const marked = sampleStudy()
+    marked.tree.nodes[3].comment = 'Transposes to the main line after 1.e4'
+    vi.mocked(api.studies.markTranspositions).mockResolvedValue(marked)
+
+    editor.select(3)
+    await editor.markTranspositions()
+    expect(api.studies.markTranspositions).toHaveBeenCalledWith(10)
+    // The pass only appends comments — node ids are stable — so the selection stays.
+    expect(editor.nodeId).toBe(3)
+    expect(studies.current!.tree.nodes[3].comment).toContain('Transposes')
   })
 
   it('seeds the board from a set-up start_fen and replays edits from it', () => {

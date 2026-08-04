@@ -9,6 +9,7 @@ import { useStudyEditorStore } from '../stores/studyEditor'
 import { useSettingsStore } from '../stores/settings'
 import { useEngineStore } from '../stores/engine'
 import { useDangerStore } from '../stores/danger'
+import { downloadText } from '../lib/download'
 import type { DangerTree, Study } from '../types'
 
 vi.mock('../api', () => ({
@@ -35,6 +36,10 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push, replace }),
   useRoute: () => route,
 }))
+
+// The download helper touches URL.createObjectURL + anchor clicks; stub it and
+// assert on the (filename, text) it was handed instead.
+vi.mock('../lib/download', () => ({ downloadText: vi.fn() }))
 
 // One mainline move with a pinned plan arrow on the selected node (#61).
 function study(): Study {
@@ -120,6 +125,20 @@ describe('StudyView', () => {
 
     await wrapper.find('[data-test="toggle-threats"]').setValue(true)
     expect(update).toHaveBeenCalledWith({ showThreats: true })
+  })
+
+  it('downloads the lichess-flavoured export under study-{id}-lichess.pgn (#216)', async () => {
+    const wrapper = await mountWithStudy()
+    const studies = useStudiesStore()
+    const exportLichess = vi
+      .spyOn(studies, 'exportLichess')
+      .mockResolvedValue('[Event "Study"]\n\n1. e4 *')
+
+    await wrapper.find('[data-test="export-lichess"]').trigger('click')
+    await flushPromises()
+
+    expect(exportLichess).toHaveBeenCalledWith(1)
+    expect(downloadText).toHaveBeenCalledWith('study-1-lichess.pgn', '[Event "Study"]\n\n1. e4 *')
   })
 
   // Issue #190: "Clear arrows" must clear the live engine-analysis overlays

@@ -4,6 +4,7 @@ import type {
   AddLineBody,
   AddMoveResult,
   Annotation,
+  AnalyseOptions,
   AnalyseResult,
   ApiSettings,
   AuthResponse,
@@ -177,17 +178,34 @@ export const api = {
     // the per-move `[%eval]` annotations; `false` exports plain movetext.
     exportPgn: (id: number, { eval: withEval = true }: { eval?: boolean } = {}) =>
       getText(`/api/studies/${id}/export?eval=${withEval}`),
+    // Lichess-flavoured `.pgn` download (issue #216): header tags plus the full
+    // annotations ([%eval]/NAGs/comments/shapes) — ready to import as a
+    // Lichess study chapter.
+    exportLichess: (id: number) => getText(`/api/studies/${id}/export/lichess`),
     // Fill `[%eval]` on every non-terminal node and classify each move (issue
     // #162, #189): a `!`/`?!`/`?`/`??` NAG replaces any prior quality NAG;
     // comments/shapes/positional NAGs stay put. Returns the refreshed study plus
-    // the classification roll-up; 503 when no engine is configured.
-    analyse: (id: number, depth?: number) =>
-      send<AnalyseResult>('POST', `/api/studies/${id}/analyse`, depth == null ? {} : { depth }),
+    // the classification roll-up; 503 when no engine is configured. Only fields
+    // the caller set reach the body: sending `plan_lines`/`threats` — even
+    // `0`/`false` — opts into regenerating the generated arrows (#191), so an
+    // absent field must stay absent rather than default.
+    analyse: (id: number, opts: AnalyseOptions = {}) => {
+      const body: AnalyseOptions = {}
+      if (opts.depth != null) body.depth = opts.depth
+      if (opts.plan_lines != null) body.plan_lines = opts.plan_lines
+      if (opts.threats != null) body.threats = opts.threats
+      return send<AnalyseResult>('POST', `/api/studies/${id}/analyse`, body)
+    },
     // Bulk-remove board shapes across the whole tree in one call (issue #191):
     // "generated" strips only the plan/threat arrows a generate/analyse pass
     // pinned, keeping anything drawn by hand; "all" clears every shape.
     clearShapes: (id: number, scope: ClearShapesScope) =>
       send<Study>('POST', `/api/studies/${id}/clear-shapes`, { scope }),
+    // Re-run the transposition pass over the whole tree (issue #174): a node
+    // whose position was already reached earlier gets a "Transposes to …"
+    // comment appended. Comments only — node ids are stable; idempotent.
+    markTranspositions: (id: number) =>
+      send<Study>('POST', `/api/studies/${id}/mark-transpositions`),
     rename: (id: number, name: string) => send<Study>('PATCH', `/api/studies/${id}`, { name }),
     remove: (id: number) => send<null>('DELETE', `/api/studies/${id}`),
     // File a study under a folder (issue #164); `folderId` null ⇒ unfile to root.

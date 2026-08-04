@@ -80,6 +80,15 @@ export const useStudiesStore = defineStore('studies', () => {
     return _run(() => api.studies.exportPgn(id, { eval: withEval }))
   }
 
+  /**
+   * Fetch a study's Lichess-flavoured PGN (issue #216): header tags plus the
+   * full annotations ([%eval]/NAGs/comments/shapes). Returns the text; the
+   * view triggers the file download.
+   */
+  function exportLichess(id: number) {
+    return _run(() => api.studies.exportLichess(id))
+  }
+
   /** Rename a study; keeps `current` and the list in sync. */
   async function rename(id: number, name: string) {
     const study = await _run(() => api.studies.rename(id, name))
@@ -128,6 +137,7 @@ export const useStudiesStore = defineStore('studies', () => {
     generateDangerMap,
     importPgn,
     exportPgn,
+    exportLichess,
     rename,
     setFolder,
     addLine,
