@@ -20,13 +20,24 @@
 //!
 //! [`persistence`]: super::persistence
 //! [`DEFAULT_PIN`]: super::provider_store::DEFAULT_PIN
+//!
+//! ## Creation-time model choice (#215)
+//!
+//! An explicit per-session `(provider, model)` pick — e.g. the SPA's "new
+//! chat" model picker — rides the same ordering-safe seam as the per-user
+//! default: [`create`][SessionService::create] validates the choice through
+//! the engine's own [`ModelResolver`] *before* touching the DB (an unknown
+//! provider/model is the caller's error, never a silent fall-through to the
+//! `EchoLlm` stub), then calls [`AgentProviderStore::set_pending_pin`] so the
+//! next [`DEFAULT_PIN`] resolution — the session-start pin described above —
+//! picks it up instead of the user's stored default.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::anyhow;
 use entanglement_core::{Holly, InMsg, OutEvent, SessionId};
-use entanglement_provider::UserId;
+use entanglement_provider::{ModelResolver, UserId};
 use entanglement_runtime::multi_user::SessionUserRegistry;
 use entanglement_runtime::session_store::{pair_records, LogPayload, LogRecord};
 use sea_orm::sea_query::Expr;
@@ -51,6 +62,11 @@ pub enum SessionError {
     NoProvider,
     #[error("session not found")]
     NotFound,
+    /// An explicit `(provider, model)` creation choice the resolver rejected
+    /// (unknown name, unusable row) or an incomplete choice (`provider` with
+    /// no `model`) — the caller's error, distinct from [`NoProvider`].
+    #[error("{0}")]
+    InvalidModelChoice(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -90,6 +106,10 @@ pub struct SessionService {
     holly: Holly,
     users: SessionUserRegistry,
     store: Arc<AgentProviderStore>,
+    /// The same resolver the engine's `model_resolver` runs on (#215):
+    /// `create` uses it to validate an explicit `(provider, model)` choice
+    /// synchronously, before ever touching the DB or the engine.
+    resolver: ModelResolver,
     live: Arc<Mutex<HashSet<SessionId>>>,
 }
 
@@ -99,12 +119,14 @@ impl SessionService {
         holly: Holly,
         users: SessionUserRegistry,
         store: Arc<AgentProviderStore>,
+        resolver: ModelResolver,
     ) -> Self {
         Self {
             db,
             holly,
             users,
             store,
+            resolver,
             live: Arc::new(Mutex::new(HashSet::new())),
         }
     }
@@ -148,18 +170,43 @@ impl SessionService {
 
     /// Start a new conversation on `prompt`: insert the index row, register
     /// the owner, and send the single `Spawn` frame (see the module doc for
-    /// why no `SetModel` follows). Returns the new root session id.
+    /// why no `SetModel` follows). `provider`/`model` is an explicit
+    /// creation-time model choice (#215) — `provider` requires `model`;
+    /// omitting both keeps today's per-user default. Returns the new root
+    /// session id.
     pub async fn create(
         &self,
         user: &CurrentUser,
         prompt: String,
         name: Option<String>,
+        provider: Option<String>,
+        model: Option<String>,
     ) -> Result<String, SessionError> {
         let uid = UserId::new(&user.id);
-        // Fail fast (503) instead of spawning a session whose model pin cannot
-        // resolve and would silently run on the EchoLlm stub.
-        if self.store.default_for(&uid).is_none() {
-            return Err(SessionError::NoProvider);
+        let choice = match (provider, model) {
+            (None, None) => None,
+            (Some(provider), Some(model)) => Some((provider, model)),
+            _ => {
+                return Err(SessionError::InvalidModelChoice(
+                    "`provider` requires `model` to be set".to_string(),
+                ))
+            }
+        };
+        match &choice {
+            // Validate synchronously against the same resolver the engine
+            // itself dials, so an unresolvable pick is the caller's 4xx-style
+            // error rather than a session silently starting on the EchoLlm
+            // stub (see the module doc's "creation-time model choice").
+            Some((provider, model)) => {
+                (self.resolver)(Some(&uid), provider, model)
+                    .map_err(SessionError::InvalidModelChoice)?;
+            }
+            // Fail fast (503) instead of spawning a session whose model pin
+            // cannot resolve and would silently run on the EchoLlm stub.
+            None if self.store.default_for(&uid).is_none() => {
+                return Err(SessionError::NoProvider);
+            }
+            None => {}
         }
 
         let root = format!("{}:{}", user.id, uuid::Uuid::new_v4());
@@ -181,6 +228,12 @@ impl SessionService {
         // persistence sink can resolve the owner from the very first event.
         self.users.register(session.clone(), uid.clone());
         self.mark_live(session.clone());
+        // Queue the explicit choice (if any) right before `Spawn` so the
+        // session-start `DEFAULT_PIN` resolution — the very next thing the new
+        // session's task does — picks it up (see the module doc).
+        if let Some((provider, model)) = choice {
+            self.store.set_pending_pin(&uid, provider, model);
+        }
         self.holly
             .send(InMsg::Spawn {
                 session,

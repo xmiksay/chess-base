@@ -678,6 +678,21 @@ their rows via `/api/assistant/providers` (`routes/providers.rs`: keys
 mutation invalidates the store's cache). Compaction/summarize run on the
 session's own model (no aux resolver); titles change only by user rename.
 
+**Per-session model choice** (#215, ADR-0046, shares #214's `ModelSelect.vue`):
+mid-conversation switching needed no engine change — entanglement 0.6.0's
+`InMsg::SetModel`/`OutEvent::ModelChanged` (#218) were already wire-allowed and
+already replay through `protocol.rs`'s generic `Out`-event history path, so the
+SPA's conversation-header `ModelSelect` just sends `SetModel` and folds the
+resulting `model_changed` into `TranscriptState.model`. Creation-time choice
+needed a new seam because of the `Spawn`-ordering finding above: `create` takes
+an optional explicit `(provider, model)`, validated synchronously against the
+engine's own `ModelResolver` (an unresolvable pick is the caller's
+`SessionError::InvalidModelChoice`, WS code `invalid_model` — never a silent
+fall-through to the engine-default `EchoLlm`), then calls
+`AgentProviderStore::set_pending_pin` so the very next `DEFAULT_PIN`
+resolution — for that user — consumes it instead of `default_for`'s stored
+default.
+
 **Approvals**: `GATED_TOOLS` grade `Ask` in the executor's base profile
 (everything else runs automatically, ADR-0025). The SPA's approval card offers
 Once / this Session (in-memory) / **Always** — a durable `agent_grants` row
