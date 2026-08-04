@@ -25,6 +25,7 @@ const study: Study = {
   owner_id: 'bob',
   folder_id: null,
   origin_game_id: null,
+  public: false,
   tree: { root: 0, nodes: [] },
 }
 

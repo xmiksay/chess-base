@@ -67,6 +67,26 @@ describe('api token attachment', () => {
 // The analyse body must carry exactly the fields the caller set (#216): sending
 // `plan_lines`/`threats` — even 0/false — opts into the #191 shape
 // regeneration, so an absent field has different semantics than a default one.
+describe('api sharing toggles (#213)', () => {
+  it('PUTs { public } to the game toggle route', async () => {
+    const fetchMock = mockFetch({ status: 200, body: { id: 1, public: true } })
+    await api.games.setPublic(1, true)
+    const [path, opts] = fetchMock.mock.calls[0]
+    expect(path).toBe('/api/games/1/public')
+    expect(opts.method).toBe('PUT')
+    expect(JSON.parse(opts.body)).toEqual({ public: true })
+  })
+
+  it('PUTs { public } to the study toggle route', async () => {
+    const fetchMock = mockFetch({ status: 200, body: { id: 1, public: false } })
+    await api.studies.setPublic(1, false)
+    const [path, opts] = fetchMock.mock.calls[0]
+    expect(path).toBe('/api/studies/1/public')
+    expect(opts.method).toBe('PUT')
+    expect(JSON.parse(opts.body)).toEqual({ public: false })
+  })
+})
+
 describe('api.studies.analyse body', () => {
   it('sends an empty body by default and only the fields the caller set', async () => {
     const fetchMock = mockFetch()

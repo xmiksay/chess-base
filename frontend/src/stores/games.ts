@@ -161,6 +161,13 @@ export const useGamesStore = defineStore('games', () => {
     await fetchPage()
   }
 
+  /** Flip the open game's anonymous-read `public` flag (issue #213, ADR-0045). */
+  async function setPublic(id: number, isPublic: boolean) {
+    const game = await api.games.setPublic(id, isPublic)
+    if (openGame.value?.id === id) openGame.value = game
+    return game
+  }
+
   /** Node ids along the mainline; the array index is the ply (0 = start). */
   function mainlinePath(): number[] {
     return mainlinePathOf(board.tree.value)
@@ -230,6 +237,7 @@ export const useGamesStore = defineStore('games', () => {
     setSort,
     open,
     remove,
+    setPublic,
     mainlinePath,
     plyOf,
     nodeAtPly,

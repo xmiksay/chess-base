@@ -118,6 +118,15 @@ export const useStudiesStore = defineStore('studies', () => {
     return study
   }
 
+  /** Flip a study's anonymous-read `public` flag (issue #213, ADR-0045). */
+  async function setPublic(id: number, isPublic: boolean) {
+    const updated = await _run(() => api.studies.setPublic(id, isPublic))
+    if (current.value?.id === id) current.value = updated
+    const summary = list.value.find((s) => s.id === id)
+    if (summary) summary.public = updated.public
+    return updated
+  }
+
   /** Delete a study; clears `current` if it was the open one. */
   async function remove(id: number) {
     await _run(() => api.studies.remove(id))
@@ -141,6 +150,7 @@ export const useStudiesStore = defineStore('studies', () => {
     rename,
     setFolder,
     addLine,
+    setPublic,
     remove,
   }
 })

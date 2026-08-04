@@ -24,6 +24,7 @@ const openGame = (): GameDetail => ({
   eco: null,
   white_elo: null,
   black_elo: null,
+  public: false,
   pgn: '',
 })
 
@@ -35,6 +36,7 @@ const savedStudy: StudySummary = {
   owner_id: null,
   folder_id: null,
   origin_game_id: 5,
+  public: false,
 }
 
 async function setup(engineEnabled = true) {

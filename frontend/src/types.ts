@@ -71,6 +71,8 @@ export interface GameRow {
   white_elo: number | null
   black_elo: number | null
   event?: string | null
+  /** Anonymously readable via a deep link when set (issue #213, ADR-0045). */
+  public: boolean
 }
 
 /** A single game including its PGN movetext for board playback. */
@@ -178,6 +180,8 @@ export interface StudySummary {
   folder_id: number | null
   /** Game this study was saved as an analysis of (issue #164); null otherwise. */
   origin_game_id: number | null
+  /** Anonymously readable via a deep link when set (issue #213, ADR-0045). */
+  public: boolean
 }
 
 /** A study folder in the hierarchy (issue #164). */

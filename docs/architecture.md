@@ -257,6 +257,7 @@ deliberately overriding a private owning database for reads — while
 non-public studies stay off the anonymous tier, ADR-0043). The annotated game
 export (`?annotated=true`, engine-backed) is denied anonymously with `401`.
 Every other route keeps the plain `CurrentUser` extractor and its hard `401`.
+The SPA side of this (issue #213) is documented alongside the auth UI below.
 
 ## Server-mode auth (ADR 0015)
 
@@ -280,11 +281,33 @@ shows no login controls. `api.ts` keeps the session token in memory plus a
 the backend sets still works too — the Bearer header just lets the client decide
 when it authenticates and drop it on logout). `stores/auth.ts` resolves the run
 mode from `/api/health` once (`init()`), restores the user via `/api/whoami` when
-a token is present, and exposes `register`/`login`/`logout` plus `needsAuth`. The
-router guard (`authRedirect` in `router/index.ts`) bounces gated navigations to
-`LoginView` (`/login`) with a `redirect` query and sends already-authenticated
-callers away from it. Backend error messages are pre-sanitized (generic for 5xx),
-so the form surfaces them verbatim without leaking internals.
+a token is present, and exposes `register`/`login`/`logout` plus `needsAuth` (and
+`isAnonymous`, an alias used for read-only-view gating, #213). The router guard
+(`authRedirect` in `router/index.ts`) bounces gated navigations to `LoginView`
+(`/login`) with a `redirect` query and sends already-authenticated callers away
+from it. Backend error messages are pre-sanitized (generic for 5xx), so the form
+surfaces them verbatim without leaking internals.
+
+**Sharing UI** (issue #213, the SPA half of ADR-0045): `authRedirect` lets a
+`/games/:id`/`/studies/:id` navigation through logged-out (an id param on
+either route), since the backend now serves a `public`-flagged object to that
+tier — every other gated route (including the bare `/games`/`/studies` list)
+still bounces to `/login`. `GamesView`/`StudyView` branch their `onMounted` on
+`auth.isAnonymous`: an anonymous caller skips the authenticated list/browse
+calls (`databases.list`, `games.list`, `studies.list`, `folders.list`, all
+`401` without a session) and opens the deep-linked object directly. The rest of
+each view conditions on the same flag to render read-only — board
+`movable`/`editable-shapes`/`persist-shapes` off, the move tree's `editable`
+off, and the engine-backed panels (`EnginePanel`, `GameReviewPanel`,
+`StudyAnalysis`, `DangerMapPanel`), the folder sidebar, and the generate
+dialogs all hidden (no engine/LLM access on the anonymous tier). PGN export
+stays available — `GET /api/{games,studies}/{id}/export` are `PublicUser`
+routes — via the existing study export buttons and a plain `export-game`
+button added to the anonymous game view. `ShareToggle.vue` (game/study
+headers) is the write side: a checkbox bound to the object's `public` field
+(`api.games.setPublic`/`api.studies.setPublic`, `PUT .../{id}/public`) plus a
+copy-link button for the object's own `/games/:id`/`/studies/:id` URL — no
+separate share-token scheme, per ADR-0045.
 
 ## MCP endpoint (ADR 0008)
 

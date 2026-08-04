@@ -105,6 +105,7 @@ describe('GameReviewPanel — EvalGraph wiring', () => {
         owner_id: null,
         folder_id: null,
         origin_game_id: 5,
+        public: false,
       },
     ]
     const wrapper = mount(GameReviewPanel, {

@@ -30,9 +30,12 @@ describe('auth store — init()', () => {
     expect(s.isServerMode).toBe(false)
     expect(s.isAuthenticated).toBe(true)
     expect(s.needsAuth).toBe(false)
+    expect(s.isAnonymous).toBe(false)
     expect(api.whoami).not.toHaveBeenCalled()
   })
 
+  // Issue #213: `isAnonymous` gates read-only rendering on the same condition
+  // the router guard keys on — a session-less server-mode caller.
   it('gates server mode when there is no token', async () => {
     vi.mocked(api.health).mockResolvedValue({ mode: 'server' })
     vi.mocked(getAuthToken).mockReturnValue(null)
@@ -40,6 +43,7 @@ describe('auth store — init()', () => {
     await s.init()
     expect(s.isServerMode).toBe(true)
     expect(s.needsAuth).toBe(true)
+    expect(s.isAnonymous).toBe(true)
     expect(s.user).toBe(null)
   })
 

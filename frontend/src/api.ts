@@ -264,6 +264,10 @@ export const api = {
     // deduped, legality-checked variations. `study_id` set ⇒ graft into that
     // study; otherwise a new study is created (`database_id`/`name` required).
     addLine: (body: AddLineBody) => send<Study>('POST', '/api/studies/add-line', body),
+    // Flip anonymous-read sharing (issue #213, ADR-0045). Returns the refreshed
+    // study so the caller re-renders from one response.
+    setPublic: (id: number, isPublic: boolean) =>
+      send<Study>('PUT', `/api/studies/${id}/public`, { public: isPublic }),
   },
 
   // Ownable databases (issue #6): collections to search/import into. `list`
@@ -325,6 +329,10 @@ export const api = {
     // Download several games as one concatenated `.pgn` file (issue #171 bulk
     // export from header search). An id the caller can't see fails the request.
     exportSelected: (gameIds: number[]) => postText('/api/games/export', { game_ids: gameIds }),
+    // Flip anonymous-read sharing (issue #213, ADR-0045). Returns the refreshed
+    // game so the caller re-renders from one response.
+    setPublic: (id: number, isPublic: boolean) =>
+      send<GameDetail>('PUT', `/api/games/${id}/public`, { public: isPublic }),
   },
 
   // Study folders (issue #164): a hierarchy to file studies under. `list` returns
