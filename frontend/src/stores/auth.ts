@@ -45,6 +45,10 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => mode.value !== 'server' || user.value != null)
   // What the router guard keys on: a server-mode caller without a session.
   const needsAuth = computed(() => isServerMode.value && user.value == null)
+  // Same condition, named for read-only-view gating (issue #213): a session-less
+  // server-mode caller renders games/studies read-only instead of being gated
+  // outright (the router lets `/games/:id`/`/studies/:id` deep links through).
+  const isAnonymous = needsAuth
 
   // init() runs once; concurrent callers (router guard + App mount) share it.
   let initPromise: Promise<void> | null = null
@@ -123,6 +127,7 @@ export const useAuthStore = defineStore('auth', () => {
     isServerMode,
     isAuthenticated,
     needsAuth,
+    isAnonymous,
     init,
     register,
     login,

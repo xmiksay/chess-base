@@ -24,16 +24,26 @@ export const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
 ]
 
+// Routes whose object-id deep link stays reachable logged-out (issue #213,
+// ADR-0045): the backend serves a `public`-flagged game/study to an anonymous
+// caller, so `/games/:id` and `/studies/:id` must pass the guard. The bare
+// `/games`/`/studies` list surfaces (no id) still need a session — they call
+// list endpoints the anonymous tier can't reach.
+const ANONYMOUS_DEEP_LINK_ROUTES = new Set(['games', 'studies'])
+
 // Decide where a navigation should land given the auth state. Pure so it can be
 // unit-tested without the router. Returns a redirect target or null to proceed.
-//   - server mode + no session → bounce everything but /login to /login.
+//   - server mode + no session → bounce everything but /login (and an
+//     anonymous-readable deep link, #213) to /login.
 //   - server mode + signed in, heading to /login → send home.
 //   - local (or unknown) mode → never gate.
 export function authRedirect(
-  to: Pick<RouteLocationNormalized, 'name' | 'fullPath'>,
+  to: Pick<RouteLocationNormalized, 'name' | 'fullPath' | 'params'>,
   { needsAuth, isServerMode }: { needsAuth: boolean; isServerMode: boolean },
 ) {
-  if (needsAuth && to.name !== 'login') {
+  const anonymousDeepLink =
+    typeof to.name === 'string' && ANONYMOUS_DEEP_LINK_ROUTES.has(to.name) && to.params?.id != null
+  if (needsAuth && to.name !== 'login' && !anonymousDeepLink) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
   if (isServerMode && !needsAuth && to.name === 'login') {

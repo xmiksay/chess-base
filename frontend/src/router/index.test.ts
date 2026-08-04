@@ -71,7 +71,7 @@ describe('router', () => {
 describe('authRedirect', () => {
   it('bounces a gated navigation to /login with the original path', () => {
     const r = authRedirect(
-      { name: 'search', fullPath: '/search' },
+      { name: 'search', fullPath: '/search', params: {} },
       { needsAuth: true, isServerMode: true },
     )
     expect(r).toEqual({ name: 'login', query: { redirect: '/search' } })
@@ -79,7 +79,7 @@ describe('authRedirect', () => {
 
   it('lets a server-mode caller reach /login without a session', () => {
     const r = authRedirect(
-      { name: 'login', fullPath: '/login' },
+      { name: 'login', fullPath: '/login', params: {} },
       { needsAuth: true, isServerMode: true },
     )
     expect(r).toBe(null)
@@ -87,7 +87,7 @@ describe('authRedirect', () => {
 
   it('sends an already-signed-in user away from /login', () => {
     const r = authRedirect(
-      { name: 'login', fullPath: '/login' },
+      { name: 'login', fullPath: '/login', params: {} },
       { needsAuth: false, isServerMode: true },
     )
     expect(r).toEqual({ name: 'analysis' })
@@ -95,10 +95,56 @@ describe('authRedirect', () => {
 
   it('never gates in local mode', () => {
     expect(
-      authRedirect({ name: 'settings', fullPath: '/settings' }, { needsAuth: false, isServerMode: false }),
+      authRedirect(
+        { name: 'settings', fullPath: '/settings', params: {} },
+        { needsAuth: false, isServerMode: false },
+      ),
     ).toBe(null)
     expect(
-      authRedirect({ name: 'login', fullPath: '/login' }, { needsAuth: false, isServerMode: false }),
+      authRedirect(
+        { name: 'login', fullPath: '/login', params: {} },
+        { needsAuth: false, isServerMode: false },
+      ),
     ).toBe(null)
+  })
+
+  // Issue #213: a public game/study deep link must stay reachable logged-out.
+  it('lets an anonymous deep link with an id through on games/studies', () => {
+    expect(
+      authRedirect(
+        { name: 'games', fullPath: '/games/5', params: { id: '5' } },
+        { needsAuth: true, isServerMode: true },
+      ),
+    ).toBe(null)
+    expect(
+      authRedirect(
+        { name: 'studies', fullPath: '/studies/9', params: { id: '9' } },
+        { needsAuth: true, isServerMode: true },
+      ),
+    ).toBe(null)
+  })
+
+  it('still gates the bare games/studies list (no id) when logged out', () => {
+    expect(
+      authRedirect(
+        { name: 'games', fullPath: '/games', params: {} },
+        { needsAuth: true, isServerMode: true },
+      ),
+    ).toEqual({ name: 'login', query: { redirect: '/games' } })
+    expect(
+      authRedirect(
+        { name: 'studies', fullPath: '/studies', params: {} },
+        { needsAuth: true, isServerMode: true },
+      ),
+    ).toEqual({ name: 'login', query: { redirect: '/studies' } })
+  })
+
+  it('still gates an id deep link on a route outside the anonymous allowlist', () => {
+    expect(
+      authRedirect(
+        { name: 'assistant', fullPath: '/assistant/abc', params: { sessionId: 'abc' } },
+        { needsAuth: true, isServerMode: true },
+      ),
+    ).toEqual({ name: 'login', query: { redirect: '/assistant/abc' } })
   })
 })

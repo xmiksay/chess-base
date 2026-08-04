@@ -15,6 +15,7 @@ import GenerateStudyDialog from '../components/GenerateStudyDialog.vue'
 import GenerateDangerMapDialog from '../components/GenerateDangerMapDialog.vue'
 import DangerMapPanel from '../components/DangerMapPanel.vue'
 import StudyFolderSidebar from '../components/StudyFolderSidebar.vue'
+import ShareToggle from '../components/ShareToggle.vue'
 import { api } from '../api'
 import { downloadText } from '../lib/download'
 import { useStudiesStore } from '../stores/studies'
@@ -22,6 +23,7 @@ import { useFoldersStore } from '../stores/folders'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { useSettingsStore } from '../stores/settings'
 import { useDangerStore } from '../stores/danger'
+import { useAuthStore } from '../stores/auth'
 import { useBoardOverlays } from '../lib/useBoardOverlays'
 import { numericParam } from '../lib/routeParam'
 import { dangerShapesForFen } from '../lib/dangerShapes'
@@ -33,6 +35,7 @@ const folders = useFoldersStore()
 const editor = useStudyEditorStore()
 const settings = useSettingsStore()
 const danger = useDangerStore()
+const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 
@@ -157,6 +160,28 @@ async function onExportLichess() {
   }
 }
 
+// Sharing (issue #213, ADR-0045): the toggle in the header flips `public` on
+// the open study; the link is the ordinary `/studies/:id` deep link, which the
+// backend now serves anonymously once flagged.
+const publicToggling = ref(false)
+
+function shareUrl(id: number): string {
+  return `${window.location.origin}${router.resolve({ name: 'studies', params: { id: String(id) } }).href}`
+}
+
+async function onTogglePublic(next: boolean) {
+  const study = studies.current
+  if (!study) return
+  publicToggling.value = true
+  try {
+    await studies.setPublic(study.id, next)
+  } catch (e) {
+    loadError.value = String((e as Error)?.message ?? e)
+  } finally {
+    publicToggling.value = false
+  }
+}
+
 // Pinned plan arrows on the selected node (#61); the stored `Shape` model
 // matches chessground's `DrawShape` (orig/dest/brush). Copy the array — Board
 // hands it straight to chessground, which mutates its shapes layer in place
@@ -214,11 +239,22 @@ onMounted(async () => {
       engineEnabled.value = h.engine === true
     })
     .catch(() => {})
+  const studyId = numericParam(route.params.id)
+
+  // Anonymous (issue #213): the router only let this mount through for a
+  // `/studies/:id` deep link to a public study. The list/browse endpoints
+  // (`studies.refresh`, `folders.refresh`, `databases.list`) require a
+  // session, so skip straight to opening the study instead of 401ing on them
+  // first. `onOpenStudy` already catches and surfaces its own errors.
+  if (auth.isAnonymous) {
+    if (studyId != null) await onOpenStudy(studyId)
+    return
+  }
+
   try {
     await Promise.all([studies.refresh(), folders.refresh()])
     databases.value = await api.databases.list()
     // Deep link straight to a study: /studies/:id (issue #212).
-    const studyId = numericParam(route.params.id)
     if (studyId != null && studyId !== studies.current?.id) await onOpenStudy(studyId)
   } catch (e) {
     loadError.value = String((e as Error)?.message ?? e)
@@ -263,22 +299,31 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       >
         Export for Lichess
       </button>
-      <button
-        type="button"
-        data-test="open-generate"
-        :class="['rounded border border-border px-3 py-1 text-sm hover:bg-surface-2', { 'ml-auto': !hasStudy }]"
-        @click="showGenerate = true"
-      >
-        Generate study
-      </button>
-      <button
-        type="button"
-        data-test="open-danger-map"
-        class="rounded border border-border px-3 py-1 text-sm hover:bg-surface-2"
-        @click="showDangerMap = true"
-      >
-        Danger map
-      </button>
+      <template v-if="!auth.isAnonymous">
+        <button
+          type="button"
+          data-test="open-generate"
+          :class="['rounded border border-border px-3 py-1 text-sm hover:bg-surface-2', { 'ml-auto': !hasStudy }]"
+          @click="showGenerate = true"
+        >
+          Generate study
+        </button>
+        <button
+          type="button"
+          data-test="open-danger-map"
+          class="rounded border border-border px-3 py-1 text-sm hover:bg-surface-2"
+          @click="showDangerMap = true"
+        >
+          Danger map
+        </button>
+      </template>
+      <ShareToggle
+        v-if="hasStudy && !auth.isAnonymous"
+        :model-value="studies.current!.public"
+        :share-url="shareUrl(studies.current!.id)"
+        :disabled="publicToggling"
+        @update:model-value="onTogglePublic"
+      />
     </header>
 
     <GenerateStudyDialog
@@ -304,8 +349,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     </p>
 
     <div class="flex flex-col gap-6 lg:flex-row">
-      <!-- Folder tree + studies in the selected folder + create (#164) -->
+      <!-- Folder tree + studies in the selected folder + create (#164); needs a
+           session, hidden for an anonymous deep link (issue #213). -->
       <StudyFolderSidebar
+        v-if="!auth.isAnonymous"
         v-model:folder-id="selectedFolderId"
         :databases="databases"
         :current-id="studies.current?.id ?? null"
@@ -319,8 +366,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         v-if="hasStudy"
         class="flex flex-col gap-4 lg:w-2/5"
       >
-        <!-- Engine analysis for the selected node (#5 in studies), above the board. -->
-        <div class="rounded-lg border border-border bg-surface p-4 shadow-sm">
+        <!-- Engine analysis for the selected node (#5 in studies), above the board;
+             no engine access for an anonymous read-only view (issue #213). -->
+        <div
+          v-if="!auth.isAnonymous"
+          class="rounded-lg border border-border bg-surface p-4 shadow-sm"
+        >
           <StudyAnalysis />
         </div>
 
@@ -330,13 +381,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             <Board
               :fen="editor.fen"
               :dests="editor.legalDests"
-              :movable="true"
+              :movable="!auth.isAnonymous"
               :last-move="editor.lastMove"
               :board-theme="settings.boardTheme"
               :shapes="pinnedShapes"
               :overlay-shapes="overlayShapes"
-              :persist-shapes="true"
-              :editable-shapes="true"
+              :persist-shapes="!auth.isAnonymous"
+              :editable-shapes="!auth.isAnonymous"
               @move="onBoardMove"
               @drawn="onShapesDrawn"
             />
@@ -362,7 +413,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
           <!-- Per-view extra: clear the persisted pinned plan on this node (#61). -->
           <button
-            v-if="editor.currentNode?.shapes?.length"
+            v-if="editor.currentNode?.shapes?.length && !auth.isAnonymous"
             class="mt-2 rounded border border-border px-2 py-1 text-sm hover:bg-surface-2"
             data-test="clear-pin"
             @click="editor.setShapes([])"
@@ -396,27 +447,31 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             <MoveTree
               :tree="editor.tree"
               :current-id="editor.nodeId"
-              editable
+              :editable="!auth.isAnonymous"
               @select="editor.select($event)"
               @promote="editor.promote($event)"
               @demote="editor.demote($event)"
               @remove="onRemoveNode($event)"
             />
           </div>
-          <hr class="my-3 border-border">
-          <AnnotationEditor
-            :node="editor.currentNode"
-            @comment="editor.annotate({ comment: $event })"
-            @nag="editor.annotate({ nag: $event })"
-            @promote="editor.promote(editor.nodeId)"
-            @demote="editor.demote(editor.nodeId)"
-            @delete="onRemoveNode(editor.nodeId)"
-          />
+          <template v-if="!auth.isAnonymous">
+            <hr class="my-3 border-border">
+            <AnnotationEditor
+              :node="editor.currentNode"
+              @comment="editor.annotate({ comment: $event })"
+              @nag="editor.annotate({ nag: $event })"
+              @promote="editor.promote(editor.nodeId)"
+              @demote="editor.demote(editor.nodeId)"
+              @delete="onRemoveNode(editor.nodeId)"
+            />
+          </template>
         </div>
 
         <!-- Danger map under the PGN notation: walk a spine for danger and graft
-             the lines into the tree (#156). Engine-only, no LLM. -->
+             the lines into the tree (#156). Engine-only, no LLM — hidden for the
+             anonymous read-only view (issue #213), which gets no engine access. -->
         <DangerMapPanel
+          v-if="!auth.isAnonymous"
           :engine-enabled="engineEnabled"
           :study-id="studies.current?.id ?? null"
           :start-fen="editor.tree?.start_fen"

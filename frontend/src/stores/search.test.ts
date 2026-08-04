@@ -35,6 +35,7 @@ describe('header search', () => {
           eco: null,
           white_elo: null,
           black_elo: null,
+          public: false,
         },
       ],
       next_cursor: null,
@@ -67,6 +68,7 @@ describe('header search', () => {
           eco: null,
           white_elo: null,
           black_elo: null,
+          public: false,
         },
       ],
       next_cursor: 'c1',
@@ -87,6 +89,7 @@ describe('header search', () => {
           eco: null,
           white_elo: null,
           black_elo: null,
+          public: false,
         },
       ],
       next_cursor: null,
@@ -120,6 +123,7 @@ describe('header search', () => {
         eco: null,
         white_elo: null,
         black_elo: null,
+        public: false,
       },
     ]
     store.searched = true

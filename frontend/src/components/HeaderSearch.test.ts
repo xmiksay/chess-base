@@ -37,6 +37,7 @@ function row(id: number, white: string, black: string): GameRow {
     eco: null,
     white_elo: null,
     black_elo: null,
+    public: false,
   }
 }
 

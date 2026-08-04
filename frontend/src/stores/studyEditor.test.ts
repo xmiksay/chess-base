@@ -34,6 +34,7 @@ function sampleStudy(): Study {
     owner_id: null,
     folder_id: null,
     origin_game_id: null,
+    public: false,
     tree: {
       root: 0,
       nodes: [
@@ -206,6 +207,7 @@ describe('studyEditor store', () => {
       owner_id: null,
       folder_id: null,
       origin_game_id: null,
+      public: false,
       tree: {
         root: 0,
         start_fen: fen,

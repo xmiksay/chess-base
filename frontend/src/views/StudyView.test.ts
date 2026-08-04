@@ -4,11 +4,15 @@ import { setActivePinia, createPinia } from 'pinia'
 import StudyView from './StudyView.vue'
 import Board from '../components/Board.vue'
 import { api } from '../api'
+import AnnotationEditor from '../components/AnnotationEditor.vue'
+import DangerMapPanel from '../components/DangerMapPanel.vue'
+import StudyFolderSidebar from '../components/StudyFolderSidebar.vue'
 import { useStudiesStore } from '../stores/studies'
 import { useStudyEditorStore } from '../stores/studyEditor'
 import { useSettingsStore } from '../stores/settings'
 import { useEngineStore } from '../stores/engine'
 import { useDangerStore } from '../stores/danger'
+import { useAuthStore } from '../stores/auth'
 import { downloadText } from '../lib/download'
 import type { DangerTree, Study } from '../types'
 
@@ -16,7 +20,7 @@ vi.mock('../api', () => ({
   api: {
     health: vi.fn(),
     databases: { list: vi.fn() },
-    studies: { list: vi.fn() },
+    studies: { list: vi.fn(), setPublic: vi.fn() },
     folders: { list: vi.fn() },
   },
 }))
@@ -33,7 +37,7 @@ const { push, replace, route } = vi.hoisted(() => ({
   },
 }))
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push, replace }),
+  useRouter: () => ({ push, replace, resolve: (to: { params?: { id?: string } }) => ({ href: `/studies/${to.params?.id}` }) }),
   useRoute: () => route,
 }))
 
@@ -51,6 +55,7 @@ function study(): Study {
     owner_id: 'u1',
     folder_id: null,
     origin_game_id: null,
+    public: false,
     tree: {
       root: 0,
       nodes: [
@@ -213,5 +218,71 @@ describe('StudyView URL addressability', () => {
       .findAllComponents(RouterLinkStub)
       .find((l) => l.attributes('data-test') === 'origin-game-link')!
     expect(link.props('to')).toEqual({ name: 'games', params: { id: '7' } })
+  })
+})
+
+// Issue #213, ADR-0045: the ShareToggle on an authenticated caller's header.
+describe('StudyView sharing', () => {
+  it('renders the public toggle for the open study, reflecting its current flag', async () => {
+    const wrapper = await mountWithStudy()
+    const toggle = wrapper.find('[data-test="public-toggle"]')
+    expect(toggle.exists()).toBe(true)
+    expect((toggle.element as HTMLInputElement).checked).toBe(false)
+    expect(wrapper.find('[data-test="share-link"]').exists()).toBe(false)
+  })
+
+  it('shows the share link once the study is public', async () => {
+    const wrapper = await mountWithStudy()
+    const studies = useStudiesStore()
+    studies.current = { ...study(), public: true }
+    await flushPromises()
+
+    expect((wrapper.find('[data-test="public-toggle"]').element as HTMLInputElement).checked).toBe(true)
+    expect((wrapper.find('[data-test="share-link"]').element as HTMLInputElement).value).toContain(
+      '/studies/1',
+    )
+  })
+})
+
+// Issue #213: the router only lets an anonymous caller through with a
+// `/studies/:id` deep link — the view must open that study directly and render
+// it read-only, without touching the authenticated list/browse endpoints.
+describe('StudyView anonymous read-only', () => {
+  async function mountAnonymous() {
+    route.params = { id: '1' }
+    useAuthStore().mode = 'server'
+    const editor = useStudyEditorStore()
+    vi.spyOn(editor, 'open').mockImplementation(async () => {
+      useStudiesStore().current = study()
+    })
+
+    const wrapper = mount(StudyView, { global: { stubs: { Board: true, RouterLink: true } } })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('opens the deep-linked study directly, skipping the authenticated list endpoints', async () => {
+    const wrapper = await mountAnonymous()
+    expect(wrapper.findComponent(StudyFolderSidebar).exists()).toBe(false)
+    expect(api.databases.list).not.toHaveBeenCalled()
+    expect(api.studies.list).not.toHaveBeenCalled()
+    expect(api.folders.list).not.toHaveBeenCalled()
+  })
+
+  it('hides the write/engine UI and renders the board and tree read-only', async () => {
+    const wrapper = await mountAnonymous()
+
+    expect(wrapper.find('[data-test="public-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="open-generate"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="open-danger-map"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="clear-pin"]').exists()).toBe(false)
+    expect(wrapper.findComponent(AnnotationEditor).exists()).toBe(false)
+    expect(wrapper.findComponent(DangerMapPanel).exists()).toBe(false)
+    expect(wrapper.findComponent(Board).props('movable')).toBe(false)
+    expect(wrapper.findComponent(Board).props('editableShapes')).toBe(false)
+    expect(wrapper.findComponent(Board).props('persistShapes')).toBe(false)
+
+    // Export stays available — it's anonymous-read-safe on the backend.
+    expect(wrapper.find('[data-test="export"]').exists()).toBe(true)
   })
 })

@@ -11,6 +11,7 @@ vi.mock('../api', () => ({
       exportPgn: vi.fn(),
       saveAsStudy: vi.fn(),
       linkedStudies: vi.fn(),
+      setPublic: vi.fn(),
     },
   },
 }))
@@ -29,6 +30,7 @@ const row = (id: number) => ({
   eco: null,
   white_elo: null,
   black_elo: null,
+  public: false,
 })
 
 const detail = (id: number) => ({ ...row(id), pgn: '' })
@@ -259,5 +261,27 @@ describe('games store — PGN export', () => {
     const store = useGamesStore()
     await expect(store.exportPgn()).resolves.toBeNull()
     expect(api.games.exportPgn).not.toHaveBeenCalled()
+  })
+})
+
+describe('games store — sharing (#213)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    vi.mocked(api.games.linkedStudies).mockResolvedValue([])
+  })
+
+  it('setPublic flips the open game and refreshes it from the response', async () => {
+    vi.mocked(api.games.get).mockResolvedValue(detail(5))
+    vi.mocked(api.games.tree).mockResolvedValue(lineTree(['e4']))
+    const store = useGamesStore()
+    await store.open(5)
+
+    vi.mocked(api.games.setPublic).mockResolvedValue({ ...detail(5), public: true })
+    const updated = await store.setPublic(5, true)
+
+    expect(api.games.setPublic).toHaveBeenCalledWith(5, true)
+    expect(updated.public).toBe(true)
+    expect(store.openGame?.public).toBe(true)
   })
 })

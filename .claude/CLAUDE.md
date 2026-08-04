@@ -310,6 +310,21 @@ frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
                    the pure lib/assistantStream.ts fold → AssistantView streaming
                    bubbles/tool chips/approval+question cards; ProvidersSettings
                    manages the caller's LLM providers in Settings.
+                   Sharing (#213, ADR-0045): router authRedirect lets a
+                   /games/:id or /studies/:id navigation through logged-out (an
+                   id param on either route only — the bare list routes still
+                   gate); GamesView/StudyView key onMounted and their template
+                   on auth.isAnonymous (an alias of needsAuth) to skip the
+                   authenticated list/browse calls and render read-only — board
+                   movable/editable-shapes/persist-shapes off, MoveTree
+                   non-editable, engine/LLM panels (EnginePanel,
+                   GameReviewPanel, StudyAnalysis, DangerMapPanel), the folder
+                   sidebar and the generate dialogs all hidden; PGN export
+                   stays (PublicUser-safe on the backend). ShareToggle.vue
+                   (game/study headers) is the write side: a checkbox bound to
+                   the object's `public` flag (api.games/studies.setPublic,
+                   PUT .../{id}/public) plus a copy-link button for its own
+                   deep-link URL.
 ```
 
 **Layering rule:** pure logic (`position`, `pgn_tree`, `openings`, `plans`) is I/O-free and fully

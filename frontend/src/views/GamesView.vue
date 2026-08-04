@@ -11,17 +11,21 @@ import MoveTree from '../components/MoveTree.vue'
 import MoveComment from '../components/MoveComment.vue'
 import EnginePanel from '../components/EnginePanel.vue'
 import GameReviewPanel from '../components/GameReviewPanel.vue'
+import ShareToggle from '../components/ShareToggle.vue'
 import { api } from '../api'
 import { useGamesStore, type GameSortField } from '../stores/games'
 import { useReviewStore } from '../stores/review'
 import { useSettingsStore } from '../stores/settings'
+import { useAuthStore } from '../stores/auth'
 import { useBoardOverlays } from '../lib/useBoardOverlays'
 import { numericParam } from '../lib/routeParam'
+import { downloadText } from '../lib/download'
 import type { BoardMove, Database, GameRow } from '../types'
 
 const games = useGamesStore()
 const review = useReviewStore()
 const settings = useSettingsStore()
+const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 
@@ -94,6 +98,37 @@ async function onDelete(g: GameRow) {
   }
 }
 
+// Sharing (issue #213, ADR-0045): the toggle in the header flips `public` on
+// the open game; the link is the ordinary `/games/:id` deep link, which the
+// backend now serves anonymously once flagged.
+const publicToggling = ref(false)
+
+function shareUrl(id: number): string {
+  return `${window.location.origin}${router.resolve({ name: 'games', params: { id: String(id) } }).href}`
+}
+
+async function onTogglePublic(next: boolean) {
+  if (!games.openGame) return
+  publicToggling.value = true
+  try {
+    await games.setPublic(games.openGame.id, next)
+  } catch (e) {
+    loadError.value = String((e as Error)?.message ?? e)
+  } finally {
+    publicToggling.value = false
+  }
+}
+
+// Plain PGN download for the anonymous read-only view (issue #213): the
+// authenticated GameReviewPanel already offers this alongside the annotated
+// export, which needs an engine the anonymous tier doesn't get.
+async function onExportPgn() {
+  const game = games.openGame
+  if (!game) return
+  const pgn = await games.exportPgn(false)
+  if (pgn != null) downloadText(`game-${game.id}.pgn`, pgn)
+}
+
 // Clear the review when a different game is opened so stale data never shows.
 watch(
   () => games.openGame?.id,
@@ -163,6 +198,17 @@ function onKey(e: KeyboardEvent) {
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
   api.health().then((h) => (engineEnabled.value = h.engine === true)).catch(() => {})
+  const gameId = numericParam(route.params.id)
+
+  // Anonymous (issue #213): the router only let this mount through for a
+  // `/games/:id` deep link to a public game. The list/browse endpoints
+  // (`databases.list`, `games.list`) require a session, so skip straight to
+  // opening the game instead of 401ing on them first.
+  if (auth.isAnonymous) {
+    if (gameId != null) await games.open(gameId)
+    return
+  }
+
   try {
     databases.value = await api.databases.list()
     // Preselect the URL's ?db= (issue #212), else the user's default database,
@@ -177,7 +223,6 @@ onMounted(async () => {
       await onSelectDatabase()
     }
     // Deep link straight to a game: /games/:id.
-    const gameId = numericParam(route.params.id)
     if (gameId != null) await games.open(gameId)
   } catch (e) {
     loadError.value = String(e)
@@ -194,6 +239,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         Games
       </h2>
       <select
+        v-if="!auth.isAnonymous"
         v-model="selectedDb"
         class="rounded border border-border px-2 py-1 text-sm"
         aria-label="Database"
@@ -207,6 +253,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           {{ d.name }}{{ d.global ? ' (global)' : '' }}
         </option>
       </select>
+      <ShareToggle
+        v-if="games.openGame && !auth.isAnonymous"
+        class="ml-auto"
+        :model-value="games.openGame.public"
+        :share-url="shareUrl(games.openGame.id)"
+        :disabled="publicToggling"
+        @update:model-value="onTogglePublic"
+      />
     </header>
 
     <p
@@ -218,7 +272,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
     <!-- Merge selection bar (issue #170): fold the ticked games into one study. -->
     <div
-      v-if="selected.size"
+      v-if="selected.size && !auth.isAnonymous"
       class="mb-3 flex items-center gap-3 rounded border border-border bg-surface-2 px-3 py-2 text-sm"
     >
       <span class="text-muted">{{ selected.size }} selected</span>
@@ -245,8 +299,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     </div>
 
     <div class="flex flex-col gap-6 lg:flex-row">
-      <!-- Game list -->
-      <section class="lg:w-1/2">
+      <!-- Game list (issue #213: needs a session, hidden for an anonymous deep link). -->
+      <section
+        v-if="!auth.isAnonymous"
+        class="lg:w-1/2"
+      >
         <table class="w-full text-sm">
           <thead class="text-left text-muted">
             <tr>
@@ -368,7 +425,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           :fen="games.fen"
           :orientation="games.orientation"
           :dests="games.legalDests"
-          :movable="true"
+          :movable="!auth.isAnonymous"
           :last-move="games.lastMove"
           :board-theme="settings.boardTheme"
           :shapes="boardShapes"
@@ -386,9 +443,18 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           @clear-arrows="clearArrows"
         />
 
-        <p class="mt-3 text-sm font-medium">
+        <p class="mt-3 flex items-center gap-2 text-sm font-medium">
           {{ games.openGame.white ?? '?' }} – {{ games.openGame.black ?? '?' }}
           <span class="text-muted">{{ games.openGame.result ?? '*' }}</span>
+          <button
+            v-if="auth.isAnonymous"
+            type="button"
+            data-test="export-game"
+            class="ml-auto rounded border border-border px-2 py-1 text-xs font-normal hover:bg-surface-2"
+            @click="onExportPgn"
+          >
+            Export PGN
+          </button>
         </p>
 
         <MoveComment
@@ -404,14 +470,16 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           @select="games.goto($event)"
         />
 
-        <GameReviewPanel
-          class="mt-4"
-          :engine-enabled="engineEnabled"
-        />
+        <template v-if="!auth.isAnonymous">
+          <GameReviewPanel
+            class="mt-4"
+            :engine-enabled="engineEnabled"
+          />
 
-        <div class="mt-4">
-          <EnginePanel :fen="games.fen" />
-        </div>
+          <div class="mt-4">
+            <EnginePanel :fen="games.fen" />
+          </div>
+        </template>
       </section>
     </div>
   </div>
