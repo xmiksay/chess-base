@@ -142,7 +142,13 @@ src/
                    llm_providers (user rows over globals, house fallback = global rows
                    else ANTHROPIC_API_KEY; DEFAULT_PIN `~default` sentinel: the build
                    profile pins it, the resolver maps it to the caller's default row
-                   at session start); policy.rs AgentPolicy (GATED_TOOLS→Ask,
+                   at session start — or to a one-shot pending pin parked by a
+                   creation-time model choice, #215/ADR-0046, validated via
+                   knows_provider before Spawn since a failed pin only warns and
+                   leaves the session on the EchoLlm stub; mid-session switching is
+                   the engine's own wire-allowed SetModel/ModelChanged, no backend
+                   code — the SPA folds ModelChanged last-wins into the transcript's
+                   current model); policy.rs AgentPolicy (GATED_TOOLS→Ask,
                    Session grants in-memory, Always grants persisted in agent_grants);
                    tools.rs BridgedTool (MCP registry 1:1, session→CurrentUser scoping,
                    32KiB output cap); persistence.rs DbRecordSink (bounded channel →
@@ -294,7 +300,12 @@ frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
                    hand-drawn shapes, "generated" doesn't since it never does.
                    Assistant (#198): stores/assistant.ts reconnecting WS client over
                    the pure lib/assistantStream.ts fold → AssistantView streaming
-                   bubbles/tool chips/approval+question cards; ProvidersSettings
+                   bubbles/tool chips/approval+question cards + two ModelSelect
+                   pickers (#215, ADR-0046): composer picker = a new conversation's
+                   model (null ⇒ default row, rides the `new` frame), header picker
+                   = the open one's current model (folded last-wins from
+                   model_changed, a "switched to …" divider on a real switch) sending
+                   set_model on change; ProvidersSettings
                    manages the caller's LLM providers in Settings.
 ```
 

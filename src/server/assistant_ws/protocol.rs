@@ -20,11 +20,18 @@ pub(crate) enum ClientFrame {
     In { msg: InMsg },
     /// List the caller's conversations → [`ServerFrame::Sessions`].
     List,
-    /// Start a new conversation → [`ServerFrame::Created`].
+    /// Start a new conversation → [`ServerFrame::Created`]. `provider`/`model`
+    /// (both or neither — a lone field is refused with an error frame) pick
+    /// the session's starting model (#215, ADR-0046); omitted ⇒ the caller's
+    /// default provider row.
     New {
         prompt: String,
         #[serde(default)]
         name: Option<String>,
+        #[serde(default)]
+        provider: Option<String>,
+        #[serde(default)]
+        model: Option<String>,
     },
     /// Open a conversation (resuming it into the engine if needed) →
     /// [`ServerFrame::History`].
@@ -133,7 +140,25 @@ mod tests {
         ));
 
         let f: ClientFrame = serde_json::from_str(r#"{"type":"new","prompt":"hi"}"#).expect("new");
-        assert!(matches!(f, ClientFrame::New { name: None, .. }));
+        assert!(matches!(
+            f,
+            ClientFrame::New {
+                name: None,
+                provider: None,
+                model: None,
+                ..
+            }
+        ));
+
+        let f: ClientFrame = serde_json::from_str(
+            r#"{"type":"new","prompt":"hi","provider":"anthropic","model":"claude-x"}"#,
+        )
+        .expect("new with a model choice");
+        assert!(matches!(
+            f,
+            ClientFrame::New { provider: Some(p), model: Some(m), .. }
+                if p == "anthropic" && m == "claude-x"
+        ));
 
         let f: ClientFrame = serde_json::from_str(r#"{"type":"pong"}"#).expect("pong");
         assert!(matches!(f, ClientFrame::Pong));

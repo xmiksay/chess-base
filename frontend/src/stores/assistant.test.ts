@@ -93,6 +93,38 @@ describe('assistant store', () => {
     expect(FakeWebSocket.last.sent.at(-1)).toEqual({ type: 'list' })
   })
 
+  it('newSession with a model choice adds provider/model to the new frame', () => {
+    const store = freshStore()
+    store.connect()
+    FakeWebSocket.last.open()
+    store.newSession('hi', null, { provider: 'zai', model: 'glm-5' })
+    expect(FakeWebSocket.last.sent.at(-1)).toEqual({
+      type: 'new',
+      prompt: 'hi',
+      name: null,
+      provider: 'zai',
+      model: 'glm-5',
+    })
+  })
+
+  it('setModel ships a set_model InMsg for the open conversation', () => {
+    const store = openStore()
+    store.setModel('zai', 'glm-5')
+    expect(FakeWebSocket.last.sent.at(-1)).toEqual({
+      type: 'in',
+      msg: { kind: 'set_model', session: ROOT, provider: 'zai', model: 'glm-5' },
+    })
+    // The engine confirms; the transcript's model tracks it.
+    out({ kind: 'model_changed', session: ROOT, provider: 'zai', model: 'glm-5' })
+    expect(store.transcript.model).toEqual({ provider: 'zai', model: 'glm-5' })
+
+    // No open conversation ⇒ nothing is sent.
+    store.deselect()
+    FakeWebSocket.last.sent = []
+    store.setModel('zai', 'glm-5')
+    expect(FakeWebSocket.last.sent).toEqual([])
+  })
+
   it('folds out events for the current root and ignores other sessions', () => {
     const store = openStore()
     out({ kind: 'text_delta', session: ROOT, seq: 1, text: 'hello' })

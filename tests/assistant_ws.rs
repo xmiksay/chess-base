@@ -6,7 +6,10 @@
 //! has an unknown wire and no endpoint, so the session-start model pin fails
 //! to resolve (a logged warning) and every turn runs on the engine-default
 //! `EchoLlm` — deterministic, no network (the same stance as the step-4
-//! engine tests).
+//! engine tests). A second, *resolvable* row (`live`, OpenAI wire pointed at
+//! an unroutable localhost endpoint) exercises the model-choice paths (#215):
+//! resolution/rebind succeeds without any network — only a turn would dial
+//! out, and the model-choice tests never wait on one.
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -50,6 +53,21 @@ async fn spawn_app(mode: Mode) -> (SocketAddr, AppState) {
     .insert(&db)
     .await
     .expect("seed provider row");
+    // The resolvable row for the model-choice tests (see the module doc).
+    llm_providers::ActiveModel {
+        name: Set("live".into()),
+        model: Set("gpt-test".into()),
+        api_key: Set("test-key".into()),
+        is_default: Set(false),
+        created_at: Set(chrono::Utc::now().naive_utc()),
+        owner_id: Set(None),
+        wire: Set("openai".into()),
+        base_url: Set(Some("http://127.0.0.1:9/v1".into())),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("seed resolvable provider row");
     let store = AgentProviderStore::new_with_env(db.clone(), None)
         .await
         .expect("provider store");
@@ -330,6 +348,126 @@ async fn open_replays_the_in_prompt_and_the_out_done_on_a_fresh_connection() {
             .any(|r| r["dir"] == "out" && r["payload"]["kind"] == "done"),
         "the Out(Done) record replays"
     );
+}
+
+#[tokio::test]
+async fn new_with_a_model_choice_starts_the_session_on_it() {
+    let (addr, _state) = spawn_app(Mode::Local).await;
+    let mut ws = ws_connect(addr, None).await.expect("connect");
+
+    send_frame(
+        &mut ws,
+        json!({"type":"new","prompt":"hi","provider":"live","model":"gpt-test"}),
+    )
+    .await;
+    let created = wait_for(&mut ws, |f| f["type"] == "created").await;
+    let root = created["root"].as_str().expect("root").to_string();
+
+    // The session-start pin resolved the choice, not the (unresolvable)
+    // default row: the transcript opens with a ModelChanged naming it.
+    let changed = wait_for(&mut ws, |f| {
+        f["type"] == "out" && f["ev"]["kind"] == "model_changed" && f["ev"]["session"] == *root
+    })
+    .await;
+    assert_eq!(changed["ev"]["provider"], "live");
+    assert_eq!(changed["ev"]["model"], "gpt-test");
+}
+
+#[tokio::test]
+async fn new_with_a_lone_provider_field_or_unknown_provider_is_refused() {
+    let (addr, state) = spawn_app(Mode::Local).await;
+    let mut ws = ws_connect(addr, None).await.expect("connect");
+
+    send_frame(
+        &mut ws,
+        json!({"type":"new","prompt":"hi","provider":"live"}),
+    )
+    .await;
+    let err = wait_for(&mut ws, |f| f["type"] == "error").await;
+    assert_eq!(err["message"], "provider and model must be given together");
+
+    send_frame(
+        &mut ws,
+        json!({"type":"new","prompt":"hi","provider":"ghost","model":"m"}),
+    )
+    .await;
+    let err = wait_for(&mut ws, |f| f["type"] == "error").await;
+    assert_eq!(err["code"], "unknown_provider");
+    assert_eq!(err["message"], "unknown provider: ghost");
+
+    // Neither refusal persisted a session row.
+    let rows = agent_sessions::Entity::find()
+        .all(&state.db)
+        .await
+        .expect("query");
+    assert!(rows.is_empty(), "no session row on a refused create");
+}
+
+#[tokio::test]
+async fn set_model_switches_mid_session_and_unknown_provider_is_a_recoverable_error() {
+    let (addr, _state) = spawn_app(Mode::Local).await;
+    let mut ws = ws_connect(addr, None).await.expect("connect");
+
+    // Default create: the pin fails to resolve, the session runs on EchoLlm.
+    send_frame(&mut ws, json!({"type":"new","prompt":"hi","name":null})).await;
+    let created = wait_for(&mut ws, |f| f["type"] == "created").await;
+    let root = created["root"].as_str().expect("root").to_string();
+    collect_turn(&mut ws, &root).await;
+
+    // Wire-allowed engine SetModel: rebinding to the resolvable row emits
+    // ModelChanged (no backend change required — the relay forwards it).
+    send_frame(
+        &mut ws,
+        json!({"type":"in","msg":{"kind":"set_model","session":root,
+               "provider":"live","model":"gpt-test"}}),
+    )
+    .await;
+    let changed = wait_for(&mut ws, |f| {
+        f["type"] == "out" && f["ev"]["kind"] == "model_changed" && f["ev"]["session"] == *root
+    })
+    .await;
+    assert_eq!(changed["ev"]["provider"], "live");
+    assert_eq!(changed["ev"]["model"], "gpt-test");
+
+    // An unknown provider is a recoverable engine error event; the previous
+    // binding is kept (no ModelChanged follows).
+    send_frame(
+        &mut ws,
+        json!({"type":"in","msg":{"kind":"set_model","session":root,
+               "provider":"ghost","model":"m"}}),
+    )
+    .await;
+    let err = wait_for(&mut ws, |f| {
+        f["type"] == "out" && f["ev"]["kind"] == "error" && f["ev"]["session"] == *root
+    })
+    .await;
+    let message = err["ev"]["message"].as_str().expect("message");
+    assert!(
+        message.contains("cannot switch model"),
+        "recoverable switch error: {message}"
+    );
+}
+
+#[tokio::test]
+async fn set_model_on_another_users_session_is_refused() {
+    let (addr, state) = spawn_app(Mode::Server).await;
+    let alice = register(&state, "alice").await;
+    let bob = register(&state, "bob").await;
+
+    let mut ws_a = ws_connect(addr, Some(&alice)).await.expect("alice");
+    send_frame(&mut ws_a, json!({"type":"new","prompt":"mine"})).await;
+    let created = wait_for(&mut ws_a, |f| f["type"] == "created").await;
+    let root = created["root"].as_str().expect("root").to_string();
+
+    let mut ws_b = ws_connect(addr, Some(&bob)).await.expect("bob");
+    send_frame(
+        &mut ws_b,
+        json!({"type":"in","msg":{"kind":"set_model","session":root,
+               "provider":"live","model":"gpt-test"}}),
+    )
+    .await;
+    let err = wait_for(&mut ws_b, |f| f["type"] == "error").await;
+    assert_eq!(err["message"], "unknown session");
 }
 
 #[tokio::test]

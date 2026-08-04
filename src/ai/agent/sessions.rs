@@ -49,6 +49,11 @@ use super::provider_store::AgentProviderStore;
 pub enum SessionError {
     #[error("no LLM provider configured")]
     NoProvider,
+    /// A creation-time model choice named a provider absent from the caller's
+    /// catalog (#215, ADR-0046). Refused *before* spawning: a pin that fails
+    /// to resolve only warns and leaves the session on the `EchoLlm` stub.
+    #[error("unknown provider: {0}")]
+    UnknownProvider(String),
     #[error("session not found")]
     NotFound,
     #[error(transparent)]
@@ -148,18 +153,35 @@ impl SessionService {
 
     /// Start a new conversation on `prompt`: insert the index row, register
     /// the owner, and send the single `Spawn` frame (see the module doc for
-    /// why no `SetModel` follows). Returns the new root session id.
+    /// why no `SetModel` follows). An explicit `choice` of `(provider, model)`
+    /// rides the [`DEFAULT_PIN`] seam as a one-shot pending pin (#215,
+    /// ADR-0046) so the first turn already runs on it. Returns the new root
+    /// session id.
     pub async fn create(
         &self,
         user: &CurrentUser,
         prompt: String,
         name: Option<String>,
+        choice: Option<(String, String)>,
     ) -> Result<String, SessionError> {
         let uid = UserId::new(&user.id);
-        // Fail fast (503) instead of spawning a session whose model pin cannot
-        // resolve and would silently run on the EchoLlm stub.
-        if self.store.default_for(&uid).is_none() {
-            return Err(SessionError::NoProvider);
+        match &choice {
+            // Validate the chosen provider against the caller's catalog now:
+            // pin resolution failure at session start only warns and leaves
+            // the session on the EchoLlm stub, so a bad name must be refused
+            // loudly before anything is spawned or persisted.
+            Some((provider, _)) => {
+                if !self.store.knows_provider(&uid, provider) {
+                    return Err(SessionError::UnknownProvider(provider.clone()));
+                }
+            }
+            // Fail fast (503) instead of spawning a session whose model pin
+            // cannot resolve and would silently run on the EchoLlm stub.
+            None => {
+                if self.store.default_for(&uid).is_none() {
+                    return Err(SessionError::NoProvider);
+                }
+            }
         }
 
         let root = format!("{}:{}", user.id, uuid::Uuid::new_v4());
@@ -181,6 +203,12 @@ impl SessionService {
         // persistence sink can resolve the owner from the very first event.
         self.users.register(session.clone(), uid.clone());
         self.mark_live(session.clone());
+        // Park the one-shot pin as late as possible before Spawn: session
+        // start's DEFAULT_PIN resolution consumes it (ADR-0046 documents the
+        // orphaned-pin race if Spawn never resolves).
+        if let Some((provider, model)) = choice {
+            self.store.set_pending_pin(&user.id, provider, model);
+        }
         self.holly
             .send(InMsg::Spawn {
                 session,

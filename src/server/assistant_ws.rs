@@ -138,11 +138,25 @@ async fn handle_client_frame(
             Ok(items) => send_ok(socket, &ServerFrame::Sessions { items }).await,
             Err(e) => send_session_error(socket, e).await,
         },
-        ClientFrame::New { prompt, name } => match engine.sessions.create(user, prompt, name).await
-        {
-            Ok(root) => send_ok(socket, &ServerFrame::Created { root }).await,
-            Err(e) => send_session_error(socket, e).await,
-        },
+        ClientFrame::New {
+            prompt,
+            name,
+            provider,
+            model,
+        } => {
+            let choice = match (provider, model) {
+                (Some(p), Some(m)) => Some((p, m)),
+                (None, None) => None,
+                _ => {
+                    return send_error(socket, None, "provider and model must be given together")
+                        .await;
+                }
+            };
+            match engine.sessions.create(user, prompt, name, choice).await {
+                Ok(root) => send_ok(socket, &ServerFrame::Created { root }).await,
+                Err(e) => send_session_error(socket, e).await,
+            }
+        }
         ClientFrame::Open { root } => match open_history(engine, user, &root).await {
             Ok((gapped, records)) => {
                 send_ok(
@@ -236,6 +250,7 @@ fn outbound(user_id: &str, users: &SessionUserRegistry, ev: OutEvent) -> Option<
 async fn send_session_error(socket: &mut WebSocket, err: SessionError) -> bool {
     let code = match &err {
         SessionError::NoProvider => Some("no_provider"),
+        SessionError::UnknownProvider(_) => Some("unknown_provider"),
         SessionError::NotFound => Some("not_found"),
         SessionError::Internal(_) => None,
     };
