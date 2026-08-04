@@ -150,13 +150,26 @@ src/
                    llm_providers (user rows over globals, house fallback = global rows
                    else ANTHROPIC_API_KEY; DEFAULT_PIN `~default` sentinel: the build
                    profile pins it, the resolver maps it to the caller's default row
-                   at session start); policy.rs AgentPolicy (GATED_TOOLS→Ask,
+                   at session start, or a pending-pin if one is queued — see below);
+                   policy.rs AgentPolicy (GATED_TOOLS→Ask,
                    Session grants in-memory, Always grants persisted in agent_grants);
                    tools.rs BridgedTool (MCP registry 1:1, session→CurrentUser scoping,
                    32KiB output cap); persistence.rs DbRecordSink (bounded channel →
                    agent_events, ord per root); sessions.rs SessionService (list/create/
-                   open/delete, ownership fail-closed, integrity_gap-guarded resume);
-                   engine.rs AgentEngine::start (Holly + tool executor + persistence tap
+                   open/delete, ownership fail-closed, integrity_gap-guarded resume;
+                   per-session model choice #215/ADR-0046: create takes an optional
+                   explicit (provider, model) — validated synchronously against the
+                   engine's own ModelResolver, so a bad pick 400s as
+                   SessionError::InvalidModelChoice instead of silently falling
+                   through to the EchoLlm stub — then calls
+                   AgentProviderStore::set_pending_pin so the session-start
+                   DEFAULT_PIN resolution (the only per-user binding that lands
+                   before the queued Spawn prompt) picks it up instead of the
+                   stored default; mid-session switching needed no backend change —
+                   entanglement 0.6.0's InMsg::SetModel/OutEvent::ModelChanged were
+                   already wire-allowed and already replay through the generic
+                   Out-event history path); engine.rs AgentEngine::start (Holly +
+                   tool executor + persistence tap
                    + throttle responder + index subscriber; idle_ttl 30min; compaction
                    on the session's own model)  ← unit-tested
   study_gen/       study-gen stages (Epic 9): tree (#29) builds a pruned VariationTree
@@ -288,7 +301,8 @@ src/
                    assistant_ws.rs (+protocol.rs): GET /api/assistant/ws — the
                    streaming assistant relay onto the agent engine (envelope over
                    InMsg/OutEvent + session CRUD, ownership-filtered both ways,
-                   history replay, ping/pong); routes/providers.rs: per-user LLM
+                   history replay, ping/pong; ClientFrame::New carries an optional
+                   provider/model creation-time pick, #215/ADR-0046); routes/providers.rs: per-user LLM
                    provider CRUD at /api/assistant/providers (keys write-only)
   bin/chess-base.rs  CLI entry (clap)
 frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
@@ -309,7 +323,17 @@ frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
                    Assistant (#198): stores/assistant.ts reconnecting WS client over
                    the pure lib/assistantStream.ts fold → AssistantView streaming
                    bubbles/tool chips/approval+question cards; ProvidersSettings
-                   manages the caller's LLM providers in Settings.
+                   manages the caller's LLM providers in Settings. Per-session model
+                   choice (#215, ADR-0046, shares #214's ModelSelect.vue/lib/providers.ts):
+                   TranscriptState.model tracks the live (provider, model) from
+                   model_changed events (restored on history replay for free); the
+                   composer's ModelSelect (visible only with no conversation open)
+                   feeds newSession's optional ModelChoice onto the `new` frame, and
+                   the conversation header's ModelSelect (visible only once one is
+                   open) reflects the live model and calls store.setModel to send
+                   InMsg::SetModel on change — its own "(default)" option is resolved
+                   locally via effectiveDefault since a live switch always needs a
+                   concrete pick.
                    Sharing (#213, ADR-0045): router authRedirect lets a
                    /games/:id or /studies/:id navigation through logged-out (an
                    id param on either route only — the bare list routes still

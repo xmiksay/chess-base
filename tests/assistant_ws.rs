@@ -50,6 +50,24 @@ async fn spawn_app(mode: Mode) -> (SocketAddr, AppState) {
     .insert(&db)
     .await
     .expect("seed provider row");
+    // A second, resolvable global row (#215 tests): not the default, so
+    // `create`'s implicit-choice path is unaffected, but an explicit
+    // creation-time pick or a live `SetModel` naming it can resolve for real
+    // (no network call happens unless a turn actually runs on it).
+    llm_providers::ActiveModel {
+        name: Set("anthropic".into()),
+        model: Set("claude-x".into()),
+        api_key: Set("test-key".into()),
+        is_default: Set(false),
+        created_at: Set(chrono::Utc::now().naive_utc()),
+        owner_id: Set(None),
+        wire: Set("anthropic".into()),
+        base_url: Set(None),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("seed resolvable provider row");
     let store = AgentProviderStore::new_with_env(db.clone(), None)
         .await
         .expect("provider store");
@@ -355,4 +373,89 @@ async fn a_privileged_in_frame_is_refused_with_an_error_frame() {
         message.contains("privileged") && message.contains("spawn"),
         "WireError surfaces: {message}"
     );
+}
+
+#[tokio::test]
+async fn new_with_an_unresolvable_model_choice_is_refused_before_creating_anything() {
+    let (addr, state) = spawn_app(Mode::Local).await;
+    let mut ws = ws_connect(addr, None).await.expect("connect");
+
+    send_frame(
+        &mut ws,
+        json!({"type":"new","prompt":"hi","provider":"not-configured","model":"x"}),
+    )
+    .await;
+    let err = wait_for(&mut ws, |f| f["type"] == "error").await;
+    assert_eq!(err["code"], "invalid_model");
+
+    let rows = agent_sessions::Entity::find()
+        .all(&state.db)
+        .await
+        .expect("query");
+    assert!(
+        rows.is_empty(),
+        "a rejected choice must not create a session"
+    );
+}
+
+#[tokio::test]
+async fn new_with_provider_and_no_model_is_refused() {
+    let (addr, _state) = spawn_app(Mode::Local).await;
+    let mut ws = ws_connect(addr, None).await.expect("connect");
+
+    send_frame(
+        &mut ws,
+        json!({"type":"new","prompt":"hi","provider":"anthropic"}),
+    )
+    .await;
+    let err = wait_for(&mut ws, |f| f["type"] == "error").await;
+    assert_eq!(err["code"], "invalid_model");
+}
+
+#[tokio::test]
+async fn new_with_an_explicit_model_choice_pins_the_session_to_it() {
+    let (addr, _state) = spawn_app(Mode::Local).await;
+    let mut ws = ws_connect(addr, None).await.expect("connect");
+
+    // The install default ("stub") is deliberately unresolvable; picking the
+    // second, resolvable row explicitly must still bind at session start —
+    // proof the pending-pin seam (#215), not the stale default, won the race.
+    send_frame(
+        &mut ws,
+        json!({"type":"new","prompt":"hi","provider":"anthropic","model":"claude-x"}),
+    )
+    .await;
+    let created = wait_for(&mut ws, |f| f["type"] == "created").await;
+    let root = created["root"].as_str().expect("root").to_string();
+
+    let changed = wait_for(&mut ws, |f| {
+        f["type"] == "out" && f["ev"]["kind"] == "model_changed" && f["ev"]["session"] == *root
+    })
+    .await;
+    assert_eq!(changed["ev"]["provider"], "anthropic");
+    assert_eq!(changed["ev"]["model"], "claude-x");
+}
+
+#[tokio::test]
+async fn set_model_switches_a_live_session_mid_conversation() {
+    let (addr, _state) = spawn_app(Mode::Local).await;
+    let mut ws = ws_connect(addr, None).await.expect("connect");
+
+    send_frame(&mut ws, json!({"type":"new","prompt":"hi"})).await;
+    let created = wait_for(&mut ws, |f| f["type"] == "created").await;
+    let root = created["root"].as_str().expect("root").to_string();
+    collect_turn(&mut ws, &root).await;
+
+    send_frame(
+        &mut ws,
+        json!({"type":"in","msg":{"kind":"set_model","session":root,
+               "provider":"anthropic","model":"claude-x"}}),
+    )
+    .await;
+    let changed = wait_for(&mut ws, |f| {
+        f["type"] == "out" && f["ev"]["kind"] == "model_changed" && f["ev"]["session"] == *root
+    })
+    .await;
+    assert_eq!(changed["ev"]["provider"], "anthropic");
+    assert_eq!(changed["ev"]["model"], "claude-x");
 }

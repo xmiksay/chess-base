@@ -79,14 +79,22 @@ export interface UsageTotals {
   cost_usd: number | null
 }
 
+/** The session's live model, as last announced by a `model_changed` event. */
+export interface ActiveModel {
+  provider: string
+  model: string
+}
+
 export interface TranscriptState {
   items: TranscriptItem[]
   status: AgentState | null
   usage: UsageTotals | null
+  /** `null` until the first `model_changed` (session start always sends one). */
+  model: ActiveModel | null
 }
 
 export function emptyTranscript(): TranscriptState {
-  return { items: [], status: null, usage: null }
+  return { items: [], status: null, usage: null, model: null }
 }
 
 // --- parsing -----------------------------------------------------------------
@@ -260,6 +268,8 @@ export function foldEvent(state: TranscriptState, ev: AssistantOutEvent): Transc
     }
     case 'status':
       return { ...state, status: ev.state }
+    case 'model_changed':
+      return { ...state, model: { provider: ev.provider, model: ev.model } }
     case 'usage': {
       const prev = state.usage ?? { input_tokens: 0, output_tokens: 0, cost_usd: null }
       return {

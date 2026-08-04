@@ -707,6 +707,13 @@ export type AssistantOutEvent =
   | { kind: 'session_ended'; session: string; ts: number }
   | { kind: 'session_hibernated'; session: string; ts: number }
   | { kind: 'session_meta_changed'; session: string; name?: string | null; action?: string | null }
+  | {
+      kind: 'model_changed'
+      session: string
+      provider: string
+      model: string
+      context_window?: number | null
+    }
 
 /** Client → engine messages the SPA sends (riding in an `in` frame). */
 export type AssistantInMsg =
@@ -716,6 +723,7 @@ export type AssistantInMsg =
   | { kind: 'answer_question'; session: string; request_id: string; answers: string[][] }
   | { kind: 'stop'; session: string }
   | { kind: 'set_session_meta'; session: string; name: string; if_unset: boolean }
+  | { kind: 'set_model'; session: string; provider: string; model: string }
 
 /** A conversation sidebar row (`sessions` frame item). */
 export interface AgentSessionSummary {
@@ -741,7 +749,11 @@ export type AssistantServerFrame =
   | { type: 'created'; root: string }
   | { type: 'history'; root: string; gapped: boolean; records: AssistantHistoryRecord[] }
   | { type: 'deleted'; root: string }
-  | { type: 'error'; code?: 'no_provider' | 'not_found' | null; message: string }
+  | {
+      type: 'error'
+      code?: 'no_provider' | 'not_found' | 'invalid_model' | null
+      message: string
+    }
   | { type: 'gap'; dropped: number }
   | { type: 'throttled'; active: boolean }
   | { type: 'ping' }
@@ -750,7 +762,7 @@ export type AssistantServerFrame =
 export type AssistantClientFrame =
   | { type: 'in'; msg: AssistantInMsg }
   | { type: 'list' }
-  | { type: 'new'; prompt: string; name: string | null }
+  | { type: 'new'; prompt: string; name: string | null; provider?: string | null; model?: string | null }
   | { type: 'open'; root: string }
   | { type: 'delete'; root: string }
   | { type: 'pong' }

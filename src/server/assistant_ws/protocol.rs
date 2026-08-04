@@ -20,11 +20,17 @@ pub(crate) enum ClientFrame {
     In { msg: InMsg },
     /// List the caller's conversations → [`ServerFrame::Sessions`].
     List,
-    /// Start a new conversation → [`ServerFrame::Created`].
+    /// Start a new conversation → [`ServerFrame::Created`]. `provider`/`model`
+    /// is an explicit creation-time model choice (#215; `provider` requires
+    /// `model`) — omitting both keeps the caller's per-user default.
     New {
         prompt: String,
         #[serde(default)]
         name: Option<String>,
+        #[serde(default)]
+        provider: Option<String>,
+        #[serde(default)]
+        model: Option<String>,
     },
     /// Open a conversation (resuming it into the engine if needed) →
     /// [`ServerFrame::History`].

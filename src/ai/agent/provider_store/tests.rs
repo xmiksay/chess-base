@@ -389,3 +389,47 @@ async fn resolver_falls_back_to_the_house_user() {
     // Unknown provider still fails loudly.
     assert!(resolver(None, "nope", "m").is_err());
 }
+
+#[tokio::test]
+async fn pending_pin_wins_over_the_default_and_is_consumed_once() {
+    let db = mem_db().await;
+    seed_default(&db, None, "anthropic", "default-model").await;
+    seed(&db, None, "openai", "openai", "picked-model", "g-key", None).await;
+    let store = AgentProviderStore::new_with_env(db, None)
+        .await
+        .expect("build store");
+    let resolver = store.build_resolver(HttpClient::new().expect("http client"));
+    let alice = UserId::new("alice");
+
+    store.set_pending_pin(&alice, "openai".to_string(), "picked-model".to_string());
+    let resolved = resolver(Some(&alice), DEFAULT_PIN, DEFAULT_PIN).expect("pending pin wins");
+    assert_eq!(resolved.provider, "openai");
+    assert_eq!(resolved.model, "picked-model");
+
+    // Consumed: the next sentinel resolution for the same user falls back to
+    // the stored default instead of replaying the pin.
+    let resolved = resolver(Some(&alice), DEFAULT_PIN, DEFAULT_PIN).expect("falls back");
+    assert_eq!(resolved.provider, "anthropic");
+    assert_eq!(resolved.model, "default-model");
+}
+
+#[tokio::test]
+async fn pending_pin_is_scoped_to_its_own_user() {
+    let db = mem_db().await;
+    seed_default(&db, None, "anthropic", "default-model").await;
+    let store = AgentProviderStore::new_with_env(db, None)
+        .await
+        .expect("build store");
+    let resolver = store.build_resolver(HttpClient::new().expect("http client"));
+    let alice = UserId::new("alice");
+    let bob = UserId::new("bob");
+
+    store.set_pending_pin(&alice, "anthropic".to_string(), "alice-pick".to_string());
+    let resolved = resolver(Some(&bob), DEFAULT_PIN, DEFAULT_PIN).expect("bob resolves");
+    assert_eq!(
+        resolved.model, "default-model",
+        "bob must not see alice's pending pin"
+    );
+    let resolved = resolver(Some(&alice), DEFAULT_PIN, DEFAULT_PIN).expect("alice resolves");
+    assert_eq!(resolved.model, "alice-pick");
+}

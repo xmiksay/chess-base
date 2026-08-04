@@ -48,6 +48,17 @@ pub struct AgentProviderStore {
     /// `ANTHROPIC_API_KEY` captured once at construction; injectable for tests.
     env_key: Option<String>,
     cache: RwLock<Caches>,
+    /// Creation-time model pin seam (#215): `SessionService::create` stashes an
+    /// explicit per-session `(provider, model)` choice here, keyed by user, just
+    /// before sending `Spawn` — the [`DEFAULT_PIN`] resolution that follows (the
+    /// only per-user binding that lands before the queued spawn prompt's first
+    /// turn, see `sessions.rs`'s module doc) consumes and clears it in
+    /// [`Self::take_pending_pin`], falling back to [`Self::default_for`] when
+    /// nothing is pending. Keyed by user rather than session because the
+    /// resolver closure only ever sees the user id; two sessions from the same
+    /// user created in the same instant could in principle race here, but a
+    /// single browser tab issues `create` calls serially.
+    pending: std::sync::Mutex<HashMap<String, (String, String)>>,
 }
 
 /// The pre-warmed per-owner caches, rebuilt together by
@@ -84,6 +95,7 @@ impl AgentProviderStore {
             db,
             env_key,
             cache: RwLock::new(Caches::default()),
+            pending: std::sync::Mutex::new(HashMap::new()),
         });
         store.rebuild().await?;
         Ok(store)
@@ -98,7 +110,8 @@ impl AgentProviderStore {
 
     /// Wrap entanglement's user resolver so a session without a [`UserId`]
     /// resolves against the house context instead of hard-erroring, and so the
-    /// [`DEFAULT_PIN`] sentinel resolves to the calling user's default
+    /// [`DEFAULT_PIN`] sentinel resolves to a pending creation-time pin for the
+    /// calling user if [`Self::set_pending_pin`] queued one, else their default
     /// provider/model (the seam the `build` profile's session-start pin uses).
     pub fn build_resolver(self: &Arc<Self>, http: HttpClient) -> ModelResolver {
         let store: Arc<dyn UserProviderStore> = Arc::clone(self) as _;
@@ -109,7 +122,8 @@ impl AgentProviderStore {
             let user = user.unwrap_or(&house);
             if provider == DEFAULT_PIN {
                 let (provider, model) = this
-                    .default_for(user)
+                    .take_pending_pin(user)
+                    .or_else(|| this.default_for(user))
                     .ok_or_else(|| "no LLM provider configured".to_string())?;
                 inner(Some(user), &provider, &model)
             } else {
@@ -128,6 +142,26 @@ impl AgentProviderStore {
             .get(user.0.as_str())
             .or_else(|| cache.defaults.get(HOUSE_USER))
             .cloned()
+    }
+
+    /// Queue an explicit `(provider, model)` pin for `user`'s next
+    /// [`DEFAULT_PIN`] resolution (#215): `SessionService::create` calls this
+    /// right before sending the new session's `Spawn`, once the choice has
+    /// already been validated through [`Self::build_resolver`] so a bad pick
+    /// never falls through to the `EchoLlm` stub.
+    pub fn set_pending_pin(&self, user: &UserId, provider: String, model: String) {
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(user.0.clone(), (provider, model));
+    }
+
+    /// Consume (and clear) `user`'s pending pin, if one is queued.
+    fn take_pending_pin(&self, user: &UserId) -> Option<(String, String)> {
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(user.0.as_str())
     }
 
     /// Whether *any* provider surface exists (a user row, a global row, or the

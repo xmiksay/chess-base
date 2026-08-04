@@ -138,7 +138,15 @@ async fn handle_client_frame(
             Ok(items) => send_ok(socket, &ServerFrame::Sessions { items }).await,
             Err(e) => send_session_error(socket, e).await,
         },
-        ClientFrame::New { prompt, name } => match engine.sessions.create(user, prompt, name).await
+        ClientFrame::New {
+            prompt,
+            name,
+            provider,
+            model,
+        } => match engine
+            .sessions
+            .create(user, prompt, name, provider, model)
+            .await
         {
             Ok(root) => send_ok(socket, &ServerFrame::Created { root }).await,
             Err(e) => send_session_error(socket, e).await,
@@ -237,6 +245,7 @@ async fn send_session_error(socket: &mut WebSocket, err: SessionError) -> bool {
     let code = match &err {
         SessionError::NoProvider => Some("no_provider"),
         SessionError::NotFound => Some("not_found"),
+        SessionError::InvalidModelChoice(_) => Some("invalid_model"),
         SessionError::Internal(_) => None,
     };
     // An internal error's chain stays in the log; the client gets the summary.

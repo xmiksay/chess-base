@@ -150,7 +150,13 @@ impl AgentEngine {
         let persistence = spawn_persistence_subscriber_with_sink(&holly, sink);
         let throttle = spawn_throttle_responder(&holly, http);
 
-        let sessions = SessionService::new(db, holly.clone(), users.clone(), providers.clone());
+        let sessions = SessionService::new(
+            db,
+            holly.clone(),
+            users.clone(),
+            providers.clone(),
+            model_resolver.clone(),
+        );
         let index = spawn_index_subscriber(&holly, users.clone(), sessions.clone());
 
         Ok(Arc::new(Self {

@@ -50,3 +50,5 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0042 | Generated plan/threat arrows get clear semantics + a bulk clear |
 | 0043 | Anonymous public MCP tier: data reads on global databases only |
 | 0044 | OAuth consent screen + CSRF, refresh-token reuse detection, scoped service tokens |
+| 0045 | Public sharing: per-object flags + anonymous HTTP read tier |
+| 0046 | Assistant: per-session model choice, switchable mid-session |

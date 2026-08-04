@@ -85,12 +85,54 @@ describe('assistant store', () => {
       type: 'new',
       prompt: 'build a repertoire',
       name: null,
+      provider: null,
+      model: null,
     })
     FakeWebSocket.last.emit({ type: 'created', root: ROOT })
     expect(store.currentRoot).toBe(ROOT)
     expect(store.transcript.items).toEqual([{ type: 'user', text: 'build a repertoire' }])
     // The list refreshes so the sidebar picks the new conversation up.
     expect(FakeWebSocket.last.sent.at(-1)).toEqual({ type: 'list' })
+  })
+
+  it('newSession threads an explicit model choice (#215)', () => {
+    const store = freshStore()
+    store.connect()
+    FakeWebSocket.last.open()
+    store.newSession('build a repertoire', null, { provider: 'anthropic', model: 'claude-x' })
+    expect(FakeWebSocket.last.sent.at(-1)).toEqual({
+      type: 'new',
+      prompt: 'build a repertoire',
+      name: null,
+      provider: 'anthropic',
+      model: 'claude-x',
+    })
+  })
+
+  it('setModel sends an in/set_model frame for the open conversation', () => {
+    const store = openStore()
+    store.setModel('anthropic', 'claude-x')
+    expect(FakeWebSocket.last.sent.at(-1)).toEqual({
+      type: 'in',
+      msg: { kind: 'set_model', session: ROOT, provider: 'anthropic', model: 'claude-x' },
+    })
+  })
+
+  it('model_changed updates the transcript model and survives history replay', () => {
+    const store = openStore()
+    expect(store.transcript.model).toBeNull()
+    out({ kind: 'model_changed', session: ROOT, provider: 'anthropic', model: 'claude-x' })
+    expect(store.transcript.model).toEqual({ provider: 'anthropic', model: 'claude-x' })
+
+    FakeWebSocket.last.emit({
+      type: 'history',
+      root: ROOT,
+      gapped: false,
+      records: [
+        { dir: 'out', payload: { kind: 'model_changed', session: ROOT, provider: 'openai', model: 'gpt-x' } },
+      ],
+    })
+    expect(store.transcript.model).toEqual({ provider: 'openai', model: 'gpt-x' })
   })
 
   it('folds out events for the current root and ignores other sessions', () => {

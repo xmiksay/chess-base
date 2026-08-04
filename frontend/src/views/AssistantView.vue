@@ -7,8 +7,13 @@
 // actions; throttle/gap banners and the usage footer come from stream state.
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { api } from '../api'
 import { useAssistantStore } from '../stores/assistant'
 import AssistantTranscript from '../components/AssistantTranscript.vue'
+import ModelSelect from '../components/ModelSelect.vue'
+import { effectiveDefault } from '../lib/providers'
+import type { ModelChoice } from '../lib/providers'
+import type { ProviderInfo } from '../types'
 
 const store = useAssistantStore()
 const router = useRouter()
@@ -16,6 +21,29 @@ const route = useRoute()
 const draft = ref('')
 const renamingRoot = ref<string | null>(null)
 const renameDraft = ref('')
+
+// Model choice (issue #215): a "new chat" pick (null ⇒ the caller's default)
+// and the open conversation's live switcher, sharing one fetched provider
+// list so only one of the two mounted ModelSelects ever hits the API.
+const providers = ref<ProviderInfo[]>([])
+const newChatModel = ref<ModelChoice | null>(null)
+
+/** The open conversation's current model, as a `ModelSelect` value. */
+const liveModel = computed<ModelChoice | null>(() =>
+  store.transcript.model
+    ? { provider: store.transcript.model.provider, model: store.transcript.model.model }
+    : null,
+)
+
+/** `SetModel` always needs a concrete pick; resolve "(default)" locally. */
+function switchModel(choice: ModelChoice | null) {
+  if (choice) {
+    store.setModel(choice.provider, choice.model)
+    return
+  }
+  const fallback = effectiveDefault(providers.value)
+  if (fallback) store.setModel(fallback.name, fallback.model)
+}
 
 const STATUS_LABEL: Record<string, string> = {
   thinking: 'Thinking…',
@@ -50,7 +78,7 @@ function submit() {
   if (!text) return
   draft.value = ''
   if (store.currentRoot) store.send(text)
-  else store.newSession(text)
+  else store.newSession(text, null, newChatModel.value)
 }
 
 function startRename(root: string, name: string | null) {
@@ -111,6 +139,10 @@ onMounted(() => {
     void router.replace({ name: 'assistant', params: { sessionId: store.currentRoot } })
   }
   store.connect()
+  api.providers
+    .list()
+    .then((rows) => (providers.value = rows))
+    .catch(() => (providers.value = []))
 })
 onUnmounted(() => store.disconnect())
 </script>
@@ -218,10 +250,18 @@ onUnmounted(() => store.disconnect())
         <h2 class="font-semibold">
           {{ title }}
         </h2>
-        <span
-          v-if="store.current"
-          class="text-xs text-muted"
-        >{{ store.current.agent }}</span>
+        <div class="flex items-center gap-2">
+          <span
+            v-if="store.current"
+            class="text-xs text-muted"
+          >{{ store.current.agent }}</span>
+          <ModelSelect
+            v-if="store.currentRoot"
+            :model-value="liveModel"
+            :providers="providers"
+            @update:model-value="switchModel"
+          />
+        </div>
       </header>
 
       <!-- Transcript -->
@@ -255,6 +295,19 @@ onUnmounted(() => store.disconnect())
       >
         {{ store.error }}
       </p>
+
+      <!-- New-chat model pick (issue #215); omitted once a conversation is open
+           — switching then goes through the header's live ModelSelect. -->
+      <div
+        v-if="!store.currentRoot"
+        class="mt-3 flex items-center justify-end gap-2 text-xs text-muted"
+      >
+        <span>Model:</span>
+        <ModelSelect
+          v-model="newChatModel"
+          :providers="providers"
+        />
+      </div>
 
       <!-- Composer -->
       <form

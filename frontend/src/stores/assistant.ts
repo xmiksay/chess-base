@@ -19,6 +19,7 @@ import {
   resolveQuestion,
 } from '../lib/assistantStream'
 import type { ApprovalCard, QuestionCard, TranscriptState } from '../lib/assistantStream'
+import type { ModelChoice } from '../lib/providers'
 import type {
   AgentSessionSummary,
   AssistantClientFrame,
@@ -230,11 +231,21 @@ export const useAssistantStore = defineStore('assistant', () => {
     sendFrame({ type: 'list' })
   }
 
-  /** Start a new conversation; its first turn runs on `prompt`. */
-  function newSession(prompt: string, name: string | null = null) {
+  /**
+   * Start a new conversation; its first turn runs on `prompt`. `modelChoice`
+   * is an explicit creation-time provider/model pick (issue #215); omitted ⇒
+   * the caller's per-user default.
+   */
+  function newSession(prompt: string, name: string | null = null, modelChoice: ModelChoice | null = null) {
     error.value = null
     pendingPrompt = prompt
-    sendFrame({ type: 'new', prompt, name })
+    sendFrame({
+      type: 'new',
+      prompt,
+      name,
+      provider: modelChoice?.provider ?? null,
+      model: modelChoice?.model ?? null,
+    })
   }
 
   /** Deselect the open conversation (the next send starts a new one). */
@@ -301,6 +312,13 @@ export const useAssistantStore = defineStore('assistant', () => {
     sendIn({ kind: 'set_session_meta', session: root, name, if_unset: false })
   }
 
+  /** Switch the open conversation's live model/provider (issue #215). */
+  function setModel(provider: string, model: string) {
+    const root = currentRoot.value
+    if (!root) return
+    sendIn({ kind: 'set_model', session: root, provider, model })
+  }
+
   function remove(root: string) {
     sendFrame({ type: 'delete', root })
   }
@@ -335,6 +353,7 @@ export const useAssistantStore = defineStore('assistant', () => {
     answerQuestion,
     stop,
     rename,
+    setModel,
     remove,
     _setSocketFactory,
   }

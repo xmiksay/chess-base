@@ -6,6 +6,7 @@ use super::*;
 use crate::ai::agent::engine::agent_profiles;
 use crate::db::config::DbConfig;
 use entanglement_core::EngineConfig;
+use entanglement_provider::HttpClient;
 use sea_orm::ActiveModelTrait;
 
 fn user(id: &str) -> CurrentUser {
@@ -32,7 +33,11 @@ async fn service() -> (SessionService, DatabaseConnection) {
         ..EngineConfig::default() // EchoLlm, no model_resolver
     });
     let users = SessionUserRegistry::new();
-    (SessionService::new(db.clone(), holly, users, store), db)
+    let resolver = store.build_resolver(HttpClient::new().expect("http client"));
+    (
+        SessionService::new(db.clone(), holly, users, store, resolver),
+        db,
+    )
 }
 
 fn out_event_json(session: &str, seq: u64, text: &str) -> String {
@@ -77,6 +82,8 @@ async fn create_inserts_the_row_registers_the_owner_and_marks_live() {
             &alice,
             "build me a repertoire".into(),
             Some("Repertoire".into()),
+            None,
+            None,
         )
         .await
         .expect("create session");
@@ -109,20 +116,79 @@ async fn create_without_any_provider_surface_is_a_typed_error() {
         .await
         .expect("build provider store");
     let holly = Holly::spawn(EngineConfig::default());
-    let service = SessionService::new(db, holly, SessionUserRegistry::new(), store);
+    let resolver = store.build_resolver(HttpClient::new().expect("http client"));
+    let service = SessionService::new(db, holly, SessionUserRegistry::new(), store, resolver);
 
     let err = service
-        .create(&user("alice"), "hi".into(), None)
+        .create(&user("alice"), "hi".into(), None, None, None)
         .await
         .expect_err("must refuse without a provider");
     assert!(matches!(err, SessionError::NoProvider));
 }
 
 #[tokio::test]
+async fn create_rejects_an_unresolvable_explicit_model_choice() {
+    let (service, _db) = service().await;
+    let err = service
+        .create(
+            &user("alice"),
+            "hi".into(),
+            None,
+            Some("not-a-real-provider".into()),
+            Some("m".into()),
+        )
+        .await
+        .expect_err("an unresolvable choice must be refused");
+    assert!(matches!(err, SessionError::InvalidModelChoice(_)));
+
+    // Refused before anything is persisted or registered.
+    let mine = service.list(&user("alice")).await.expect("list");
+    assert!(mine.is_empty(), "no session row from a rejected choice");
+}
+
+#[tokio::test]
+async fn create_rejects_a_provider_without_a_model() {
+    let (service, _db) = service().await;
+    let err = service
+        .create(
+            &user("alice"),
+            "hi".into(),
+            None,
+            Some("anthropic".into()),
+            None,
+        )
+        .await
+        .expect_err("provider without model must be refused");
+    assert!(matches!(err, SessionError::InvalidModelChoice(_)));
+}
+
+#[tokio::test]
+async fn create_accepts_a_valid_explicit_model_choice() {
+    let (service, db) = service().await;
+    let root = service
+        .create(
+            &user("alice"),
+            "hi".into(),
+            None,
+            Some("anthropic".into()),
+            Some("claude-x".into()),
+        )
+        .await
+        .expect("a resolvable explicit choice is accepted");
+
+    let row = agent_sessions::Entity::find_by_id(root)
+        .one(&db)
+        .await
+        .expect("query")
+        .expect("agent_sessions row exists");
+    assert_eq!(row.user_id, "alice");
+}
+
+#[tokio::test]
 async fn list_is_scoped_to_the_calling_user() {
     let (service, _db) = service().await;
     let root = service
-        .create(&user("alice"), "hi".into(), None)
+        .create(&user("alice"), "hi".into(), None, None, None)
         .await
         .expect("create");
 
@@ -139,7 +205,7 @@ async fn list_is_scoped_to_the_calling_user() {
 async fn open_by_a_non_owner_is_not_found_even_for_an_admin() {
     let (service, _db) = service().await;
     let root = service
-        .create(&user("alice"), "hi".into(), None)
+        .create(&user("alice"), "hi".into(), None, None, None)
         .await
         .expect("create");
 
@@ -165,7 +231,7 @@ async fn open_returns_the_persisted_out_events_for_a_live_session() {
     let (service, db) = service().await;
     let alice = user("alice");
     let root = service
-        .create(&alice, "hi".into(), None)
+        .create(&alice, "hi".into(), None, None, None)
         .await
         .expect("create");
 
@@ -186,7 +252,7 @@ async fn open_flags_a_gap_and_returns_only_the_intact_prefix() {
     let (service, db) = service().await;
     let alice = user("alice");
     let root = service
-        .create(&alice, "hi".into(), None)
+        .create(&alice, "hi".into(), None, None, None)
         .await
         .expect("create");
 
@@ -210,7 +276,7 @@ async fn delete_removes_the_row_the_events_and_the_registrations() {
     let (service, db) = service().await;
     let alice = user("alice");
     let root = service
-        .create(&alice, "hi".into(), None)
+        .create(&alice, "hi".into(), None, None, None)
         .await
         .expect("create");
     insert_event(&db, &root, 0, out_event_json(&root, 1, "chunk")).await;
@@ -244,7 +310,7 @@ async fn touch_and_rename_update_the_index_row() {
     let (service, db) = service().await;
     let alice = user("alice");
     let root = service
-        .create(&alice, "hi".into(), None)
+        .create(&alice, "hi".into(), None, None, None)
         .await
         .expect("create");
 

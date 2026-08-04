@@ -192,6 +192,13 @@ describe('foldEvent — questions, status, usage, notices', () => {
     expect(state.usage).toEqual({ input_tokens: 150, output_tokens: 25, cost_usd: 0.01 })
   })
 
+  it('model_changed tracks the session\'s live model (#215)', () => {
+    let state = fold([{ kind: 'model_changed', session: S, provider: 'anthropic', model: 'claude-x' }])
+    expect(state.model).toEqual({ provider: 'anthropic', model: 'claude-x' })
+    state = fold([{ kind: 'model_changed', session: S, provider: 'openai', model: 'gpt-x' }], state)
+    expect(state.model).toEqual({ provider: 'openai', model: 'gpt-x' })
+  })
+
   it('errors surface as items, compaction as a divider, plan/task_list drop', () => {
     const state = fold([
       { kind: 'error', session: S, seq: 1, message: 'boom' },
