@@ -9,6 +9,8 @@ import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
 import { useStudiesStore } from '../stores/studies'
 import { STARTPOS_FEN } from '../lib/fen'
+import ModelSelect from './ModelSelect.vue'
+import type { ModelChoice } from '../lib/providers'
 import type { Database, GenerateBody, GenerateView } from '../types'
 
 interface Props {
@@ -25,6 +27,8 @@ const databases = ref<Database[]>([])
 const databaseId = ref<number | null>(null)
 const name = ref('')
 const startFen = ref(props.startFen || STARTPOS_FEN)
+// Explicit provider/model pick (issue #214); null ⇒ the caller's default row.
+const modelChoice = ref<ModelChoice | null>(null)
 const engineDepth = ref(18)
 const maxDepth = ref(6)
 const maxChildren = ref(3)
@@ -66,6 +70,10 @@ async function onSubmit() {
     tree: { max_depth: maxDepth.value, max_children: maxChildren.value },
     plan_lines: planLines.value,
     threats: threats.value,
+  }
+  if (modelChoice.value) {
+    body.provider = modelChoice.value.provider
+    body.model = modelChoice.value.model
   }
   const trimmedPlayer = player.value.trim()
   if (trimmedPlayer) body.player = trimmedPlayer
@@ -186,6 +194,11 @@ onMounted(async () => {
             data-test="start-fen"
             class="rounded border border-border px-2 py-1 font-mono text-xs"
           >
+        </label>
+
+        <label class="flex flex-col gap-1 text-sm">
+          Model
+          <ModelSelect v-model="modelChoice" />
         </label>
 
         <div class="grid grid-cols-3 gap-2 text-sm">

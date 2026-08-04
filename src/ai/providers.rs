@@ -7,6 +7,7 @@
 //! API keys are **server-side only**: [`ProviderService::list`] returns
 //! [`ProviderInfo`] with a `has_key` flag — keys never reach the SPA.
 
+use entanglement_provider::Catalog;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder,
     Set,
@@ -27,20 +28,40 @@ pub struct ProviderInfo {
     pub has_key: bool,
     pub is_default: bool,
     pub is_global: bool,
+    /// Models selectable on this row (issue #214): the row's own model first,
+    /// then the builtin catalog's donations for a same-named provider (the same
+    /// donation rule the agent store's `entry_from_row` applies), deduped.
+    pub models: Vec<String>,
 }
 
 impl From<llm_providers::Model> for ProviderInfo {
     fn from(m: llm_providers::Model) -> Self {
         Self {
             id: m.id,
+            has_key: !m.api_key.is_empty(),
+            is_default: m.is_default,
+            is_global: m.owner_id.is_none(),
+            models: vec![m.model.clone()],
             name: m.name,
             wire: m.wire,
             model: m.model,
             base_url: m.base_url,
-            has_key: !m.api_key.is_empty(),
-            is_default: m.is_default,
-            is_global: m.owner_id.is_none(),
         }
+    }
+}
+
+impl ProviderInfo {
+    /// Extend `models` with the builtin catalog's entries for a same-named
+    /// provider, keeping the row's own model first and deduping.
+    fn with_catalog_models(mut self, builtin: &Catalog) -> Self {
+        if let Some(provider) = builtin.provider(&self.name) {
+            for m in &provider.models {
+                if !self.models.contains(&m.id) {
+                    self.models.push(m.id.clone());
+                }
+            }
+        }
+        self
     }
 }
 
@@ -92,7 +113,11 @@ impl ProviderService {
             .order_by_desc(llm_providers::Column::Id)
             .all(&self.db)
             .await?;
-        Ok(rows.into_iter().map(ProviderInfo::from).collect())
+        let builtin = Catalog::builtin();
+        Ok(rows
+            .into_iter()
+            .map(|r| ProviderInfo::from(r).with_catalog_models(&builtin))
+            .collect())
     }
 
     /// Create or update a provider by name within its ownership scope. A plain

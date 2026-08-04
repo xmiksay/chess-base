@@ -12,6 +12,8 @@ import { api } from '../api'
 import { useStudiesStore } from '../stores/studies'
 import { STARTPOS_FEN } from '../lib/fen'
 import { dangerLabel, inferOurSide } from '../lib/dangerShapes'
+import ModelSelect from './ModelSelect.vue'
+import type { ModelChoice } from '../lib/providers'
 import type { Database, DangerMapBody, DangerMapView } from '../types'
 
 interface Props {
@@ -30,6 +32,8 @@ const databaseId = ref<number | null>(null)
 const name = ref('')
 const spinePgn = ref('')
 const startFen = ref(props.startFen || STARTPOS_FEN)
+// Explicit provider/model pick (issue #214); null ⇒ the caller's default row.
+const modelChoice = ref<ModelChoice | null>(null)
 const ourSide = ref<'White' | 'Black'>(inferOurSide(startFen.value))
 const maxDepth = ref(8)
 const movetimeMs = ref(500)
@@ -61,6 +65,10 @@ async function onSubmit() {
     spine: { our_side: ourSide.value, max_depth: maxDepth.value },
     movetime_ms: movetimeMs.value,
     multipv: multipv.value,
+  }
+  if (modelChoice.value) {
+    body.provider = modelChoice.value.provider
+    body.model = modelChoice.value.model
   }
   try {
     result.value = await studies.generateDangerMap(body)
@@ -199,6 +207,11 @@ onMounted(async () => {
             data-test="start-fen"
             class="rounded border border-border px-2 py-1 font-mono text-xs"
           >
+        </label>
+
+        <label class="flex flex-col gap-1 text-sm">
+          Model
+          <ModelSelect v-model="modelChoice" />
         </label>
 
         <div class="grid grid-cols-2 gap-2 text-sm">

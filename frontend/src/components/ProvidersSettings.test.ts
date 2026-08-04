@@ -21,6 +21,7 @@ function provider(over: Partial<ProviderInfo> = {}): ProviderInfo {
     has_key: true,
     is_default: true,
     is_global: false,
+    models: ['claude-sonnet-4-6'],
     ...over,
   }
 }
