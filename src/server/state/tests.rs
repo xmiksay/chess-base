@@ -1,10 +1,13 @@
-//! Unit tests for [`AppState::llm_for_choice`] (issue #214): the per-request
-//! provider/model choice seam behind the study-generation routes.
+//! Unit tests for [`AppState::llm_for_choice`] (issue #214, the per-request
+//! provider/model choice seam behind the study-generation routes) and
+//! [`AppState::resolve_public_user`] (issue #211, the anonymous share-link
+//! identity).
 
 use super::*;
 use crate::ai::agent::{AgentEngine, AgentProviderStore};
 use crate::ai::providers::{ProviderInput, ProviderService};
 use crate::db::config::{Backend, DbConfig};
+use axum::http::Request;
 
 async fn mem_db() -> DatabaseConnection {
     crate::db::connect(&DbConfig {
@@ -107,4 +110,46 @@ async fn named_row_resolves_and_unknown_name_is_invalid() {
     if let Some(engine) = state.agent() {
         engine.shutdown();
     }
+}
+
+fn server_state(db: DatabaseConnection) -> AppState {
+    AppState {
+        mode: Mode::Server,
+        ..bare_state(db)
+    }
+}
+
+fn parts(auth: Option<&str>) -> Parts {
+    let mut builder = Request::builder().uri("/");
+    if let Some(value) = auth {
+        builder = builder.header("authorization", value);
+    }
+    builder.body(()).unwrap().into_parts().0
+}
+
+#[tokio::test]
+async fn public_user_in_local_mode_is_the_implicit_admin() {
+    let user = bare_state(mem_db().await)
+        .resolve_public_user(&parts(None))
+        .await
+        .unwrap();
+    assert_eq!(user, CurrentUser::local_admin());
+}
+
+#[tokio::test]
+async fn public_user_without_credentials_is_anonymous_in_server_mode() {
+    let user = server_state(mem_db().await)
+        .resolve_public_user(&parts(None))
+        .await
+        .unwrap();
+    assert_eq!(user, CurrentUser::anonymous());
+}
+
+#[tokio::test]
+async fn public_user_with_an_invalid_credential_is_still_unauthorized() {
+    let err = server_state(mem_db().await)
+        .resolve_public_user(&parts(Some("Bearer bogus")))
+        .await
+        .unwrap_err();
+    assert_eq!(err, AuthError::Unauthorized);
 }
