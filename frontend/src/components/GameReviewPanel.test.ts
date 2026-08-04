@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { mount } from '@vue/test-utils'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 
 // Mock the API client: the panel drives the review (analyse) and export actions.
 vi.mock('../api', () => ({
@@ -89,5 +89,63 @@ describe('GameReviewPanel — EvalGraph wiring', () => {
     await graph.findAll('[data-test="eval-point"]')[0].trigger('click')
 
     expect(games.currentId).toBe(games.nodeAtPly(1))
+  })
+
+  // Issue #212: the saved-analyses cross-link must carry the study id so it
+  // deep-links into /studies/:id instead of the bare studies view.
+  it('links each saved analysis with its study id', async () => {
+    const games = useGamesStore()
+    games.load(lineTree(['e4']), STARTPOS_FEN)
+    games.linkedStudies = [
+      {
+        id: 9,
+        database_id: 1,
+        name: 'Analysis',
+        global: false,
+        owner_id: null,
+        folder_id: null,
+        origin_game_id: 5, public: false,
+      },
+    ]
+    const wrapper = mount(GameReviewPanel, {
+      props: { engineEnabled: true },
+      global: { stubs: { RouterLink: RouterLinkStub } },
+    })
+    await wrapper.vm.$nextTick()
+
+    const link = wrapper
+      .findAllComponents(RouterLinkStub)
+      .find((l) => l.attributes('data-test') === 'linked-analysis')!
+    expect(link.props('to')).toEqual({ name: 'studies', params: { id: '9' } })
+  })
+
+  // Issue #213: the anonymous public view keeps only the verbatim PGN download
+  // and the linked-analyses list — every engine-backed / writing control hides.
+  it('read-only keeps the download and linked analyses, hides the engine parts', async () => {
+    const games = useGamesStore()
+    games.load(lineTree(['e4']), STARTPOS_FEN)
+    games.linkedStudies = [
+      {
+        id: 9,
+        database_id: 1,
+        name: 'Analysis',
+        global: false,
+        owner_id: null,
+        folder_id: null,
+        origin_game_id: 5,
+        public: true,
+      },
+    ]
+    const wrapper = mount(GameReviewPanel, {
+      props: { engineEnabled: false, readOnly: true },
+      global: { stubs: { RouterLink: RouterLinkStub } },
+    })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-test="export"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="linked-analysis"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="analyse"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="export-annotated"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="save-as-analysis"]').exists()).toBe(false)
   })
 })

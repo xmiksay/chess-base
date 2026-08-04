@@ -190,6 +190,10 @@ export const api = {
       send<Study>('POST', `/api/studies/${id}/clear-shapes`, { scope }),
     rename: (id: number, name: string) => send<Study>('PATCH', `/api/studies/${id}`, { name }),
     remove: (id: number) => send<null>('DELETE', `/api/studies/${id}`),
+    // Toggle the study's public sharing flag (issue #213); returns the refreshed
+    // study. 403 when the caller may not share it (server-enforced).
+    setPublic: (id: number, pub: boolean) =>
+      send<Study>('PUT', `/api/studies/${id}/public`, { public: pub }),
     // File a study under a folder (issue #164); `folderId` null ⇒ unfile to root.
     setFolder: (id: number, folderId: number | null) =>
       send<Study>('PUT', `/api/studies/${id}/folder`, { folder_id: folderId }),
@@ -304,6 +308,10 @@ export const api = {
     ) => send<StudySummary>('POST', `/api/games/${id}/save-as-study`, body),
     // The analyses (studies) linked to a game (issue #164).
     linkedStudies: (id: number) => getJson<StudySummary[]>(`/api/games/${id}/studies`),
+    // Toggle the game's public sharing flag (issue #213); returns the refreshed
+    // game. 403 when the caller may not share it (server-enforced).
+    setPublic: (id: number, pub: boolean) =>
+      send<GameDetail>('PUT', `/api/games/${id}/public`, { public: pub }),
     // Download several games as one concatenated `.pgn` file (issue #171 bulk
     // export from header search). An id the caller can't see fails the request.
     exportSelected: (gameIds: number[]) => postText('/api/games/export', { game_ids: gameIds }),

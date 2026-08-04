@@ -14,6 +14,7 @@ vi.mock('../api', () => ({
       rename: vi.fn(),
       remove: vi.fn(),
       addLine: vi.fn(),
+      setPublic: vi.fn(),
     },
   },
 }))
@@ -30,7 +31,7 @@ describe('studies store', () => {
 
   it('refresh loads the list of summaries', async () => {
     vi.mocked(api.studies.list).mockResolvedValue([
-      { id: 1, database_id: 1, name: 'Sicilian', global: false, owner_id: null, folder_id: null, origin_game_id: null },
+      { id: 1, database_id: 1, name: 'Sicilian', global: false, owner_id: null, folder_id: null, origin_game_id: null, public: false },
     ])
     const store = useStudiesStore()
     await store.refresh()
@@ -47,7 +48,7 @@ describe('studies store', () => {
       global: false,
       owner_id: null,
       folder_id: null,
-      origin_game_id: null,
+      origin_game_id: null, public: false,
       tree: {
         root: 0,
         nodes: [{ id: 0, parent: null, san: null, comment: null, nags: [], children: [] }],
@@ -67,7 +68,7 @@ describe('studies store', () => {
       global: false,
       owner_id: null,
       folder_id: null,
-      origin_game_id: null,
+      origin_game_id: null, public: false,
       tree: { root: 0, nodes: [] },
     }
     vi.mocked(api.studies.importPgn).mockResolvedValue(study)
@@ -90,7 +91,7 @@ describe('studies store', () => {
     }
     vi.mocked(api.studies.generate).mockResolvedValue(view)
     vi.mocked(api.studies.list).mockResolvedValue([
-      { id: 8, database_id: 2, name: 'Repertoire', global: false, owner_id: null, folder_id: null, origin_game_id: null },
+      { id: 8, database_id: 2, name: 'Repertoire', global: false, owner_id: null, folder_id: null, origin_game_id: null, public: false },
     ])
     const store = useStudiesStore()
     const body = { database_id: 2, name: 'Repertoire', engine_depth: 18 }
@@ -118,7 +119,7 @@ describe('studies store', () => {
 
   it('rename keeps current and the list summary in sync', async () => {
     const store = useStudiesStore()
-    store.list = [{ id: 4, database_id: 1, name: 'Old', global: false, owner_id: null, folder_id: null, origin_game_id: null }]
+    store.list = [{ id: 4, database_id: 1, name: 'Old', global: false, owner_id: null, folder_id: null, origin_game_id: null, public: false }]
     store.current = {
       id: 4,
       database_id: 1,
@@ -126,7 +127,7 @@ describe('studies store', () => {
       global: false,
       owner_id: null,
       folder_id: null,
-      origin_game_id: null,
+      origin_game_id: null, public: false,
       tree: { root: 0, nodes: [] },
     }
     vi.mocked(api.studies.rename).mockResolvedValue({
@@ -136,7 +137,7 @@ describe('studies store', () => {
       global: false,
       owner_id: null,
       folder_id: null,
-      origin_game_id: null,
+      origin_game_id: null, public: false,
       tree: { root: 0, nodes: [] },
     })
     await store.rename(4, 'New')
@@ -146,7 +147,7 @@ describe('studies store', () => {
 
   it('remove drops the study and clears current when it was open', async () => {
     const store = useStudiesStore()
-    store.list = [{ id: 5, database_id: 1, name: 'Gone', global: false, owner_id: null, folder_id: null, origin_game_id: null }]
+    store.list = [{ id: 5, database_id: 1, name: 'Gone', global: false, owner_id: null, folder_id: null, origin_game_id: null, public: false }]
     store.current = {
       id: 5,
       database_id: 1,
@@ -154,7 +155,7 @@ describe('studies store', () => {
       global: false,
       owner_id: null,
       folder_id: null,
-      origin_game_id: null,
+      origin_game_id: null, public: false,
       tree: { root: 0, nodes: [] },
     }
     vi.mocked(api.studies.remove).mockResolvedValue(null)
@@ -171,7 +172,7 @@ describe('studies store', () => {
       global: false,
       owner_id: null,
       folder_id: null,
-      origin_game_id: null,
+      origin_game_id: null, public: false,
       tree: { root: 0, nodes: [] },
     }
     vi.mocked(api.studies.addLine).mockResolvedValue(study)
@@ -186,6 +187,31 @@ describe('studies store', () => {
     expect(result).toEqual(study)
     expect(store.current).toEqual(study)
     expect(store.list).toHaveLength(1)
+  })
+
+  // Issue #213: toggle a study's public sharing flag.
+  it('setPublic hits the endpoint and syncs current and the list row', async () => {
+    const view: Study = {
+      id: 2,
+      database_id: 1,
+      name: 'Ruy',
+      global: false,
+      owner_id: null,
+      folder_id: null,
+      origin_game_id: null,
+      public: false,
+      tree: { root: 0, nodes: [] },
+    }
+    const store = useStudiesStore()
+    store.current = view
+    store.list = [{ ...view }]
+    vi.mocked(api.studies.setPublic).mockResolvedValue({ ...view, public: true })
+
+    await store.setPublic(2, true)
+
+    expect(api.studies.setPublic).toHaveBeenCalledWith(2, true)
+    expect(store.current?.public).toBe(true)
+    expect(store.list[0].public).toBe(true)
   })
 
   it('surfaces failures on error and resets loading', async () => {

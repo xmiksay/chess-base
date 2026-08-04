@@ -71,11 +71,17 @@ export interface GameRow {
   white_elo: number | null
   black_elo: number | null
   event?: string | null
+  /** Shared publicly (issue #213): readable anonymously via its deep link.
+   *  Absent on search hits, whose backend rows never carry it. */
+  public?: boolean
 }
 
 /** A single game including its PGN movetext for board playback. */
 export interface GameDetail extends GameRow {
+  database_id: number
   pgn: string
+  /** Shared publicly (issue #213): readable anonymously via its deep link. */
+  public: boolean
 }
 
 /** Offset-paginated game list page (`/api/games`), with a total for the paginator. */
@@ -178,6 +184,8 @@ export interface StudySummary {
   folder_id: number | null
   /** Game this study was saved as an analysis of (issue #164); null otherwise. */
   origin_game_id: number | null
+  /** Shared publicly (issue #213): readable anonymously via its deep link. */
+  public: boolean
 }
 
 /** A study folder in the hierarchy (issue #164). */

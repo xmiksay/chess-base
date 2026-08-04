@@ -23,12 +23,40 @@ describe('router', () => {
     expect(analysis!.name).toBe('analysis')
   })
 
-  it('resolves each path to its route record', async () => {
+  it('resolves each bare path to its route record', async () => {
     const router = createAppRouter(createMemoryHistory())
     for (const { path, name } of routes) {
-      const resolved = router.resolve(path)
+      // Strip the optional object-id param (issue #212): the bare surface path
+      // must keep resolving to the same named route.
+      const bare = path.replace(/\/:.*$/, '') || '/'
+      const resolved = router.resolve(bare)
       expect(resolved.name).toBe(name)
     }
+  })
+
+  // Issue #212: every selectable object is URL-addressable via an optional param.
+  it('resolves object ids into the games, studies and assistant routes', () => {
+    const router = createAppRouter(createMemoryHistory())
+
+    const game = router.resolve('/games/123')
+    expect(game.name).toBe('games')
+    expect(game.params).toEqual({ id: '123' })
+
+    const study = router.resolve('/studies/45')
+    expect(study.name).toBe('studies')
+    expect(study.params).toEqual({ id: '45' })
+
+    const session = router.resolve('/assistant/abc')
+    expect(session.name).toBe('assistant')
+    expect(session.params).toEqual({ sessionId: 'abc' })
+  })
+
+  it('keeps the db query on a games deep link', () => {
+    const router = createAppRouter(createMemoryHistory())
+    const resolved = router.resolve('/games/5?db=2')
+    expect(resolved.name).toBe('games')
+    expect(resolved.params).toEqual({ id: '5' })
+    expect(resolved.query).toEqual({ db: '2' })
   })
 
   it('falls back through to the SPA for an unknown path', () => {
@@ -43,7 +71,7 @@ describe('router', () => {
 describe('authRedirect', () => {
   it('bounces a gated navigation to /login with the original path', () => {
     const r = authRedirect(
-      { name: 'search', fullPath: '/search' },
+      { name: 'search', fullPath: '/search', params: {} },
       { needsAuth: true, isServerMode: true },
     )
     expect(r).toEqual({ name: 'login', query: { redirect: '/search' } })
@@ -51,15 +79,50 @@ describe('authRedirect', () => {
 
   it('lets a server-mode caller reach /login without a session', () => {
     const r = authRedirect(
-      { name: 'login', fullPath: '/login' },
+      { name: 'login', fullPath: '/login', params: {} },
       { needsAuth: true, isServerMode: true },
     )
     expect(r).toBe(null)
   })
 
+  // Issue #213: a public deep link renders logged-out; the backend decides
+  // whether the object is actually public (a private id 401s in the view).
+  it('lets a logged-out visitor through to a game or study deep link', () => {
+    expect(
+      authRedirect(
+        { name: 'games', fullPath: '/games/5', params: { id: '5' } },
+        { needsAuth: true, isServerMode: true },
+      ),
+    ).toBe(null)
+    expect(
+      authRedirect(
+        { name: 'studies', fullPath: '/studies/7', params: { id: '7' } },
+        { needsAuth: true, isServerMode: true },
+      ),
+    ).toBe(null)
+  })
+
+  it('still bounces the bare games and studies lists when logged out', () => {
+    for (const [name, fullPath] of [
+      ['games', '/games'],
+      ['studies', '/studies'],
+    ] as const) {
+      expect(
+        authRedirect({ name, fullPath, params: {} }, { needsAuth: true, isServerMode: true }),
+      ).toEqual({ name: 'login', query: { redirect: fullPath } })
+    }
+    // The optional param resolves to '' on the bare path — still a bounce.
+    expect(
+      authRedirect(
+        { name: 'games', fullPath: '/games', params: { id: '' } },
+        { needsAuth: true, isServerMode: true },
+      ),
+    ).toEqual({ name: 'login', query: { redirect: '/games' } })
+  })
+
   it('sends an already-signed-in user away from /login', () => {
     const r = authRedirect(
-      { name: 'login', fullPath: '/login' },
+      { name: 'login', fullPath: '/login', params: {} },
       { needsAuth: false, isServerMode: true },
     )
     expect(r).toEqual({ name: 'analysis' })
@@ -67,10 +130,16 @@ describe('authRedirect', () => {
 
   it('never gates in local mode', () => {
     expect(
-      authRedirect({ name: 'settings', fullPath: '/settings' }, { needsAuth: false, isServerMode: false }),
+      authRedirect(
+        { name: 'settings', fullPath: '/settings', params: {} },
+        { needsAuth: false, isServerMode: false },
+      ),
     ).toBe(null)
     expect(
-      authRedirect({ name: 'login', fullPath: '/login' }, { needsAuth: false, isServerMode: false }),
+      authRedirect(
+        { name: 'login', fullPath: '/login', params: {} },
+        { needsAuth: false, isServerMode: false },
+      ),
     ).toBe(null)
   })
 })

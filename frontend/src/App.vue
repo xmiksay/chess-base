@@ -53,17 +53,21 @@ onMounted(() => {
           </RouterLink>
 
           <nav class="flex flex-wrap items-center gap-1 text-sm">
-            <RouterLink
-              v-for="link in navLinks"
-              :key="link.to"
-              :to="link.to"
-              class="rounded-md px-3 py-1.5 font-medium text-muted transition hover:bg-surface-2 hover:text-fg"
-              active-class="bg-surface-2 text-fg"
-            >
-              {{ link.label }}
-            </RouterLink>
+            <!-- A logged-out visitor on a public deep link (issue #213) sees no
+                 nav — every surface but the shared object bounces to login. -->
+            <template v-if="!auth.needsAuth">
+              <RouterLink
+                v-for="link in navLinks"
+                :key="link.to"
+                :to="link.to"
+                class="rounded-md px-3 py-1.5 font-medium text-muted transition hover:bg-surface-2 hover:text-fg"
+                active-class="bg-surface-2 text-fg"
+              >
+                {{ link.label }}
+              </RouterLink>
 
-            <span class="mx-1 h-5 w-px bg-border" />
+              <span class="mx-1 h-5 w-px bg-border" />
+            </template>
 
             <button
               type="button"
@@ -76,6 +80,7 @@ onMounted(() => {
             </button>
 
             <RouterLink
+              v-if="!auth.needsAuth"
               to="/settings"
               class="rounded-md px-3 py-1.5 font-medium text-muted transition hover:bg-surface-2 hover:text-fg"
               active-class="bg-surface-2 text-fg"

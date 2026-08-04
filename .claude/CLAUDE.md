@@ -303,6 +303,14 @@ frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
                    the pure lib/assistantStream.ts fold → AssistantView streaming
                    bubbles/tool chips/approval+question cards; ProvidersSettings
                    manages the caller's LLM providers in Settings.
+                   Sharing (#213, over #211's public flags): ShareToggle.vue
+                   ("Public" toggle + copy-link, PUT .../public via
+                   games.setPublic / studies.setPublic) sits on the games board
+                   column and the study header; the router guard lets a
+                   logged-out /games/:id / /studies/:id deep link through, and
+                   GamesView/StudyView render read-only for an anonymous
+                   visitor (board column / study tree only, no authenticated
+                   fetches, no editing chrome; App.vue hides the nav).
 ```
 
 **Layering rule:** pure logic (`position`, `pgn_tree`, `openings`, `plans`) is I/O-free and fully

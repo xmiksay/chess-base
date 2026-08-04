@@ -31,7 +31,7 @@ const study = (id: number, folder_id: number | null): StudySummary => ({
   global: false,
   owner_id: null,
   folder_id,
-  origin_game_id: null,
+  origin_game_id: null, public: false,
 })
 
 async function mountSidebar() {
@@ -89,5 +89,27 @@ describe('StudyFolderSidebar', () => {
     const select = wrapper.find('[data-test="move-study"]')
     await select.setValue('2')
     expect(setFolder).toHaveBeenCalledWith(10, 2)
+  })
+
+  // Issue #212: the selected folder is a v-model prop so the parent can mirror
+  // it to the URL (?folder=).
+  it('emits update:folderId when a folder is selected', async () => {
+    const { wrapper } = await mountSidebar()
+    const openings = wrapper
+      .findAll('[data-test="folder-row"]')
+      .find((r) => r.text() === 'Openings')!
+    await openings.trigger('click')
+    expect(wrapper.emitted('update:folderId')?.at(-1)).toEqual([1])
+
+    await wrapper.find('[data-test="folder-root"]').trigger('click')
+    expect(wrapper.emitted('update:folderId')?.at(-1)).toEqual([null])
+  })
+
+  it('follows the folderId prop (URL hydration)', async () => {
+    const { wrapper } = await mountSidebar()
+    await wrapper.setProps({ folderId: 2 })
+    await flushPromises()
+    const rows = wrapper.findAll('[data-test="study-row"]').map((r) => r.text())
+    expect(rows).toEqual(['S12'])
   })
 })

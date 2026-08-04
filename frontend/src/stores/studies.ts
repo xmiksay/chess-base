@@ -109,6 +109,18 @@ export const useStudiesStore = defineStore('studies', () => {
     return study
   }
 
+  /**
+   * Toggle a study's public sharing flag (issue #213). Syncs `current` (and
+   * the list row) from the refreshed study; failures surface on `error`.
+   */
+  async function setPublic(id: number, pub: boolean) {
+    const study = await _run(() => api.studies.setPublic(id, pub))
+    if (current.value?.id === id) current.value = study
+    const summary = list.value.find((s) => s.id === id)
+    if (summary) summary.public = study.public
+    return study
+  }
+
   /** Delete a study; clears `current` if it was the open one. */
   async function remove(id: number) {
     await _run(() => api.studies.remove(id))
@@ -130,6 +142,7 @@ export const useStudiesStore = defineStore('studies', () => {
     exportPgn,
     rename,
     setFolder,
+    setPublic,
     addLine,
     remove,
   }
