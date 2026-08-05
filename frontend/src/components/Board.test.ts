@@ -7,7 +7,11 @@ import { mount } from '@vue/test-utils'
 // `config.drawable?.shapes ?? []` — the behavior that used to wipe hand-drawn
 // arrows on every ply step.
 function makeFakeApi() {
-  const state = { drawable: { shapes: [] as unknown[] } }
+  // Registered brushes (a slice of chessground defaults + app brushes) — Board
+  // filters shapes against this table before rendering (issue #228).
+  const state = {
+    drawable: { shapes: [] as unknown[], brushes: { green: {}, blue: {}, plan1: {} } },
+  }
   return {
     state,
     set: vi.fn((config: { fen?: string; drawable?: { shapes?: unknown[] } }) => {
@@ -53,5 +57,19 @@ describe('Board', () => {
 
     expect(fakeApi.setAutoShapes).toHaveBeenCalledWith([{ orig: 'e2', dest: 'e4', brush: 'plan1' }])
     expect(fakeApi.state.drawable.shapes).toEqual([{ orig: 'g1', dest: 'f3', brush: 'blue' }])
+  })
+
+  it('drops a shape with an unregistered brush instead of blanking the layer (issue #228)', async () => {
+    fakeApi = makeFakeApi()
+    const wrapper = mount(Board, { props: { fen: STARTPOS_FEN, shapes: [] } })
+
+    await wrapper.setProps({
+      shapes: [
+        { orig: 'g2', dest: 'a8', brush: 'cyan' }, // unknown — chessground would throw
+        { orig: 'e2', dest: 'e4', brush: 'green' },
+      ],
+    })
+
+    expect(fakeApi.setAutoShapes).toHaveBeenCalledWith([{ orig: 'e2', dest: 'e4', brush: 'green' }])
   })
 })

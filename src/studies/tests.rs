@@ -272,6 +272,37 @@ async fn set_shapes_pins_and_clears_a_node_plan() {
 }
 
 #[tokio::test]
+async fn set_shapes_rejects_an_unknown_brush() {
+    let (svc, db_id) = setup().await;
+    let alice = user("alice");
+    let study = svc.create(&alice, db_id, "Plans", false).await.unwrap();
+    let e4 = svc.add_move(&alice, study.id, 0, "e4").await.unwrap();
+
+    // An unregistered brush would make chessground blank the whole node
+    // (issue #228) — the service refuses it with a 400-style error naming it.
+    let err = svc
+        .set_shapes(
+            &alice,
+            study.id,
+            e4,
+            vec![Shape {
+                orig: "g2".into(),
+                dest: Some("a8".into()),
+                brush: "cyan".into(),
+            }],
+        )
+        .await
+        .unwrap_err();
+    match err {
+        StudyError::InvalidEdit(msg) => assert!(msg.contains("cyan"), "message names the brush"),
+        other => panic!("expected InvalidEdit, got {other:?}"),
+    }
+    assert!(tree_of(&svc, &alice, study.id).await.nodes[e4]
+        .shapes
+        .is_empty());
+}
+
+#[tokio::test]
 async fn promote_reorder_and_delete_restructure_the_tree() {
     let (svc, db_id) = setup().await;
     let alice = user("alice");

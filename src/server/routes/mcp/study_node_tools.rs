@@ -67,7 +67,10 @@ fn study_set_shapes_tool() -> Tool {
         "study_set_shapes",
         "Replace a node's pinned board shapes (arrows/highlights, `[%cal]`/`[%csl]`) \
          in one of your studies. Pass an empty `shapes` list to clear the pin. Use \
-         `study_get` to discover node ids. You may only edit your own studies.",
+         `study_get` to discover node ids. You may only edit your own studies. Each \
+         shape is `{orig, dest?, brush}`; `brush` must be a name the board renders — \
+         green, red, blue, yellow, paleBlue, paleGreen, paleRed, paleGrey, purple or \
+         pink — anything else is rejected.",
         json!({
             "type": "object",
             "properties": {
