@@ -244,15 +244,24 @@ export function foldEvent(state: TranscriptState, ev: AssistantOutEvent): Transc
       return withItems(closed, [...closed.items, card])
     }
     case 'tool_exec':
-      // An exec after an approval card means the request was approved.
-      return ensureChip(resolveApproval(state, ev.request_id, 'approved'), ev.request_id, ev.tool)
+      // An exec is the engine *offering* the call to the executor — it fires
+      // before the approval prompt, and a parked request re-offers every 60s
+      // (reoffer_interval), so it must never resolve the card.
+      return ensureChip(state, ev.request_id, ev.tool)
     case 'tool_output': {
-      // A tool_output with an unresolved approval card and no exec is the
-      // denial result: resolve the card rejected and flag the chip.
+      // The decision itself is not broadcast, so a card still unresolved here
+      // (replay, or a decision made in another tab) is settled from the
+      // output: the runtime's denial reply has the fixed shape
+      // "tool `<name>` rejected: <reason>"; anything else means it ran.
       const cardIdx = findCard(state.items, ev.request_id)
       const card = cardIdx >= 0 ? (state.items[cardIdx] as ApprovalCard) : null
       if (card && !card.resolved) {
-        return setChipState(resolveApproval(state, ev.request_id, 'rejected'), ev.request_id, 'error')
+        const denied = ev.output.startsWith(`tool \`${ev.tool}\` rejected:`)
+        return setChipState(
+          resolveApproval(state, ev.request_id, denied ? 'rejected' : 'approved'),
+          ev.request_id,
+          denied ? 'error' : 'done',
+        )
       }
       return setChipState(state, ev.request_id, 'done')
     }
