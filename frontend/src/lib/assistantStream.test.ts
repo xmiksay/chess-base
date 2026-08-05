@@ -128,22 +128,47 @@ describe('foldEvent — approval cards', () => {
     expect(card.prettyInput).toBe('{\n  "name": "Repertoire"\n}')
   })
 
-  it('a matching tool_exec resolves the card approved', () => {
+  it('a parked request re-offering tool_exec keeps the card pending', () => {
+    // The engine re-emits tool_exec every 60s while parked on approval
+    // (reoffer_interval) — the card must stay approvable.
     const state = fold([
+      { kind: 'tool_exec', session: S, seq: 0, request_id: 'r9', tool: 'study_create', input: '{}' },
       request,
       { kind: 'tool_exec', session: S, seq: 2, request_id: 'r9', tool: 'study_create', input: '{}' },
+      { kind: 'tool_exec', session: S, seq: 3, request_id: 'r9', tool: 'study_create', input: '{}' },
     ])
     const card = state.items.find((i) => i.type === 'approval') as ApprovalCard
-    expect(card.resolved).toBe('approved')
+    expect(card.resolved).toBeNull()
+    expect(state.items.filter((i) => i.type === 'tool')).toHaveLength(1)
   })
 
-  it('a tool_output without exec resolves the card rejected', () => {
+  it("the runtime's denial output resolves the card rejected and flags the chip", () => {
     const state = fold([
+      { kind: 'tool_exec', session: S, seq: 0, request_id: 'r9', tool: 'study_create', input: '{}' },
       request,
-      { kind: 'tool_output', session: S, seq: 2, request_id: 'r9', tool: 'study_create', output: 'denied' },
+      {
+        kind: 'tool_output',
+        session: S,
+        seq: 2,
+        request_id: 'r9',
+        tool: 'study_create',
+        output: 'tool `study_create` rejected: user',
+      },
     ])
     const card = state.items.find((i) => i.type === 'approval') as ApprovalCard
     expect(card.resolved).toBe('rejected')
+    expect((state.items.find((i) => i.type === 'tool') as ToolChip).state).toBe('error')
+  })
+
+  it('any other tool_output resolves a still-pending card approved (replay/other tab)', () => {
+    const state = fold([
+      { kind: 'tool_exec', session: S, seq: 0, request_id: 'r9', tool: 'study_create', input: '{}' },
+      request,
+      { kind: 'tool_output', session: S, seq: 2, request_id: 'r9', tool: 'study_create', output: '{"id":7}' },
+    ])
+    const card = state.items.find((i) => i.type === 'approval') as ApprovalCard
+    expect(card.resolved).toBe('approved')
+    expect((state.items.find((i) => i.type === 'tool') as ToolChip).state).toBe('done')
   })
 
   it('resolveApproval marks a pending card and is a no-op when resolved', () => {
