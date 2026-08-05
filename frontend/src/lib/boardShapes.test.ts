@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import type { DrawShape } from 'chessground/draw'
-import { composeBoardShapes, shapesToDrawShapes, overlayBrushes } from './boardShapes'
+import {
+  composeBoardShapes,
+  shapesToDrawShapes,
+  overlayBrushes,
+  dropUnknownBrushes,
+} from './boardShapes'
 
 const plan: DrawShape = { orig: 'g1', dest: 'f3', brush: 'plan1' }
 const threat: DrawShape = { orig: 'd6', dest: 'e5', brush: 'threat' }
@@ -50,6 +55,23 @@ describe('shapesToDrawShapes', () => {
 
   it('returns [] for a non-array input', () => {
     expect(shapesToDrawShapes(undefined as never)).toEqual([])
+  })
+})
+
+describe('dropUnknownBrushes', () => {
+  const known = new Set(['green', 'plan1'])
+
+  it('drops a shape with an unregistered brush, keeping the valid ones', () => {
+    const bad: DrawShape = { orig: 'g2', dest: 'a8', brush: 'cyan' }
+    expect(dropUnknownBrushes([plan, bad, { orig: 'd4', brush: 'green' }], known)).toEqual([
+      plan,
+      { orig: 'd4', brush: 'green' },
+    ])
+  })
+
+  it('keeps a brushless shape', () => {
+    const brushless = { orig: 'e4' } as DrawShape
+    expect(dropUnknownBrushes([brushless], known)).toEqual([brushless])
   })
 })
 

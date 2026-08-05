@@ -6,7 +6,7 @@ import type { Api } from 'chessground/api'
 import type { DrawShape } from 'chessground/draw'
 import { STARTPOS_FEN, sideToMove } from '../lib/fen'
 import { planBrushes } from '../lib/plansToShapes'
-import { overlayBrushes } from '../lib/boardShapes'
+import { overlayBrushes, dropUnknownBrushes } from '../lib/boardShapes'
 import { dangerBrushes } from '../lib/dangerShapes'
 import type { Color, Square, Dests, BoardMove, Shape } from '../types'
 
@@ -82,13 +82,16 @@ function config(): Config {
 // Render `props.shapes` either as editable user drawings (study editor) or as a
 // read-only auto-shape overlay (engine plans). `setShapes` is programmatic and
 // never re-fires `onChange`, so this can't loop back into a `drawn` emit.
+// Shapes with a brush the board didn't register are dropped first — chessground
+// throws on an unknown brush, which would blank the whole layer (issue #228).
 function renderShapes() {
   if (!cg) return
+  const known = new Set(Object.keys(cg.state.drawable.brushes))
   if (props.editableShapes) {
-    cg.setShapes(props.shapes ?? [])
-    cg.setAutoShapes(props.overlayShapes ?? [])
+    cg.setShapes(dropUnknownBrushes(props.shapes ?? [], known))
+    cg.setAutoShapes(dropUnknownBrushes(props.overlayShapes ?? [], known))
   } else {
-    cg.setAutoShapes(props.shapes ?? [])
+    cg.setAutoShapes(dropUnknownBrushes(props.shapes ?? [], known))
   }
 }
 

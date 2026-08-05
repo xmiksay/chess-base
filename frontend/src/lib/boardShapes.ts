@@ -43,6 +43,15 @@ export function shapesToDrawShapes(shapes: Shape[]): DrawShape[] {
   })
 }
 
+/**
+ * Drop shapes whose brush isn't registered on the board. Chessground *throws*
+ * on an unregistered brush, aborting the render of every shape in the layer
+ * (issue #228) — so one bad stored shape must never reach it.
+ */
+export function dropUnknownBrushes(shapes: DrawShape[], known: ReadonlySet<string>): DrawShape[] {
+  return shapes.filter((s) => !s.brush || known.has(s.brush))
+}
+
 const THREAT_COLOR = '#dc2626' // red-600
 const MASTER_COLOR = '#7c3aed' // violet-600
 

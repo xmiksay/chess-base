@@ -534,6 +534,16 @@ impl StudyService {
         node_id: usize,
         shapes: Vec<Shape>,
     ) -> Result<(), StudyError> {
+        // An unregistered brush makes chessground throw and blanks EVERY shape
+        // on the node (issue #228) — reject it here so the caller can correct
+        // it instead of silently storing dead data.
+        if let Some(bad) = shapes.iter().find(|s| !shapes::is_valid_brush(&s.brush)) {
+            return Err(StudyError::InvalidEdit(format!(
+                "unknown brush `{}`; valid brushes: {}",
+                bad.brush,
+                shapes::VALID_BRUSHES.join(", ")
+            )));
+        }
         let study = self.load_writable(user, study_id).await?;
         let mut tree: MoveTree = serde_json::from_str(&study.tree_json)?;
         if tree.line_to(node_id).is_none() {

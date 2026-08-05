@@ -99,6 +99,42 @@ fn parse_block(inner: &str) -> Option<Vec<Shape>> {
     (!out.is_empty()).then_some(out)
 }
 
+/// Brush names the frontend board actually registers: chessground's built-in
+/// brushes plus the app overlay brushes (plans #60, threat/master #123, danger
+/// #139). Chessground *throws* on a shape with an unregistered brush, which
+/// aborts the render of every shape on that node (issue #228) — so
+/// `StudyService::set_shapes` rejects anything outside this list up front.
+pub const VALID_BRUSHES: &[&str] = &[
+    // chessground defaults
+    "green",
+    "red",
+    "blue",
+    "yellow",
+    "paleBlue",
+    "paleGreen",
+    "paleRed",
+    "paleGrey",
+    "purple",
+    "pink",
+    // app overlay brushes (plansToShapes / boardShapes / dangerShapes)
+    "plan1",
+    "plan2",
+    "plan3",
+    "plan1d",
+    "plan2d",
+    "plan3d",
+    "threat",
+    "master",
+    "dangerWeapon",
+    "dangerCaution",
+    "dangerOffbook",
+];
+
+/// Whether the frontend board can render this brush (see [`VALID_BRUSHES`]).
+pub fn is_valid_brush(brush: &str) -> bool {
+    VALID_BRUSHES.contains(&brush)
+}
+
 /// Brush name → Lichess colour letter; unknown brushes default to green.
 fn color_letter(brush: &str) -> char {
     match brush {
@@ -188,6 +224,16 @@ mod tests {
         // 'X' is not a brush; "e44" is not a 2-char square; the rest survive.
         let (shapes, _) = parse("[%csl Xe4,Gd4,Re44,Bh8]");
         assert_eq!(shapes, vec![circle("d4", "green"), circle("h8", "blue")]);
+    }
+
+    #[test]
+    fn brush_validation_matches_the_board_vocabulary() {
+        for brush in ["green", "paleGrey", "plan2d", "threat", "dangerWeapon"] {
+            assert!(is_valid_brush(brush), "{brush} should be valid");
+        }
+        for brush in ["cyan", "Green", "plan4", ""] {
+            assert!(!is_valid_brush(brush), "{brush} should be invalid");
+        }
     }
 
     #[test]
