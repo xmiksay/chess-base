@@ -148,7 +148,7 @@ onUnmounted(() => store.disconnect())
 </script>
 
 <template>
-  <div class="mx-auto flex max-w-6xl gap-6 p-6">
+  <div class="mx-auto flex max-w-5xl gap-6 p-6">
     <!-- Conversation sidebar -->
     <aside class="w-64 shrink-0">
       <button
@@ -216,7 +216,7 @@ onUnmounted(() => store.disconnect())
     </aside>
 
     <!-- Chat pane -->
-    <section class="flex min-h-[75vh] flex-1 flex-col">
+    <section class="flex min-h-[75vh] min-w-0 flex-1 flex-col">
       <!-- Unavailable: engine off (WS refused) or no provider configured. -->
       <p
         v-if="store.unavailable"

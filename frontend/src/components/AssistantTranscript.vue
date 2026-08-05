@@ -65,7 +65,7 @@ const CHIP_ICON = { running: '⏳', done: '✓', error: '✗' } as const
         v-if="item.type === 'user'"
         class="flex justify-end"
       >
-        <div class="max-w-[80%] whitespace-pre-wrap rounded-lg bg-fg px-3 py-2 text-sm text-surface">
+        <div class="max-w-[80%] whitespace-pre-wrap break-words rounded-lg bg-fg px-3 py-2 text-sm text-surface">
           {{ item.text }}
         </div>
       </div>
@@ -75,7 +75,7 @@ const CHIP_ICON = { running: '⏳', done: '✓', error: '✗' } as const
         v-else-if="item.type === 'assistant'"
         class="flex justify-start"
       >
-        <div class="max-w-[80%] space-y-1">
+        <div class="min-w-0 max-w-[80%] space-y-1">
           <details
             v-if="item.reasoning"
             class="rounded border border-border px-2 py-1 text-xs text-muted"
@@ -83,11 +83,11 @@ const CHIP_ICON = { running: '⏳', done: '✓', error: '✗' } as const
             <summary class="cursor-pointer select-none">
               Thinking
             </summary>
-            <pre class="mt-1 whitespace-pre-wrap font-sans">{{ item.reasoning }}</pre>
+            <pre class="mt-1 whitespace-pre-wrap break-words font-sans">{{ item.reasoning }}</pre>
           </details>
           <div
             v-if="item.text || item.streaming"
-            class="whitespace-pre-wrap rounded-lg bg-surface-2 px-3 py-2 text-sm"
+            class="whitespace-pre-wrap break-words rounded-lg bg-surface-2 px-3 py-2 text-sm"
           >
             {{ item.text }}<span
               v-if="item.streaming"
