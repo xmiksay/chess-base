@@ -88,7 +88,7 @@ function toggleLayer(key: 'showPlans' | 'showThreats' | 'showMasterMoves', value
           data-test="toggle-master"
           @change="toggleLayer('showMasterMoves', ($event.target as HTMLInputElement).checked)"
         >
-        <span class="text-violet-600">Master moves</span>
+        <span class="text-master">Master moves</span>
       </label>
       <button
         class="ml-auto rounded border border-border px-2 py-1 text-xs"

@@ -4,7 +4,7 @@ import Board from '../components/Board.vue'
 import AnalysisPanel from '../components/AnalysisPanel.vue'
 import BoardControls from '../components/BoardControls.vue'
 import BoardEvalBar from '../components/BoardEvalBar.vue'
-import MoveTree from '../components/MoveTree.vue'
+import MoveTreePanel from '../components/MoveTreePanel.vue'
 import MoveComment from '../components/MoveComment.vue'
 import { useGameStore } from '../stores/game'
 import { useSettingsStore } from '../stores/settings'
@@ -122,18 +122,17 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         <h2 class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
           Moves
         </h2>
-        <!-- Cap the notation to ~board height and scroll in place. -->
-        <div class="max-h-[480px] overflow-y-auto">
-          <MoveTree
-            :tree="game.tree"
-            :current-id="game.currentId"
-            editable
-            @select="game.goto($event)"
-            @promote="game.promoteNode($event)"
-            @demote="game.demoteNode($event)"
-            @remove="onRemove($event)"
-          />
-        </div>
+        <!-- Cap the notation to ~board height; the panel scrolls in place. -->
+        <MoveTreePanel
+          class="max-h-[480px]"
+          :tree="game.tree"
+          :current-id="game.currentId"
+          editable
+          @select="game.goto($event)"
+          @promote="game.promoteNode($event)"
+          @demote="game.demoteNode($event)"
+          @remove="onRemove($event)"
+        />
       </div>
     </aside>
   </div>
