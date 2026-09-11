@@ -109,7 +109,9 @@ export const useGamesStore = defineStore('games', () => {
     try {
       const [game, tree] = await Promise.all([api.games.get(id), api.games.tree(id)])
       openGame.value = game
-      board.load(tree, STARTPOS_FEN)
+      // A `[FEN]` set-up game starts from its own position, not the standard one
+      // (`studyEditor` already honours this; the games board silently did not).
+      board.load(tree, tree.start_fen ?? STARTPOS_FEN)
       await loadLinkedStudies(id)
     } catch (e) {
       error.value = (e as Error)?.message ?? String(e)

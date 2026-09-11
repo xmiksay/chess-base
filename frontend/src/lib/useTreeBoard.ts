@@ -38,6 +38,9 @@ export function useTreeBoard() {
   /** SAN moves from the root to the current node — drives the move panel / export. */
   const history = computed<string[]>(() => sanPath(tree.value, currentId.value))
 
+  /** The selected node — its stored comment/NAGs/shapes/eval drive the panels. */
+  const currentNode = computed(() => getNode(tree.value, currentId.value))
+
   const atStart = computed(() => currentId.value === tree.value.root)
   const atEnd = computed(() => firstChild(tree.value, currentId.value) == null)
 
@@ -208,6 +211,7 @@ export function useTreeBoard() {
     startFen,
     tree,
     currentId,
+    currentNode,
     fen,
     lastMove,
     orientation,

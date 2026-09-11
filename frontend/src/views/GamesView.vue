@@ -3,9 +3,10 @@
 // the shared variation-tree board (issue #136) and explore it — step the cursor,
 // click moves/variations in the tree, or play an off-line move to branch. The
 // engine review (analyze/export, eval graph, why-note) lives in GameReviewPanel.
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Board from '../components/Board.vue'
+import BoardEvalBar from '../components/BoardEvalBar.vue'
 import BoardControls from '../components/BoardControls.vue'
 import MoveTree from '../components/MoveTree.vue'
 import MoveComment from '../components/MoveComment.vue'
@@ -20,6 +21,7 @@ import { useAuthStore } from '../stores/auth'
 import { useBoardOverlays } from '../lib/useBoardOverlays'
 import { numericParam } from '../lib/routeParam'
 import { downloadText } from '../lib/download'
+import type { DrawShape } from 'chessground/draw'
 import type { BoardMove, Database, GameRow } from '../types'
 
 const games = useGamesStore()
@@ -71,6 +73,15 @@ const engineEnabled = ref<boolean | null>(null)
 // `clearArrows` (issue #190) turns off every layer so the live engine-analysis
 // arrows disappear and stay off until the user re-enables a toggle.
 const { boardShapes, clear: clearArrows } = useBoardOverlays(() => games.fen)
+
+// The current node's stored `[%cal]`/`[%csl]` shapes. The backend has always
+// parsed them out of the game's PGN, but this view only ever handed chessground
+// the live overlay layer, so an annotated game silently lost its arrows. Copy
+// the array — Board passes it straight to chessground, which mutates its shapes
+// layer in place (issue #190), and that must not touch the Pinia-held original.
+const pinnedShapes = computed(
+  () => [...(games.currentNode?.shapes ?? [])] as unknown as DrawShape[],
+)
 
 /** A "White – Black" label for a game row, tolerating missing names. */
 function players(g: GameRow): string {
@@ -263,11 +274,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       />
     </header>
 
+    <!-- `games.error` too: a stale "From game #N" link 404s into the store and
+         used to leave a blank pane with no explanation. -->
     <p
-      v-if="loadError"
+      v-if="loadError || games.error"
       class="mb-3 text-sm text-bad"
+      data-test="games-error"
     >
-      {{ loadError }}
+      {{ loadError || games.error }}
     </p>
 
     <!-- Merge selection bar (issue #170): fold the ticked games into one study. -->
@@ -421,16 +435,23 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         v-if="games.openGame"
         class="lg:w-1/2"
       >
-        <Board
-          :fen="games.fen"
-          :orientation="games.orientation"
-          :dests="games.legalDests"
-          :movable="!auth.isAnonymous"
-          :last-move="games.lastMove"
-          :board-theme="settings.boardTheme"
-          :shapes="boardShapes"
-          @move="onMove"
-        />
+        <div class="flex items-stretch gap-2">
+          <BoardEvalBar
+            v-if="!auth.isAnonymous"
+            :fen="games.fen"
+          />
+          <Board
+            :fen="games.fen"
+            :orientation="games.orientation"
+            :dests="games.legalDests"
+            :movable="!auth.isAnonymous"
+            :last-move="games.lastMove"
+            :board-theme="settings.boardTheme"
+            :shapes="pinnedShapes"
+            :overlay-shapes="boardShapes"
+            @move="onMove"
+          />
+        </div>
 
         <BoardControls
           class="mt-3"
@@ -463,8 +484,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           :current-id="games.currentId"
         />
 
+        <!-- Bounded + scrollable: an uncapped list pushed the board and the
+             engine panel off-screen on any long game. -->
         <MoveTree
-          class="mt-2"
+          class="mt-2 max-h-[45vh] overflow-y-auto"
           :tree="games.tree"
           :current-id="games.currentId"
           @select="games.goto($event)"
