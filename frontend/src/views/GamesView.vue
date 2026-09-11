@@ -8,7 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 import Board from '../components/Board.vue'
 import BoardEvalBar from '../components/BoardEvalBar.vue'
 import BoardControls from '../components/BoardControls.vue'
-import MoveTree from '../components/MoveTree.vue'
+import MoveTreePanel from '../components/MoveTreePanel.vue'
 import MoveComment from '../components/MoveComment.vue'
 import EnginePanel from '../components/EnginePanel.vue'
 import GameReviewPanel from '../components/GameReviewPanel.vue'
@@ -486,8 +486,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
         <!-- Bounded + scrollable: an uncapped list pushed the board and the
              engine panel off-screen on any long game. -->
-        <MoveTree
-          class="mt-2 max-h-[45vh] overflow-y-auto"
+        <MoveTreePanel
+          class="mt-2 max-h-[45vh]"
           :tree="games.tree"
           :current-id="games.currentId"
           @select="games.goto($event)"

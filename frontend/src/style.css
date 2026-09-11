@@ -29,6 +29,20 @@
   --color-warn: var(--warn);
   --color-bad: var(--bad);
   --color-accent: var(--accent);
+  /* Variation-depth rails: the notation panel colours a row's left border by
+     nesting depth, so a depth-1 and a depth-5 line are told apart at a glance
+     (they used to render identically). Clamped at 5 — deeper reuses the last. */
+  --color-depth-1: var(--depth-1);
+  --color-depth-2: var(--depth-2);
+  --color-depth-3: var(--depth-3);
+  --color-depth-4: var(--depth-4);
+  --color-depth-5: var(--depth-5);
+  /* Off-token colours pulled onto the system: the eval bar's two halves and the
+     master-move accent were hardcoded (neutral-800/neutral-100/violet-600) and
+     read wrong in light mode. */
+  --color-eval-white: var(--eval-white);
+  --color-eval-black: var(--eval-black);
+  --color-master: var(--master);
 }
 
 :root {
@@ -42,6 +56,14 @@
   --warn: #ea580c;
   --bad: #dc2626;
   --accent: #16a34a;
+  --depth-1: #60a5fa;
+  --depth-2: #a78bfa;
+  --depth-3: #f472b6;
+  --depth-4: #fbbf24;
+  --depth-5: #94a3b8;
+  --eval-white: #f4f4f5;
+  --eval-black: #27272a;
+  --master: #7c3aed;
 }
 
 .dark {
@@ -55,6 +77,14 @@
   --warn: #fb923c;
   --bad: #f87171;
   --accent: #22c55e;
+  --depth-1: #3b82f6;
+  --depth-2: #8b5cf6;
+  --depth-3: #ec4899;
+  --depth-4: #f59e0b;
+  --depth-5: #64748b;
+  --eval-white: #e4e4e7;
+  --eval-black: #0b0b0c;
+  --master: #a78bfa;
 }
 
 body {

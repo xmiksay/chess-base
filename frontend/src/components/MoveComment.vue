@@ -25,7 +25,7 @@ const san = computed(() => node.value?.san ?? null)
 
 <template>
   <div
-    class="min-h-[3rem] rounded border border-border bg-surface-2 px-3 py-2 text-sm"
+    class="max-h-32 min-h-[3rem] overflow-y-auto rounded border border-border bg-surface-2 px-3 py-2 text-sm"
     data-test="move-comment"
   >
     <template v-if="comment">
@@ -38,7 +38,7 @@ const san = computed(() => node.value?.san ?? null)
         :key="ni"
         class="text-accent"
       >{{ nagGlyph(n) }}</span></span>
-      <span class="text-fg">{{ comment }}</span>
+      <span class="whitespace-pre-line break-words text-fg">{{ comment }}</span>
     </template>
     <span
       v-else

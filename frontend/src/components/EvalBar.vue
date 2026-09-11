@@ -17,9 +17,9 @@ const whitePct = computed(() => evalBarPercent(props.score, props.sideToMove))
 </script>
 
 <template>
-  <div class="relative h-full min-h-[120px] w-4 overflow-hidden rounded bg-neutral-800">
+  <div class="relative h-full min-h-[120px] w-4 overflow-hidden rounded bg-eval-black">
     <div
-      class="absolute bottom-0 left-0 w-full bg-neutral-100 transition-[height] duration-200"
+      class="absolute bottom-0 left-0 w-full bg-eval-white transition-[height] duration-200"
       :style="{ height: whitePct + '%' }"
     />
   </div>
