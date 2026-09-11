@@ -44,6 +44,55 @@ describe('MoveTree', () => {
     expect(wrapper.emitted('select')![0]).toEqual([3])
   })
 
+  // Regression: the promote/demote/delete toolbar used to render inline, right
+  // after the selected move, so selecting a move reflowed the rest of the line
+  // to the right and the next click landed on the previous move's ✕. The actions
+  // must never sit inside the move flow — at any depth.
+  it('keeps node actions out of the move flow', () => {
+    const deep = {
+      root: 0,
+      nodes: [
+        { id: 0, parent: null, san: null, comment: null, nags: [], children: [1] },
+        { id: 1, parent: 0, san: 'e4', comment: null, nags: [], children: [2, 3] },
+        { id: 2, parent: 1, san: 'e5', comment: null, nags: [], children: [] },
+        { id: 3, parent: 1, san: 'c5', comment: null, nags: [], children: [4] },
+        { id: 4, parent: 3, san: 'Nf3', comment: null, nags: [], children: [5] },
+        { id: 5, parent: 4, san: 'd6', comment: null, nags: [], children: [] },
+      ],
+    }
+    for (const currentId of [1, 3, 4, 5]) {
+      const wrapper = mount(MoveTree, { props: { tree: deep, currentId, editable: true } })
+      const flow = wrapper.find('[data-test="move-flow"]')
+      // Nothing clickable other than the moves themselves lives in the flow, so
+      // selecting a move can never shift the next one under the cursor.
+      expect(flow.findAll('button')).toHaveLength(wrapper.findAll('[data-test="move"]').length)
+      expect(flow.find('[data-test="node-actions"]').exists()).toBe(false)
+      // They exist — just hoisted out of the flow, acting on the selection.
+      expect(wrapper.find('[data-test="node-actions"]').exists()).toBe(true)
+    }
+  })
+
+  it('acts on the selected node from the hoisted toolbar', async () => {
+    const wrapper = mount(MoveTree, {
+      props: { tree: sampleTree(), currentId: 3, editable: true },
+    })
+    expect(wrapper.find('[data-test="node-actions"]').text()).toContain('c5')
+    await wrapper.find('[data-test="node-delete"]').trigger('click')
+    expect(wrapper.emitted('remove')![0]).toEqual([3])
+    await wrapper.find('[data-test="node-promote"]').trigger('click')
+    expect(wrapper.emitted('promote')![0]).toEqual([3])
+  })
+
+  it('offers no node actions when not editable, or at the root', () => {
+    const readOnly = mount(MoveTree, { props: { tree: sampleTree(), currentId: 3 } })
+    expect(readOnly.find('[data-test="node-actions"]').exists()).toBe(false)
+    // The root has no move to promote or delete.
+    const atRoot = mount(MoveTree, {
+      props: { tree: sampleTree(), currentId: 0, editable: true },
+    })
+    expect(atRoot.find('[data-test="node-actions"]').exists()).toBe(false)
+  })
+
   it('prompts to start a line for an empty tree', () => {
     const empty = {
       root: 0,

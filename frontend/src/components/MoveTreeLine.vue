@@ -3,6 +3,10 @@
 // Move items flow inline; a variation `block` item breaks to its own indented
 // row (a left border + padding) and recurses, so nesting depth = visual indent.
 // Presentational: the parent owns selection and the store edits.
+//
+// Deliberately action-free. Node actions live in MoveTree's sticky bar — an
+// inline toolbar after the selected move reflows the rest of the line under the
+// cursor, which turns the next click into an accidental delete.
 import { nagGlyph, nagClass } from '../lib/moveTree'
 import { formatEval } from '../lib/dangerShapes'
 import type { MoveTreeItem } from '../lib/moveTree'
@@ -10,15 +14,11 @@ import type { MoveTreeItem } from '../lib/moveTree'
 interface Props {
   items: MoveTreeItem[]
   currentId?: number | null
-  editable?: boolean
 }
-withDefaults(defineProps<Props>(), { currentId: null, editable: false })
+withDefaults(defineProps<Props>(), { currentId: null })
 
 const emit = defineEmits<{
   select: [id: number]
-  promote: [id: number]
-  demote: [id: number]
-  remove: [id: number]
 }>()
 </script>
 
@@ -27,7 +27,7 @@ const emit = defineEmits<{
     v-for="(item, i) in items"
     :key="i"
   >
-    <!-- A move: inline button (+ an action toolbar when it is the selection). -->
+    <!-- A move: a plain inline button. Nothing is ever inserted beside it. -->
     <span
       v-if="item.kind === 'move'"
       class="inline-flex items-baseline"
@@ -35,6 +35,7 @@ const emit = defineEmits<{
       <button
         type="button"
         data-test="move"
+        :data-node-id="item.token.id"
         class="rounded px-0.5 hover:bg-surface-2"
         :class="[
           item.token.depth === 0 ? 'font-medium text-fg' : 'text-muted',
@@ -62,34 +63,6 @@ const emit = defineEmits<{
           title="has comment"
         >•</span>
       </button>
-
-      <span
-        v-if="editable && item.token.id === currentId"
-        class="ml-1 inline-flex items-center gap-0.5"
-        data-test="node-actions"
-      >
-        <button
-          type="button"
-          data-test="node-promote"
-          class="rounded px-1 text-xs text-muted hover:bg-surface-2 hover:text-good"
-          title="Promote toward mainline"
-          @click="emit('promote', item.token.id)"
-        >⤴</button>
-        <button
-          type="button"
-          data-test="node-demote"
-          class="rounded px-1 text-xs text-muted hover:bg-surface-2 hover:text-warn"
-          title="Demote"
-          @click="emit('demote', item.token.id)"
-        >⤵</button>
-        <button
-          type="button"
-          data-test="node-delete"
-          class="rounded px-1 text-xs text-muted hover:bg-surface-2 hover:text-bad"
-          title="Delete move and its line"
-          @click="emit('remove', item.token.id)"
-        >✕</button>
-      </span>
     </span>
 
     <!-- A variation: indented block on its own row, recursing one level deeper. -->
@@ -101,11 +74,7 @@ const emit = defineEmits<{
       <MoveTreeLine
         :items="item.items"
         :current-id="currentId"
-        :editable="editable"
         @select="emit('select', $event)"
-        @promote="emit('promote', $event)"
-        @demote="emit('demote', $event)"
-        @remove="emit('remove', $event)"
       />
     </div>
   </template>
