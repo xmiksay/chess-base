@@ -34,14 +34,13 @@ const props = withDefaults(defineProps<Props>(), {
   copyActions: false,
 })
 
+// Call-signature form so `act` can emit a union event name — the object form
+// makes each event its own overload, which a union argument can't satisfy.
 const emit = defineEmits<{
-  select: [nodeId: number]
-  promote: [nodeId: number]
-  demote: [nodeId: number]
-  remove: [nodeId: number]
-  comment: [nodeId: number]
-  'copy-fen': [nodeId: number]
-  'copy-pgn': [nodeId: number]
+  (
+    e: 'select' | 'promote' | 'demote' | 'remove' | 'comment' | 'copy-fen' | 'copy-pgn',
+    nodeId: number,
+  ): void
 }>()
 
 const rows = computed(() => treeRows(props.tree))
