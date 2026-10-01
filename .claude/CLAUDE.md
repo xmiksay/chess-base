@@ -373,6 +373,9 @@ endpoint are both thin callers.
 
 - `make build` — build frontend then release binary (embeds SPA).
 - `make run` — local mode, opens browser.
+- `make run-bundled` — local mode with Stockfish embedded in the binary
+  (fetches it into `engines-bundled/` once, then builds with
+  `--features bundled-stockfish`).
 - `make dev` — backend on `:3030` + Vite hot-reload (proxies `/api`).
 - `make test` — Rust unit + integration + frontend tests.
 - `make coverage` — `cargo llvm-cov` + vitest coverage.
