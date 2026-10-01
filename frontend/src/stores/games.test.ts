@@ -154,6 +154,29 @@ describe('games store — tree board', () => {
     expect(store.atEnd).toBe(false)
   })
 
+  // Regression: `open` hardcoded STARTPOS_FEN, so a `[FEN]` set-up game — which
+  // the backend does return a `start_fen` for — rendered from the wrong position.
+  it('open seeds a set-up game from its own start_fen', async () => {
+    const store = useGamesStore()
+    const setUp = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 1'
+    vi.mocked(api.games.get).mockResolvedValue(detail(5))
+    vi.mocked(api.games.tree).mockResolvedValue({ ...lineTree(['e4']), start_fen: setUp })
+    await store.open(5)
+
+    expect(store.startFen).toBe(setUp)
+    expect(store.fen).toBe(setUp)
+  })
+
+  it('exposes the selected node so the view can draw its stored shapes', async () => {
+    const store = useGamesStore()
+    await openLine(store, ['e4', 'e5'])
+    store.goto(1)
+
+    // The backend parses `[%cal]`/`[%csl]` off the PGN into `node.shapes`; the
+    // view had no way to reach them, so annotated games lost their arrows.
+    expect(store.currentNode?.san).toBe('e4')
+  })
+
   it('maps mainline nodes to plies and back', async () => {
     const store = useGamesStore()
     await openLine(store, ['e4', 'e5', 'Bc4'])

@@ -56,7 +56,7 @@ function row(id: number, white: string, black: string): GameRow {
 const stubs = {
   Board: true,
   BoardControls: true,
-  MoveTree: true,
+  MoveTreePanel: true,
   MoveComment: true,
   EnginePanel: true,
   GameReviewPanel: true,

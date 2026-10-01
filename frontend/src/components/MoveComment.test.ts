@@ -33,4 +33,16 @@ describe('MoveComment', () => {
     const none = mount(MoveComment, { props: { tree: null, currentId: null } })
     expect(none.text()).toContain('No comment on this move.')
   })
+
+  // A multi-line PGN comment used to collapse into one run-on paragraph, and a
+  // long LLM note grew the box without limit.
+  it('preserves line breaks and caps its own height', () => {
+    const w = mount(MoveComment, {
+      props: { tree: sampleTree(), currentId: 2 },
+    })
+    const box = w.find('[data-test="move-comment"]')
+    expect(box.classes()).toContain('max-h-32')
+    expect(box.classes()).toContain('overflow-y-auto')
+    expect(w.find('span.whitespace-pre-line').exists()).toBe(true)
+  })
 })

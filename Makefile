@@ -49,7 +49,9 @@ bundle-stockfish: ## Fetch this host's Stockfish into engines-bundled/<target>/ 
 	  x86_64-*-windows-*) slug=stockfish-windows-x86-64-avx2;     bin=stockfish.exe; arch=zip; inner=$$slug.exe ;; \
 	  *) echo "no Stockfish asset catalogued for target $$target" >&2; exit 1 ;; \
 	esac; \
-	dir="engines-bundled/$$target"; mkdir -p "$$dir"; \
+	dir="engines-bundled/$$target"; \
+	if [ -x "$$dir/$$bin" ]; then echo "$$dir/$$bin already bundled (rm -rf engines-bundled to refetch)"; exit 0; fi; \
+	mkdir -p "$$dir"; \
 	url="https://github.com/official-stockfish/Stockfish/releases/download/sf_16.1/$$slug.$$arch"; \
 	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
 	echo "Fetching $$url"; \
@@ -66,6 +68,10 @@ bundle-stockfish: ## Fetch this host's Stockfish into engines-bundled/<target>/ 
 .PHONY: build-bundled
 build-bundled: frontend bundle-stockfish ## Build the release binary with Stockfish embedded (GPLv3 artifact)
 	cargo build --release --features bundled-stockfish
+
+.PHONY: run-bundled
+run-bundled: frontend bundle-stockfish ## Run locally with Stockfish embedded in the binary
+	cargo run --features bundled-stockfish --
 
 .PHONY: dev
 dev: ## Run backend (:3030) + Vite dev server with hot reload
