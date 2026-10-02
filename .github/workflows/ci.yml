@@ -22,9 +22,18 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # dtolnay/rust-toolchain does not read rust-toolchain.toml, and installing a
+      # different toolchain than the one rustup then switches to would leave the
+      # requested components/targets behind. Feed it the pinned channel instead.
+      - name: Read pinned toolchain
+        id: rust
+        shell: bash
+        run: sed -n 's/^channel *= *"\(.*\)"/ver=\1/p' rust-toolchain.toml >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.rust.outputs.ver }}
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2

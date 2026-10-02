@@ -1,0 +1,9 @@
+# Pinned so `make lint` locally sees exactly the lints CI does. Drift here is
+# what let a clippy 1.99 release break CI with no code change: the workflows ran
+# `@stable` (1.99.0) while this host was still on 1.97.0, so a green local lint
+# proved nothing. Bump deliberately, then re-run `make lint` and prune any
+# now-unneeded allow in Cargo.toml's [lints.clippy].
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

@@ -370,6 +370,15 @@ endpoint are both thin callers.
 Always `nvm use` (Node 22, see `frontend/.nvmrc`) before raw npm commands;
 set `CARGO_BUILD_JOBS=4` for cargo (the Makefile does both).
 
+**The Rust toolchain is pinned** in `rust-toolchain.toml`, so a bare `cargo` here
+uses that version and `make lint` sees exactly the lints CI does — both workflows
+read the channel out of that file rather than installing `@stable`. Before pushing,
+`make lint` **and** `make test` must be green, whatever the diff touched: clippy
+1.99 broke CI with no code change (`double_must_use` on `#[async_trait]`,
+`result_large_err` on `Result<Response, Response>`), and the local 1.97 could not
+see it. Fallout from a new lint release is parked in `Cargo.toml`'s
+`[lints.clippy]` with a WHY per entry — re-check those when the pin moves.
+
 CI: `.github/workflows/ci.yml` (test/lint), `release.yml` (desktop binaries on
 `v*` tags), `docker.yml` (GPLv3 image with bundled Stockfish →
 `ghcr.io/xmiksay/chess-base` on `v*` tags, ADR-0037).
