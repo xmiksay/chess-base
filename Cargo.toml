@@ -95,3 +95,14 @@ sha2 = "0.10"
 
 [profile.release]
 strip = true
+
+# Two lints that only fire on Rust 1.99+, neither with a remedy that improves
+# the code — the toolchain is pinned in rust-toolchain.toml, so revisit these
+# when that pin moves.
+[lints.clippy]
+# `#[async_trait]` desugars `async fn` into a `#[must_use]` boxed future, so the
+# "double" must_use is the macro's own attribute, not something we wrote.
+double_must_use = "allow"
+# Our handlers return `Result<Response, Response>`: Ok and Err are the *same*
+# type, so boxing the Err variant cannot make the Result any smaller.
+result_large_err = "allow"
