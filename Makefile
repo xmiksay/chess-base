@@ -85,16 +85,27 @@ dev: ## Run backend (:3030) + Vite dev server with hot reload
 	cargo run -- --port 3030 --no-open & \
 	cd frontend && $(NVM) npm run dev
 
-## --- Deploy (k8s, ADR 0037) ---
+## --- Deploy (systemd on this host + k8s ingress, ADR 0052) ---
+
+.PHONY: install-service
+install-service: ## One-time: chessbase user, local Postgres role/DB, env file, systemd unit
+	id chessbase >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/chess-base --shell /usr/bin/nologin chessbase
+	sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='chessbase'" | grep -q 1 || sudo -u postgres createuser chessbase
+	sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='chessbase'" | grep -q 1 || sudo -u postgres createdb -O chessbase chessbase
+	[ -f /etc/chess-base.env ] || sudo install -m 0640 -g chessbase deploy/chess-base.env.example /etc/chess-base.env
+	sudo install -m 0644 deploy/chess-base.service /etc/systemd/system/chess-base.service
+	sudo systemctl daemon-reload
+	sudo systemctl enable chess-base
 
 .PHONY: deploy
-deploy: ## Apply the k8s manifest (Secret/ConfigMap/Deployment/Service/Ingress)
-	kubectl apply -f deploy.yml
+deploy: build-bundled ## Build with bundled Stockfish, install the binary, restart the service
+	sudo install -m 0755 target/release/chess-base /usr/local/bin/chess-base
+	sudo systemctl restart chess-base
+	systemctl --no-pager --lines=5 status chess-base
 
-.PHONY: deploy-restart
-deploy-restart: ## Re-roll the pods (re-pulls the tag pinned in deploy.yml)
-	kubectl -n services rollout restart deploy/chess-base
-	kubectl -n services rollout status deploy/chess-base
+.PHONY: deploy-k8s
+deploy-k8s: ## Apply the k8s Service/Endpoints/Ingress pointing chessbase.mmik.cz at this host
+	kubectl apply -f deploy/k8s.yml
 
 ## --- Quality ---
 

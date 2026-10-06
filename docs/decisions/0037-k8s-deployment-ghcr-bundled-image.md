@@ -1,6 +1,6 @@
 # 0037 — k8s deployment: public GHCR image with bundled Stockfish
 
-- **Status:** Accepted
+- **Status:** Accepted — deployment path superseded by [ADR-0052](0052-systemd-host-deployment-behind-k8s-ingress.md)
 - **Date:** 2026-07-13
 
 ## Context

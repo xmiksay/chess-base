@@ -119,35 +119,22 @@ image a **GPLv3 artifact** (see the licensing note above). See
 [ADR-0016](docs/decisions/0016-server-deployment-docker-compose.md) and
 [ADR-0037](docs/decisions/0037-k8s-deployment-ghcr-bundled-image.md).
 
-## Deploy (k8s)
+## Deploy (systemd + k8s ingress)
 
-Version tags (`v*`) build the image via `.github/workflows/docker.yml` and
-publish it to **`ghcr.io/xmiksay/chess-base`** (a **public** GHCR package —
-make it public in the GitHub package settings after the first push) tagged
-with the semver, the short commit SHA and `latest`. The deployment is a
-single-file manifest (Secret, ConfigMap, Deployment, Service, Ingress)
-targeting the `services` namespace with the shared Postgres; it pins the
-image by tag — bump the tag there to roll a new release. `deploy.yml` itself
-is **gitignored** (it carries the real DB password) — bootstrap it once from
-the committed template:
+`https://chessbase.mmik.cz` is served by a **systemd service on the home
+desktop** (server mode, host PostgreSQL over the unix socket, port 3040); the
+k8s nginx ingress only routes to it through a selector-less Service/Endpoints
+(`deploy/k8s.yml`), like `agent.mmik.cz`.
 
 ```sh
-cp deploy.example.yml deploy.yml   # then set the real DATABASE_URL password
+make install-service   # one-time: chessbase user, Postgres role/DB, /etc/chess-base.env, unit
+make deploy            # build with bundled Stockfish, install the binary, restart
+make deploy-k8s        # apply the Service/Endpoints/Ingress
 ```
 
-```sh
-# one-time: create the DB in the shared Postgres
-kubectl -n services exec deploy/postgres -- psql -U postgres -c \
-  "CREATE ROLE chessbase LOGIN PASSWORD '<pw>'; CREATE DATABASE chessbase OWNER chessbase;"
-# set the real DATABASE_URL in deploy.yml's Secret (placeholder is CHANGE_ME), then:
-make deploy            # kubectl apply -f deploy.yml
-make deploy-restart    # later: roll pods onto the freshly pushed :main image
-```
-
-The app serves at `https://chessbase.mmik.cz` (nginx ingress + cert-manager).
-The pod's **CPU limit (2)** is the guard against heavy Stockfish analysis
-starving the node. See
-[ADR-0037](docs/decisions/0037-k8s-deployment-ghcr-bundled-image.md).
+`CPUQuota=200%` in the unit is the guard against heavy Stockfish analysis
+starving the desktop. See
+[ADR-0052](docs/decisions/0052-systemd-host-deployment-behind-k8s-ingress.md).
 
 ## Development
 
