@@ -375,7 +375,9 @@ endpoint are both thin callers.
 - `make run` — local mode, opens browser.
 - `make run-bundled` — local mode with Stockfish embedded in the binary
   (fetches it into `engines-bundled/` once, then builds with
-  `--features bundled-stockfish`).
+  `--features bundled-stockfish`). Both run targets rebuild the SPA only when
+  a frontend source is newer than `frontend/dist/index.html`; `make frontend`
+  always forces a build.
 - `make dev` — backend on `:3030` + Vite hot-reload (proxies `/api`).
 - `make test` — Rust unit + integration + frontend tests.
 - `make coverage` — `cargo llvm-cov` + vitest coverage.

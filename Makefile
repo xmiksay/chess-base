@@ -23,6 +23,12 @@ deps: ## Install frontend dependencies
 frontend: ## Build the Vue SPA into frontend/dist (embedded by the binary)
 	cd frontend && $(NVM) npm run build
 
+# Real file target: the run targets rebuild the SPA only when a frontend source
+# is newer than the last build, instead of paying a full vite build every run.
+FE_SRC := $(shell find frontend/src -type f) $(wildcard frontend/*.json frontend/*.ts frontend/index.html)
+frontend/dist/index.html: $(FE_SRC)
+	cd frontend && $(NVM) npm run build
+
 ## --- Build / run ---
 
 .PHONY: build
@@ -34,7 +40,7 @@ release: frontend ## Build the locked, self-contained release binary for this ho
 	cargo build --release --locked
 
 .PHONY: run
-run: frontend ## Run locally (SQLite, opens a browser)
+run: frontend/dist/index.html ## Run locally (SQLite, opens a browser)
 	cargo run --
 
 .PHONY: bundle-stockfish
@@ -70,7 +76,7 @@ build-bundled: frontend bundle-stockfish ## Build the release binary with Stockf
 	cargo build --release --features bundled-stockfish
 
 .PHONY: run-bundled
-run-bundled: frontend bundle-stockfish ## Run locally with Stockfish embedded in the binary
+run-bundled: frontend/dist/index.html bundle-stockfish ## Run locally with Stockfish embedded in the binary
 	cargo run --features bundled-stockfish --
 
 .PHONY: dev
