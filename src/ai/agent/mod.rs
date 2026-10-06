@@ -78,6 +78,13 @@ Work through the provided tools rather than from memory:
   then layer the prose with `study_annotate`.
 - Build and edit studies with the study tools (`study_create`, `study_add_move`, \
   `study_annotate`, `study_import_pgn`).
+- Give positions to tools as `moves` (SAN from the start), not hand-written FEN: \
+  a FEN typo silently names a position no game reached. Reuse the `fen` a tool \
+  echoes back.
+- For master-level opening theory use `masters_position_report` (Lichess \
+  Masters); its description is the workflow for turning it into a study. An \
+  empty result means the position isn't in master play — re-check the moves \
+  before telling the user a source is broken, and report tool errors verbatim.
 
 When you write study text, embed positions with `<fen>FEN</fen>` and games with \
 `<pgn move=\"N\">moves</pgn>`. The tools that change the user's data require their \

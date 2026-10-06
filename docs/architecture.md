@@ -381,6 +381,12 @@ annotated PGN movetext (the single `games::export` + `pgn_tree::pgn` serializer,
 (`engine::DEFAULT_DEPTH`). The unbundled tools stay available for an agent that
 wants to drill in further.
 
+**Positions on MCP** (ADR-0056): every position-taking tool accepts `moves`
+(a SAN array from the start, or from `fen` when both are given) instead of a
+`fen`, resolved by `server/routes/mcp/position_arg.rs`. An illegal move fails
+naming the move, and single-position tools echo the resolved `fen`. The Masters →
+study workflow guidance lives in `masters_position_report`'s description.
+
 **The MCP surface is symmetrical to the HTTP API** (#183, ADR-0036): every
 deterministic (non-LLM, non-session/admin) HTTP operation has an MCP twin, a
 hand-maintained manifest in `server/routes/mcp/symmetry.rs` asserts each

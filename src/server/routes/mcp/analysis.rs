@@ -52,10 +52,9 @@ fn analyse_position_tool() -> Tool {
          not invent lines or evaluations. If no engine is configured the `engine` \
          field is null and a note says so; the DB report and features are always \
          present.",
-        json!({
-            "type": "object",
-            "properties": {
-                "fen": { "type": "string", "description": "Position to explain, in FEN." },
+        super::position_arg::position_schema(
+            "Position to explain",
+            json!({
                 "depth": {
                     "type": "integer", "minimum": 1, "maximum": MAX_DEPTH,
                     "description": format!(
@@ -67,17 +66,16 @@ fn analyse_position_tool() -> Tool {
                     "type": "integer", "minimum": 1, "maximum": MAX_MOVETIME_MS,
                     "description": "Engine search time budget in milliseconds (optional); capped server-side."
                 }
-            },
-            "required": ["fen"]
-        }),
+            }),
+        ),
         |app, user, args| async move { analyse_position(app, user, args).await },
     )
 }
 
 async fn analyse_position(app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
-    let fen = match super::db_tools::fen_arg(&args) {
-        Some(fen) => fen,
-        None => return ToolOutcome::error("Invalid arguments: missing string field `fen`."),
+    let fen = match super::position_arg::require_position(&args) {
+        Ok(fen) => fen,
+        Err(msg) => return ToolOutcome::error(msg),
     };
 
     // Features double as FEN validation: an illegal FEN fails here, cheaply,
@@ -252,7 +250,7 @@ mod tests {
             .iter()
             .find(|t| t["name"] == "analyse_position")
             .expect("analyse_position tool");
-        assert_eq!(tool["inputSchema"]["required"][0], "fen");
+        assert!(tool["inputSchema"]["properties"]["moves"].is_object());
         let game = tools
             .iter()
             .find(|t| t["name"] == "analyse_game")

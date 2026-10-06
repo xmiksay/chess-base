@@ -37,7 +37,12 @@ service token) for your own databases plus write access.
   `db_reference_games` search by position (64-bit Zobrist hash); \
   `masters_position_report` (signed-in, when the server has a Lichess token) is \
   the remote Lichess Masters reference for a position — over-the-board 2200+ \
-  stats and top games, separate from your own databases.
+  stats and top games, separate from your own databases; its description \
+  holds the Masters → study workflow.
+- **Positions** — every position-taking tool accepts `moves` (SAN from the \
+  start, or from `fen` when both are given) instead of `fen`; the server replays \
+  them and names an illegal move. Prefer it to hand-written FEN, and reuse the \
+  `fen` the tools echo back.
 - **Study preprocessing** — engine + DB grounded *data* for study building, \
   with no language model inside the tool (you are the model — annotate the \
   output yourself, then persist with the study tools): `opening_tree` builds a \

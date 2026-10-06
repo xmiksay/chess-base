@@ -19,12 +19,13 @@
 
 use serde_json::{json, Value};
 
-use super::db_tools::{fen_arg, json_outcome, opt_bounded_u64};
+use super::db_tools::{json_outcome, opt_bounded_u64};
+use super::position_arg::{moves_prop, position_or_start, position_schema, require_position};
 use super::study_tools::study_error;
 use super::{Tool, ToolOutcome, ToolRegistry};
 use crate::engine::{Limits, MAX_DEPTH, MAX_MOVETIME_MS};
 use crate::pgn_tree::pgn::from_pgn_with_start;
-use crate::position::{CastlingMode, STARTPOS_FEN};
+use crate::position::CastlingMode;
 use crate::search::position::PositionFilter;
 use crate::search::report::PositionReportService;
 use crate::server::identity::CurrentUser;
@@ -92,6 +93,7 @@ fn opening_tree_tool() -> Tool {
             "type": "object",
             "properties": {
                 "fen": { "type": "string", "description": "Start position in FEN; defaults to the standard opening." },
+                "moves": moves_prop(),
                 "engine_depth": {
                     "type": "integer", "minimum": 1, "maximum": MAX_DEPTH,
                     "description": format!(
@@ -144,7 +146,10 @@ async fn opening_tree(app: AppState, user: CurrentUser, args: Value) -> ToolOutc
             )
         }
     };
-    let start_fen = fen_arg(&args).unwrap_or_else(|| STARTPOS_FEN.to_string());
+    let start_fen = match position_or_start(&args) {
+        Ok(fen) => fen,
+        Err(msg) => return ToolOutcome::error(msg),
+    };
 
     let config: TreeConfig = match args.get("tree") {
         None | Some(Value::Null) => TreeConfig::default(),
@@ -267,6 +272,7 @@ fn danger_map_tool() -> Tool {
             "properties": {
                 "spine_pgn": { "type": "string", "description": "Repertoire spine as PGN movetext to walk for danger." },
                 "fen": { "type": "string", "description": "Start position in FEN; defaults to the standard opening." },
+                "moves": moves_prop(),
                 "movetime_ms": {
                     "type": "integer", "minimum": 1, "maximum": MAX_MOVETIME_MS,
                     "description": "Per-variation engine movetime budget in ms; capped server-side."
@@ -304,7 +310,10 @@ async fn danger_map(app: AppState, user: CurrentUser, args: Value) -> ToolOutcom
         }
     };
 
-    let start_fen = fen_arg(&args).unwrap_or_else(|| STARTPOS_FEN.to_string());
+    let start_fen = match position_or_start(&args) {
+        Ok(fen) => fen,
+        Err(msg) => return ToolOutcome::error(msg),
+    };
     let spine = match from_pgn_with_start(spine_pgn, &start_fen) {
         Ok(tree) => tree,
         Err(e) => return ToolOutcome::error(format!("Invalid arguments: bad `spine_pgn`: {e}")),
@@ -396,20 +405,15 @@ fn position_concepts_tool() -> Tool {
          structural analysis — no engine or database needed. Distinct from \
          `analyse_position`'s material/phase feature tags: this is the \
          pawn-skeleton concept layer the study generators feed the annotator.",
-        json!({
-            "type": "object",
-            "properties": {
-                "fen": { "type": "string", "description": "Position to classify, in FEN." }
-            },
-            "required": ["fen"]
-        }),
+        position_schema("Position to classify", json!({})),
         |_app, _user, args| async move { position_concepts(args) },
     )
 }
 
 fn position_concepts(args: Value) -> ToolOutcome {
-    let Some(fen) = fen_arg(&args) else {
-        return ToolOutcome::error("Invalid arguments: missing string field `fen`.");
+    let fen = match require_position(&args) {
+        Ok(fen) => fen,
+        Err(msg) => return ToolOutcome::error(msg),
     };
     match concepts_of_fen_with(&fen, MODE) {
         Ok(concepts) => json_outcome(&json!({ "fen": fen, "concepts": concepts })),
@@ -490,111 +494,5 @@ fn spine_error(error: SpineError) -> ToolOutcome {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn registry() -> ToolRegistry {
-        let mut registry = ToolRegistry::new();
-        register(&mut registry);
-        registry
-    }
-
-    #[test]
-    fn registers_the_preprocessing_tools() {
-        let list = registry().list();
-        let tools = list["tools"].as_array().expect("tools array");
-        for expected in ["opening_tree", "danger_map", "position_concepts"] {
-            assert!(
-                tools.iter().any(|t| t["name"] == expected),
-                "missing tool {expected}"
-            );
-        }
-    }
-
-    #[test]
-    fn danger_map_requires_a_spine_and_concepts_a_fen() {
-        let list = registry().list();
-        let tools = list["tools"].as_array().unwrap();
-        let danger = tools
-            .iter()
-            .find(|t| t["name"] == "danger_map")
-            .expect("danger_map tool");
-        assert_eq!(danger["inputSchema"]["required"][0], "spine_pgn");
-        assert_eq!(
-            danger["inputSchema"]["properties"]["database_id"]["type"],
-            "integer"
-        );
-        let concepts = tools
-            .iter()
-            .find(|t| t["name"] == "position_concepts")
-            .expect("position_concepts tool");
-        assert_eq!(concepts["inputSchema"]["required"][0], "fen");
-    }
-
-    #[test]
-    fn opening_tree_has_no_required_args() {
-        // It defaults the start position, so a no-arg call is valid.
-        let list = registry().list();
-        let tools = list["tools"].as_array().unwrap();
-        let tree = tools
-            .iter()
-            .find(|t| t["name"] == "opening_tree")
-            .expect("opening_tree tool");
-        assert!(tree["inputSchema"].get("required").is_none());
-    }
-
-    #[test]
-    fn opening_tree_advertises_plan_and_threat_args() {
-        let list = registry().list();
-        let tools = list["tools"].as_array().unwrap();
-        let props = tools
-            .iter()
-            .find(|t| t["name"] == "opening_tree")
-            .map(|t| &t["inputSchema"]["properties"])
-            .expect("opening_tree tool");
-        assert_eq!(props["plan_lines"]["type"], "integer");
-        assert_eq!(props["plan_lines"]["maximum"], MAX_PLAN_LINES);
-        assert_eq!(props["threats"]["type"], "boolean");
-    }
-
-    #[test]
-    fn opening_tree_advertises_filter_args() {
-        let list = registry().list();
-        let tools = list["tools"].as_array().unwrap();
-        let props = tools
-            .iter()
-            .find(|t| t["name"] == "opening_tree")
-            .map(|t| &t["inputSchema"]["properties"])
-            .expect("opening_tree tool");
-        assert_eq!(props["player"]["type"], "string");
-        assert_eq!(props["color"]["enum"], json!(["white", "black"]));
-        assert_eq!(props["date_from"]["type"], "string");
-        assert_eq!(props["date_to"]["type"], "string");
-    }
-
-    #[test]
-    fn missing_spine_pgn_is_rejected() {
-        let outcome = position_concepts(json!({}));
-        assert!(outcome.is_error);
-        assert!(outcome.text.contains("missing string field `fen`"));
-    }
-
-    #[test]
-    fn position_concepts_returns_a_concepts_block() {
-        // The IQP-ish middlegame structure: pure, no engine/DB, so this exercises
-        // the whole handler synchronously.
-        let outcome = position_concepts(json!({
-            "fen": "rnbqkbnr/pp3ppp/4p3/3p4/3P4/8/PPP2PPP/RNBQKBNR w KQkq - 0 1"
-        }));
-        assert!(!outcome.is_error, "got error: {}", outcome.text);
-        let value: Value = serde_json::from_str(&outcome.text).expect("json");
-        assert!(value.get("concepts").is_some());
-    }
-
-    #[test]
-    fn invalid_fen_is_reported_cleanly() {
-        let outcome = position_concepts(json!({ "fen": "not-a-fen" }));
-        assert!(outcome.is_error);
-        assert!(outcome.text.contains("invalid FEN"));
-    }
-}
+#[path = "preprocess_tests.rs"]
+mod tests;
