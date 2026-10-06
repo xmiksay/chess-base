@@ -193,6 +193,12 @@ const ROUTE_MANIFEST: &[RouteEntry] = &[
         path: "/api/search/headers",
         tool: "search_headers",
     },
+    // --- masters explorer (explorer/routes.rs, ADR-0053) ---
+    RouteEntry {
+        method: "GET",
+        path: "/api/explorer/masters",
+        tool: "masters_position_report",
+    },
     // --- threats (threats/routes.rs) ---
     RouteEntry {
         method: "GET",
@@ -251,6 +257,10 @@ const CARVE_OUTS: &[(&str, &str)] = &[
     (
         "PUT /api/studies/{id}/public",
         "share toggle is a human/UI action (#211, ADR-0045)",
+    ),
+    (
+        "POST /api/explorer/masters/import",
+        "pulling a remote game into the slim local DB is a deliberate UI action (ADR-0053)",
     ),
 ];
 

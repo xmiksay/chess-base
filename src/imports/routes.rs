@@ -91,7 +91,7 @@ fn service(state: &AppState) -> ImportService {
 /// Wire shape shared by both import endpoints:
 /// `{ imported, skipped, duplicates, game_ids[], errors[], synced_at }`.
 /// `synced_at` (RFC 3339) is set for a provider sync, `null` for a PGN upload.
-fn summary_body(summary: &ImportSummary) -> serde_json::Value {
+pub(crate) fn summary_body(summary: &ImportSummary) -> serde_json::Value {
     json!({
         "imported": summary.imported,
         "skipped": summary.skipped,

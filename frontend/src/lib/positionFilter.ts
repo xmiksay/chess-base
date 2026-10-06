@@ -39,3 +39,16 @@ export function toParams(filter: PositionFilter): Record<string, string> {
   }
   return params
 }
+
+/**
+ * Masters-explorer year window (ADR-0053) → `since`/`until` params. Blank or
+ * non-numeric fields are dropped, so a half-typed year never 400s the query.
+ */
+export function yearParams(since: string, until: string): Record<string, string> {
+  const params: Record<string, string> = {}
+  for (const [key, raw] of [['since', since], ['until', until]] as const) {
+    const value = String(raw ?? '').trim()
+    if (/^\d{4}$/.test(value)) params[key] = value
+  }
+  return params
+}

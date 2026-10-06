@@ -279,6 +279,7 @@ mod tests {
             engine_service: None,
             provider_store: None,
             agent: Default::default(),
+            masters: None,
         }
     }
 }

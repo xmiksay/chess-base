@@ -32,6 +32,8 @@ export interface Health {
   /** Capability flags (issue #119): whether an engine / LLM is configured. */
   engine?: boolean
   llm?: boolean
+  /** A Lichess token is configured, so the Masters explorer tab is available (ADR-0053). */
+  masters?: boolean
 }
 
 export interface User {
@@ -101,6 +103,39 @@ export interface MoveStat {
   white: number
   draws: number
   black: number
+}
+
+/** Which database the position explorer queries (ADR-0053). */
+export type ExplorerSource = 'local' | 'masters'
+
+/** A Lichess Masters continuation — a `MoveStat` plus Lichess extras. */
+export interface MastersMove extends MoveStat {
+  uci: string
+  average_rating: number | null
+}
+
+/** A notable Lichess Masters game through the position; `id` feeds the import. */
+export interface MastersGame {
+  id: string
+  uci: string | null
+  winner: 'white' | 'black' | null
+  white: string
+  white_rating: number | null
+  black: string
+  black_rating: number | null
+  year: number | null
+  month: string | null
+}
+
+/** `GET /api/explorer/masters` response. */
+export interface MastersReport {
+  total: number
+  white: number
+  draws: number
+  black: number
+  opening: { eco: string; name: string } | null
+  moves: MastersMove[]
+  top_games: MastersGame[]
 }
 
 /** Header-search form state (camelCase; mapped to snake_case params in lib).

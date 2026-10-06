@@ -11,6 +11,7 @@ pub mod collectors;
 pub mod databases;
 pub mod db;
 pub mod engine;
+pub mod explorer;
 pub mod features;
 pub mod folders;
 pub mod games;

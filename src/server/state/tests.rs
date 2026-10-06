@@ -26,6 +26,7 @@ fn bare_state(db: DatabaseConnection) -> AppState {
         engine_service: None,
         provider_store: None,
         agent: Default::default(),
+        masters: None,
     }
 }
 

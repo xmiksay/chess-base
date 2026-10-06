@@ -29,6 +29,7 @@ import type {
   HeaderPage,
   ImportResult,
   ImportSource,
+  MastersReport,
   MergeDangerResult,
   MoveStat,
   MoveTree,
@@ -373,6 +374,18 @@ export const api = {
   // PGN file, into a target database. Both return `{ imported }` — the number of
   // games ingested this run. A blank `token` is omitted (Lichess only). `full`
   // (issue #197) ignores the persisted cursor and re-syncs the whole history.
+  // Lichess Masters explorer (ADR-0053): a remote reference proxied by the
+  // backend. `params` carries the optional `since`/`until` years.
+  explorer: {
+    masters: (fen: string, params: Record<string, string> = {}) =>
+      getJson<MastersReport>(`/api/explorer/masters?${new URLSearchParams({ fen, ...params }).toString()}`),
+    importMasters: (lichessId: string, databaseId: number) =>
+      send<ImportResult>('POST', '/api/explorer/masters/import', {
+        lichess_id: lichessId,
+        database_id: databaseId,
+      }),
+  },
+
   import: {
     sync: (
       databaseId: number,

@@ -11,6 +11,7 @@ use crate::ai::agent::{AgentEngine, AgentProviderStore};
 use crate::ai::llm::entanglement::StackLlmProvider;
 use crate::ai::llm::LlmProvider;
 use crate::engine::{EngineRegistry, EngineService};
+use crate::explorer::MastersClient;
 use crate::server::config::Mode;
 use crate::server::identity::{AuthError, CurrentUser};
 use entanglement_provider::UserId;
@@ -32,6 +33,9 @@ pub struct AppState {
     /// so `serve` sets it right after construction; empty ⇒ the engine failed
     /// to start (or a test fixture) and the assistant is disabled.
     pub agent: Arc<std::sync::OnceLock<Arc<AgentEngine>>>,
+    /// Lichess Masters explorer client (ADR-0053); `None` ⇒ no `LICHESS_TOKEN`,
+    /// so the explorer routes 503 and the SPA hides the Masters tab.
+    pub masters: Option<Arc<MastersClient>>,
 }
 
 impl AppState {

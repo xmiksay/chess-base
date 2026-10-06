@@ -30,4 +30,6 @@ pub struct AppConfig {
     pub engines_dir: PathBuf,
     /// Auto-download Stockfish + Maia on first run when no engine is configured.
     pub download_engines: bool,
+    /// Lichess API token enabling the Masters explorer (ADR-0053); `None` ⇒ off.
+    pub lichess_token: Option<String>,
 }

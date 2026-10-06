@@ -85,12 +85,25 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
             .await
             .context("building the agent provider store")?,
     );
+    // Lichess's explorer requires auth, so without a token the feature is off.
+    let masters = match cfg
+        .lichess_token
+        .as_deref()
+        .filter(|t| !t.trim().is_empty())
+    {
+        Some(token) => Some(Arc::new(
+            crate::explorer::MastersClient::new(crate::explorer::DEFAULT_BASE, token)
+                .context("building the Lichess masters client")?,
+        )),
+        None => None,
+    };
     let state = AppState {
         db: db.clone(),
         mode: cfg.mode,
         engine_service,
         provider_store,
         agent: Arc::new(std::sync::OnceLock::new()),
+        masters,
     };
     // The embedded agent engine (#198, step 4). A startup failure disables the
     // assistant (`/api/health` reports `llm: false`) but never takes the server

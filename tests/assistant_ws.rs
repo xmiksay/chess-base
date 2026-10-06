@@ -77,6 +77,7 @@ async fn spawn_app(mode: Mode) -> (SocketAddr, AppState) {
         engine_service: None,
         provider_store: Some(store),
         agent: Default::default(),
+        masters: None,
     };
     let engine = AgentEngine::start(state.clone()).await.expect("engine");
     state.agent.set(engine).ok();

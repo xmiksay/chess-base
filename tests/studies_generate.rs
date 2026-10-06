@@ -28,6 +28,7 @@ async fn plain_app() -> Router {
         engine_service: None,
         provider_store: None,
         agent: Default::default(),
+        masters: None,
     })
 }
 
@@ -59,6 +60,7 @@ async fn app_with_agent() -> Router {
         engine_service: None,
         provider_store: Some(store),
         agent: Default::default(),
+        masters: None,
     };
     let engine = AgentEngine::start(state.clone()).await.unwrap();
     state.agent.set(engine).ok();

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { FILTER_FIELDS, emptyFilter, isEmptyFilter, toParams } from './positionFilter'
+import { FILTER_FIELDS, emptyFilter, isEmptyFilter, toParams, yearParams } from './positionFilter'
 
 describe('emptyFilter', () => {
   it('has every field present and blank', () => {
@@ -57,5 +57,14 @@ describe('toParams', () => {
       date_from: '2020.01.01',
       date_to: '2021.01.01',
     })
+  })
+})
+
+describe('yearParams', () => {
+  it('keeps four-digit years only', () => {
+    expect(yearParams('1990', ' 2000 ')).toEqual({ since: '1990', until: '2000' })
+    expect(yearParams('', '')).toEqual({})
+    expect(yearParams('19', 'abcd')).toEqual({})
+    expect(yearParams('', '1985')).toEqual({ until: '1985' })
   })
 })

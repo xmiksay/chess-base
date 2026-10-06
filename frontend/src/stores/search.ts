@@ -7,9 +7,18 @@ import { defineStore } from 'pinia'
 import { computed, reactive, ref } from 'vue'
 import { api } from '../api'
 import { emptyQuery, isEmptyQuery, toParams } from '../lib/headerQuery'
-import { emptyFilter, toParams as toFilterParams } from '../lib/positionFilter'
+import { emptyFilter, toParams as toFilterParams, yearParams } from '../lib/positionFilter'
 import { lineFen, moveToSan, replayLine } from '../lib/openingTree'
-import type { BoardMove, GameRow, HeaderQuery, MoveStat, PositionFilter } from '../types'
+import type {
+  BoardMove,
+  ExplorerSource,
+  GameRow,
+  HeaderQuery,
+  MastersGame,
+  MastersReport,
+  MoveStat,
+  PositionFilter,
+} from '../types'
 
 export const useSearchStore = defineStore('search', () => {
   // --- Header search --------------------------------------------------------
@@ -91,6 +100,12 @@ export const useSearchStore = defineStore('search', () => {
   // Player/color/date filter narrowing which games' continuations count
   // (issue #172); blank ⇒ unfiltered, mirroring the header-search convention.
   const filter = reactive<PositionFilter>(emptyFilter())
+  // Which database the explorer reads (ADR-0053). Masters is a remote Lichess
+  // reference with its own year-only filter; the board line is shared.
+  const source = ref<ExplorerSource>('local')
+  const mastersYears = reactive({ since: '', until: '' })
+  const mastersGames = ref<MastersGame[]>([])
+  const opening = ref<MastersReport['opening']>(null)
 
   // Board state derived purely from the line (no separate chess instance to
   // keep in sync). `position` carries fen/dests/lastMove/turnColor.
@@ -101,21 +116,42 @@ export const useSearchStore = defineStore('search', () => {
     explorerLoading.value = true
     explorerError.value = null
     const target = lineFen(line.value)
-    const params = toFilterParams(filter)
+    const from = source.value
+    // Guard against an out-of-order response after a rapid click or tab switch.
+    const current = () => target === lineFen(line.value) && from === source.value
     try {
-      const [t, g] = await Promise.all([
-        api.search.tree(target, params),
-        api.search.games(target, 50, params),
-      ])
-      // Guard against an out-of-order response after a rapid click.
-      if (target === lineFen(line.value)) {
-        tree.value = t
-        games.value = g
+      if (from === 'masters') {
+        const report = await api.explorer.masters(
+          target,
+          yearParams(mastersYears.since, mastersYears.until),
+        )
+        if (current()) {
+          tree.value = report.moves
+          games.value = []
+          mastersGames.value = report.top_games
+          opening.value = report.opening
+        }
+      } else {
+        const params = toFilterParams(filter)
+        const [t, g] = await Promise.all([
+          api.search.tree(target, params),
+          api.search.games(target, 50, params),
+        ])
+        if (current()) {
+          tree.value = t
+          games.value = g
+          mastersGames.value = []
+          opening.value = null
+        }
       }
     } catch (e) {
-      explorerError.value = String((e as Error)?.message ?? e)
-      tree.value = []
-      games.value = []
+      if (current()) {
+        explorerError.value = String((e as Error)?.message ?? e)
+        tree.value = []
+        games.value = []
+        mastersGames.value = []
+        opening.value = null
+      }
     } finally {
       explorerLoading.value = false
     }
@@ -124,6 +160,21 @@ export const useSearchStore = defineStore('search', () => {
   /** Clear the explorer filter and reload the current position. */
   function resetFilter() {
     Object.assign(filter, emptyFilter())
+    return loadPosition()
+  }
+
+  /** Switch the explorer's database. The captured move stat belonged to the
+   *  other source, so it's dropped rather than cited under the wrong label. */
+  function setSource(next: ExplorerSource) {
+    if (source.value === next) return
+    source.value = next
+    lastMoveStat.value = null
+    return loadPosition()
+  }
+
+  /** Clear the Masters year window and reload. */
+  function resetMastersYears() {
+    Object.assign(mastersYears, { since: '', until: '' })
     return loadPosition()
   }
 
@@ -180,6 +231,12 @@ export const useSearchStore = defineStore('search', () => {
     explorerError,
     filter,
     resetFilter,
+    source,
+    setSource,
+    mastersYears,
+    resetMastersYears,
+    mastersGames,
+    opening,
     position,
     fen,
     loadPosition,

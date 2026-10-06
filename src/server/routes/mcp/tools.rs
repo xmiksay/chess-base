@@ -38,6 +38,7 @@ pub fn default_registry() -> ToolRegistry {
     super::folder_tools::register(&mut registry);
     super::search_tools::register(&mut registry);
     super::import_tools::register(&mut registry);
+    super::explorer_tools::register(&mut registry);
     registry
 }
 

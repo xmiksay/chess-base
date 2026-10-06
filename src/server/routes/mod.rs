@@ -42,6 +42,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::imports::routes::router(state.clone()))
         .merge(engines::router(state.clone()))
         .merge(crate::search::routes::router(state.clone()))
+        .merge(crate::explorer::routes::router(state.clone()))
         .merge(crate::settings::routes::router(state.clone()))
         .merge(crate::threats::routes::router(state.clone()))
         .merge(crate::studies::routes::router(state.clone()))
@@ -82,6 +83,8 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
         // The agent engine is up *and* at least one provider surface exists
         // (a user/global `llm_providers` row or the env-key house fallback).
         "llm": state.agent().is_some_and(|a| a.providers.has_any_context()),
+        // A Lichess token is configured, so the Masters explorer tab can show.
+        "masters": state.masters.is_some(),
     }))
 }
 
