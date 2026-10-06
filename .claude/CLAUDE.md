@@ -48,7 +48,12 @@ src/
                    dedups per-database by source_ref (permalink, else content
                    hash, ADR-0038); imports report game_ids + duplicates   ← shared by collectors
   collectors/      GameSource trait + Lichess / Chess.com adapters
-  engine.rs        UCI engine config + parsing (Stockfish, Lc0/Maia); analyse_multi (top-N MultiPV)
+  engine.rs        UCI engine config + parsing (Stockfish, Lc0/Maia); analyse_multi (top-N MultiPV);
+                   budget.rs (ADR-0054): task-local 5-min job budget — long jobs run in
+                   budget::job(…), EngineService calls past it return empty results and
+                   flag `truncated` (partial results, never an error); live WS searches
+                   are capped at 30s (engine_ws::live_limits + stop watchdog, no
+                   `go infinite`)
   review/          Mode A (#119): engine-only full-game review — classify (pure
                    buckets + accuracy), explain (pure MoveFact "why" + the seam to
                    Mode B), service.review_game, POST /api/games/{id}/analyse   ← unit-tested

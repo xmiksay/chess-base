@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
+use crate::engine::budget;
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 
@@ -33,6 +34,26 @@ impl ToolOutcome {
             text: text.into(),
             is_error: true,
         }
+    }
+
+    /// Run a long engine tool under the job budget (ADR-0054). When the budget
+    /// ran out, a JSON-object result gains `"truncated": true`; anything else
+    /// gets a trailing note, so the model always learns the data is partial.
+    pub async fn budgeted(job: impl Future<Output = ToolOutcome>) -> ToolOutcome {
+        let (mut outcome, truncated) = budget::job(job).await;
+        if truncated && !outcome.is_error {
+            outcome.text = match serde_json::from_str::<Value>(&outcome.text) {
+                Ok(Value::Object(mut map)) => {
+                    map.insert("truncated".into(), Value::Bool(true));
+                    serde_json::to_string_pretty(&map).unwrap_or(outcome.text)
+                }
+                _ => format!(
+                    "{}\n\n(truncated: the 5-minute engine budget ran out; results are partial)",
+                    outcome.text
+                ),
+            };
+        }
+        outcome
     }
 }
 
@@ -129,5 +150,39 @@ impl ToolRegistry {
             })
             .collect();
         json!({ "tools": tools })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::engine::JobBudget;
+
+    /// A tool body that tries one engine call (skipped once the budget is spent).
+    async fn tool(text: &'static str) -> ToolOutcome {
+        let _ = budget::bounded(0, async { Ok(0) }).await;
+        ToolOutcome::ok(text)
+    }
+
+    #[tokio::test]
+    async fn budgeted_flags_truncated_json_and_text() {
+        let (json_out, _) = JobBudget::new(Duration::ZERO)
+            .run(ToolOutcome::budgeted(tool(r#"{"nodes":[]}"#)))
+            .await;
+        let v: Value = serde_json::from_str(&json_out.text).unwrap();
+        assert_eq!(v["truncated"], true);
+
+        let (text_out, _) = JobBudget::new(Duration::ZERO)
+            .run(ToolOutcome::budgeted(tool("plain")))
+            .await;
+        assert!(text_out.text.starts_with("plain") && text_out.text.contains("truncated"));
+    }
+
+    #[tokio::test]
+    async fn budgeted_leaves_a_complete_result_alone() {
+        let out = ToolOutcome::budgeted(tool(r#"{"nodes":[]}"#)).await;
+        assert_eq!(out.text, r#"{"nodes":[]}"#);
     }
 }

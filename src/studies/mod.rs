@@ -17,6 +17,7 @@ use sea_orm::{
 pub mod add_line;
 pub mod add_line_route;
 pub mod analyse;
+pub mod analyse_route;
 pub mod clear_shapes;
 pub mod clear_shapes_route;
 pub mod danger_route;
@@ -32,7 +33,7 @@ pub mod routes;
 use std::collections::HashMap;
 
 use crate::db::entities::{folders, studies};
-use crate::engine::{Analysis, EngineService, Limits};
+use crate::engine::{budget, Analysis, EngineService, Limits};
 use crate::features::features_of_fen;
 use crate::games::{export, GameError, GameService};
 use crate::ingest::parse_pgn;
@@ -60,6 +61,8 @@ const ANALYSE_MULTIPV: u16 = 2;
 pub struct AnalyseStats {
     pub nodes_analysed: usize,
     pub summary: ReviewSummary,
+    /// The job budget ran out (ADR-0054); later nodes kept their old evals/NAGs.
+    pub truncated: bool,
 }
 
 /// A move to append to a study node, given either as SAN or as UCI long
@@ -590,6 +593,10 @@ impl StudyService {
                     .first()
                     .and_then(|a| a.score)
             };
+            // Out of job budget: stop rather than write the empty fallback in.
+            if budget::truncated() {
+                break;
+            }
             let (eval, classification, cost) = analyse::classify_search(s, &before, after_top);
             tree.set_eval(s.node_id, eval);
             analyse::set_quality_nag(&mut tree, s.node_id, classification.nag());
@@ -601,6 +608,7 @@ impl StudyService {
         let stats = AnalyseStats {
             nodes_analysed: costs.len(),
             summary: summarize(&costs),
+            truncated: budget::truncated(),
         };
         Ok((model, stats))
     }
@@ -729,7 +737,10 @@ async fn multipv_cached(
         .analyse_multi(fen, limits, ANALYSE_MULTIPV)
         .await
         .map_err(StudyError::Engine)?;
-    cache.insert(fen.to_string(), lines.clone());
+    // An empty result is a budget skip (ADR-0054), not an answer worth reusing.
+    if !lines.is_empty() {
+        cache.insert(fen.to_string(), lines.clone());
+    }
     Ok(lines)
 }
 

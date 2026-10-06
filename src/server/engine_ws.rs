@@ -13,6 +13,11 @@
 //!   and `{"type":"error",…}`. The `planline` frame is additive: the bare `info`
 //!   event is still sent unchanged, so existing eval/PV consumers are untouched.
 //!
+//! Every search is capped at [`MAX_MOVETIME_MS`] (30s, ADR-0054): an unbounded
+//! request gets that movetime instead of `go infinite`, and a watchdog sends
+//! `stop` if the engine overruns it (and ends the session if it still won't
+//! stop). A new `analyse` restarts the clock.
+//!
 //! The handler is the one place that interleaves the engine read loop with
 //! client control messages; everything chess-specific lives in the pure engine
 //! submodules it calls.
@@ -28,9 +33,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
-use tokio::time::timeout;
+use tokio::time::{sleep_until, timeout, Instant};
 
-use crate::engine::{AnalysisEvent, AnalysisInfo, Engine, EngineConfig, Limits, Score};
+use crate::engine::{
+    AnalysisEvent, AnalysisInfo, Engine, EngineConfig, Limits, Score, MAX_MOVETIME_MS,
+};
 use crate::plans::{plan_from_pv, Trajectory, DEFAULT_MAX_MOVES};
 use crate::position::CastlingMode;
 use crate::server::{identity::CurrentUser, state::AppState};
@@ -86,6 +93,35 @@ const DEFAULT_MULTIPV: &str = "3";
 
 /// How long to wait for a search to wind down after `stop` before reconfiguring.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Slack past the movetime cap before the watchdog forces a `stop`.
+const LIVE_GRACE: Duration = Duration::from_secs(5);
+
+/// Watchdog over the in-flight search: when it fires, `stop` is sent once; if
+/// the engine still hasn't finished by the second deadline, the session ends.
+#[derive(Debug, Clone, Copy)]
+struct Watchdog {
+    deadline: Instant,
+    stop_sent: bool,
+}
+
+impl Watchdog {
+    fn start() -> Self {
+        Self {
+            deadline: Instant::now() + Duration::from_millis(MAX_MOVETIME_MS) + LIVE_GRACE,
+            stop_sent: false,
+        }
+    }
+}
+
+/// Limits for a live search: clamped like every engine call, plus a movetime
+/// cap whenever the client set none — never `go infinite` (ADR-0054). A depth
+/// request keeps its depth; whichever bound hits first ends the search.
+fn live_limits(limits: &Limits) -> Limits {
+    let mut limits = limits.clone().clamped();
+    limits.movetime_ms.get_or_insert(MAX_MOVETIME_MS);
+    limits
+}
 
 /// Optional `?engine=<name>` query selecting a specific registered engine; absent
 /// ⇒ the registry's resolved default drives the search.
@@ -144,12 +180,15 @@ async fn session(mut socket: WebSocket, cfg: EngineConfig) {
     let mut analysing = false;
     // FEN (and thus traced side) of the in-flight search; drives plan trajectories.
     let mut current_fen: Option<String> = None;
+    let mut watchdog: Option<Watchdog> = None;
     loop {
+        // Only armed while a search runs; the far-future fallback is never awaited.
+        let deadline = watchdog.map_or_else(|| Instant::now() + DRAIN_TIMEOUT, |w| w.deadline);
         tokio::select! {
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
-                        if !handle_client_msg(&mut socket, &mut engine, &mut analysing, &mut current_fen, text.as_str()).await {
+                        if !handle_client_msg(&mut socket, &mut engine, &mut analysing, &mut current_fen, &mut watchdog, text.as_str()).await {
                             break;
                         }
                     }
@@ -176,6 +215,7 @@ async fn session(mut socket: WebSocket, cfg: EngineConfig) {
                         }
                         if terminal {
                             analysing = false;
+                            watchdog = None;
                         }
                     }
                     Ok(None) => {
@@ -184,6 +224,21 @@ async fn session(mut socket: WebSocket, cfg: EngineConfig) {
                     }
                     Err(e) => {
                         send_error(&mut socket, format!("engine error: {e}")).await;
+                        break;
+                    }
+                }
+            }
+            _ = sleep_until(deadline), if analysing && watchdog.is_some() => {
+                match watchdog {
+                    Some(Watchdog { stop_sent: false, .. }) => {
+                        let _ = engine.stop().await;
+                        watchdog = Some(Watchdog {
+                            deadline: Instant::now() + DRAIN_TIMEOUT,
+                            stop_sent: true,
+                        });
+                    }
+                    _ => {
+                        send_error(&mut socket, "engine did not stop at the time limit").await;
                         break;
                     }
                 }
@@ -200,6 +255,7 @@ async fn handle_client_msg(
     engine: &mut Engine,
     analysing: &mut bool,
     current_fen: &mut Option<String>,
+    watchdog: &mut Option<Watchdog>,
     text: &str,
 ) -> bool {
     match serde_json::from_str::<ClientMsg>(text) {
@@ -213,11 +269,13 @@ async fn handle_client_msg(
                 Ok(()) => {
                     *analysing = true;
                     *current_fen = Some(fen);
+                    *watchdog = Some(Watchdog::start());
                     true
                 }
                 Err(e) => {
                     // A bad FEN / option is recoverable: report it, keep the socket.
                     *analysing = false;
+                    *watchdog = None;
                     send_error(socket, format!("could not start analysis: {e}")).await;
                     true
                 }
@@ -258,9 +316,7 @@ async fn start_analysis(
         engine.wait_ready().await?;
     }
     engine.set_position(fen).await?;
-    // Clamp client-supplied limits so a huge depth/movetime can't tie up this
-    // socket's engine indefinitely (issue #93).
-    engine.go(&limits.clone().clamped()).await
+    engine.go(&live_limits(limits)).await
 }
 
 /// Fill in server-side option defaults the client may omit. Currently only
@@ -334,6 +390,44 @@ mod tests {
             pv: pv.iter().map(|s| s.to_string()).collect(),
             ..AnalysisInfo::default()
         }
+    }
+
+    #[test]
+    fn live_limits_never_search_infinitely() {
+        let capped = live_limits(&Limits::default());
+        assert_eq!(capped.movetime_ms, Some(MAX_MOVETIME_MS));
+        assert_eq!(
+            crate::engine::command::go_command(&capped),
+            format!("go movetime {MAX_MOVETIME_MS}")
+        );
+    }
+
+    #[test]
+    fn live_limits_keep_depth_and_shorter_movetime() {
+        let depth = live_limits(&Limits::depth(20));
+        assert_eq!(
+            (depth.depth, depth.movetime_ms),
+            (Some(20), Some(MAX_MOVETIME_MS))
+        );
+        let quick = live_limits(&Limits {
+            movetime_ms: Some(500),
+            ..Limits::default()
+        });
+        assert_eq!(quick.movetime_ms, Some(500));
+        let huge = live_limits(&Limits {
+            movetime_ms: Some(600_000),
+            ..Limits::default()
+        });
+        assert_eq!(huge.movetime_ms, Some(MAX_MOVETIME_MS));
+    }
+
+    #[test]
+    fn watchdog_fires_after_the_cap_plus_grace() {
+        let w = Watchdog::start();
+        let budget = Duration::from_millis(MAX_MOVETIME_MS) + LIVE_GRACE;
+        assert!(!w.stop_sent);
+        assert!(w.deadline > Instant::now() + budget - Duration::from_secs(1));
+        assert!(w.deadline <= Instant::now() + budget);
     }
 
     #[test]

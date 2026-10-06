@@ -27,7 +27,7 @@
 
 use crate::ai::llm::LlmProvider;
 use crate::db::entities::studies;
-use crate::engine::EngineService;
+use crate::engine::{budget, EngineService};
 use crate::pgn_tree::MoveTree;
 use crate::position::{zobrist_of_fen, CastlingMode};
 use crate::search::position::PositionFilter;
@@ -97,6 +97,8 @@ pub struct DangerStudyOutcome {
     /// The danger role tags carried into the study (already engine-adjudicated in
     /// phase 2), most dangerous lines first by walk order.
     pub roles: Vec<TaggedRole>,
+    /// The job budget ran out (ADR-0054): part of the tree was built without engine data.
+    pub truncated: bool,
 }
 
 /// Why generating a danger study failed. Transport-agnostic; the HTTP / MCP layer
@@ -204,6 +206,7 @@ where
         rejected: outcome.rejected,
         roles,
         study,
+        truncated: false,
     })
 }
 
@@ -226,7 +229,12 @@ pub async fn generate_danger_study_live(
     // Danger-map generation is out of scope for the #172 filter (per the ADR):
     // the walk always sees every scoped game.
     let continuations = ReportContinuations::new(reports, user, PositionFilter::default());
-    generate_danger_study(&analyzer, &continuations, provider, studies, user, params).await
+    let job = generate_danger_study(&analyzer, &continuations, provider, studies, user, params);
+    let (result, truncated) = budget::job(job).await;
+    result.map(|outcome| DangerStudyOutcome {
+        truncated,
+        ..outcome
+    })
 }
 
 /// The danger role tags, in walk (breadth-first) order — shallow, on-book lines

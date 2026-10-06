@@ -18,7 +18,7 @@
 
 use crate::ai::llm::LlmProvider;
 use crate::db::entities::studies;
-use crate::engine::{EngineService, Limits};
+use crate::engine::{budget, EngineService, Limits};
 use crate::position::CastlingMode;
 use crate::search::position::PositionFilter;
 use crate::search::report::PositionReportService;
@@ -76,6 +76,8 @@ pub struct GenerateOutcome {
     pub node_count: usize,
     /// Claims / glyphs the ground-truth verification rejected (never committed).
     pub rejected: Vec<Rejection>,
+    /// The job budget ran out (ADR-0054): part of the tree was built without engine data.
+    pub truncated: bool,
 }
 
 /// Why study generation failed. Transport-agnostic; the HTTP / MCP layer maps
@@ -185,6 +187,7 @@ where
         node_count: outcome.tree.nodes.len(),
         rejected: outcome.rejected,
         study,
+        truncated: false,
     })
 }
 
@@ -217,7 +220,7 @@ pub async fn generate_study_live(
         .as_ref()
         .map(|a| a as &(dyn MultiAnalyzer + Sync));
 
-    generate_study(
+    let job = generate_study(
         &evaluator,
         &continuations,
         provider,
@@ -225,8 +228,12 @@ pub async fn generate_study_live(
         user,
         params,
         plans,
-    )
-    .await
+    );
+    let (result, truncated) = budget::job(job).await;
+    result.map(|outcome| GenerateOutcome {
+        truncated,
+        ..outcome
+    })
 }
 
 #[cfg(test)]

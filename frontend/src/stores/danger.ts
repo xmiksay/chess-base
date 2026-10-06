@@ -15,6 +15,7 @@ export const useDangerStore = defineStore('danger', () => {
   const roles = ref<DangerRoleRow[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
+  const truncated = ref(false)
 
   /** Walk `body.spine_pgn` for danger; populate the tree + roles, or clear on failure. */
   async function load(body: DangerWalkBody) {
@@ -24,9 +25,11 @@ export const useDangerStore = defineStore('danger', () => {
       const result = await api.studies.dangerMap(body)
       tree.value = result.tree
       roles.value = dangerRoles(result.tree)
+      truncated.value = result.truncated === true
     } catch (e) {
       tree.value = null
       roles.value = []
+      truncated.value = false
       error.value = String((e as Error)?.message ?? e)
     } finally {
       loading.value = false
@@ -37,7 +40,8 @@ export const useDangerStore = defineStore('danger', () => {
     tree.value = null
     roles.value = []
     error.value = null
+    truncated.value = false
   }
 
-  return { tree, roles, loading, error, load, clear }
+  return { tree, roles, loading, error, truncated, load, clear }
 })

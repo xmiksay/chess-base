@@ -12,6 +12,7 @@
 //! a node's own plan arrows (those trace *from* the node's position).
 
 use crate::db::entities::studies;
+use crate::engine::budget;
 use crate::pgn_tree::MoveTree;
 use crate::server::identity::CurrentUser;
 use crate::study_gen::plan_shapes::{merge_shapes, node_shapes, ShapeConfig};
@@ -58,6 +59,11 @@ impl StudyService {
             } else {
                 Vec::new()
             };
+            // Out of job budget (ADR-0054): leave the remaining nodes' shapes as
+            // they were instead of stripping their generated arrows.
+            if budget::truncated() {
+                break;
+            }
             let generated = node_shapes(&fen, &pvs, cfg.plan_lines, cfg.threats, MODE);
             let merged = merge_shapes(&tree.nodes[node_id].shapes, generated);
             tree.set_shapes(node_id, merged);

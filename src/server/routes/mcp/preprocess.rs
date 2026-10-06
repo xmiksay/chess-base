@@ -131,7 +131,7 @@ fn opening_tree_tool() -> Tool {
                 "save_as": save_as_schema()
             }
         }),
-        |app, user, args| async move { opening_tree(app, user, args).await },
+        |app, user, args| ToolOutcome::budgeted(opening_tree(app, user, args)),
     )
 }
 
@@ -287,7 +287,7 @@ fn danger_map_tool() -> Tool {
             },
             "required": ["spine_pgn"]
         }),
-        |app, user, args| async move { danger_map(app, user, args).await },
+        |app, user, args| ToolOutcome::budgeted(danger_map(app, user, args)),
     )
 }
 

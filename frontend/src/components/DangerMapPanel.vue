@@ -5,6 +5,7 @@
 // output — Weapon / Caution / Off-book — as board arrows (driven by the parent
 // from the danger store) plus this side panel of tagged moves with their figures.
 // Needs only an engine, so it works on a local / no-key install.
+import { TRUNCATED_NOTE } from '../lib/truncated'
 import { ref, watch } from 'vue'
 import { api } from '../api'
 import { useDangerStore } from '../stores/danger'
@@ -238,6 +239,13 @@ async function onRowClick(row: DangerRoleRow) {
       class="mt-2 text-xs text-bad"
     >
       {{ loadError || danger.error }}
+    </p>
+    <p
+      v-if="danger.truncated"
+      data-test="danger-truncated"
+      class="mt-2 text-xs text-warn"
+    >
+      {{ TRUNCATED_NOTE }}
     </p>
 
     <!-- Result digest: legend + the tagged moves with their figures. -->

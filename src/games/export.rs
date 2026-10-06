@@ -162,6 +162,7 @@ mod tests {
             start_fen: crate::position::STARTPOS_FEN.to_string(),
             moves,
             summary: empty_summary(),
+            truncated: false,
         };
         let tree = annotated_tree(&sans(&["e4", "f6"]), &review);
 
@@ -193,6 +194,7 @@ mod tests {
             start_fen: crate::position::STARTPOS_FEN.to_string(),
             moves,
             summary: empty_summary(),
+            truncated: false,
         };
         let tree = annotated_tree(&sans(&["e4"]), &review); // san irrelevant here
         assert_eq!(tree.nodes[1].eval, Some(Eval::Mate(1)));

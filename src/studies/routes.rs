@@ -26,23 +26,16 @@ use crate::server::download::pgn_attachment;
 use crate::server::error::error_response;
 use crate::server::identity::{CurrentUser, PublicUser};
 use crate::server::state::AppState;
-use crate::studies::{AnalyseStats, StudyError, StudyService};
-use crate::study_gen::spine::MultiAnalyzer;
+use crate::studies::{StudyError, StudyService};
 use crate::study_gen::tree::TreeConfig;
 use crate::study_gen::{
-    generate_study_live, EnginePlanAnalyzer, GenerateError, GenerateOutcome, GenerateParams,
-    ShapeConfig, MAX_PLAN_LINES,
+    generate_study_live, GenerateError, GenerateOutcome, GenerateParams, MAX_PLAN_LINES,
 };
 
 /// Per-position engine search depth used by `POST /api/studies/generate` when the
 /// request doesn't override it. Moderate so a generated tree's ground-truth evals
 /// land quickly; capped server-side via [`Limits::clamped`].
 const DEFAULT_GENERATE_DEPTH: u32 = 18;
-
-/// Per-position engine search depth used by `POST /api/studies/{id}/analyse`
-/// (issue #162) when the request doesn't override it. Capped server-side via
-/// [`Limits::clamped`].
-const DEFAULT_ANALYSE_DEPTH: u32 = 18;
 
 /// Study routes, mounted under the main API router.
 pub fn router(state: AppState) -> Router {
@@ -58,7 +51,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/studies/{id}/folder", put(set_folder))
         .route("/api/studies/{id}/export", get(export))
         .route("/api/studies/{id}/export/lichess", get(export_lichess))
-        .route("/api/studies/{id}/analyse", post(analyse))
         .route("/api/studies/{id}/moves", post(add_move))
         .route(
             "/api/studies/{id}/nodes/{node_id}",
@@ -213,6 +205,8 @@ struct GenerateView {
     node_count: usize,
     /// How many model claims/glyphs ground truth rejected (never committed).
     rejected: usize,
+    /// The 5-minute engine budget ran out (ADR-0054); the result is partial.
+    truncated: bool,
 }
 
 impl From<&GenerateOutcome> for GenerateView {
@@ -224,6 +218,7 @@ impl From<&GenerateOutcome> for GenerateView {
             global: outcome.study.owner_id.is_none(),
             node_count: outcome.node_count,
             rejected: outcome.rejected.len(),
+            truncated: outcome.truncated,
         }
     }
 }
@@ -438,94 +433,6 @@ async fn export_lichess(
 ) -> Result<Response, StudyError> {
     let pgn = service(&state).export_lichess(&user, id).await?;
     Ok(pgn_attachment(&format!("study-{id}-lichess.pgn"), pgn))
-}
-
-/// Body for `POST /api/studies/{id}/analyse` — the non-destructive "Analyse
-/// study" pass (#162, full classification #189). Optional `depth` overrides the
-/// per-position engine search depth; everything else is taken from the stored
-/// tree. `plan_lines`/`threats` additionally regenerate plan/threat arrows in
-/// the same call (issue #191, ADR-0039 addendum): sending either field — even
-/// `{plan_lines: 0, threats: false}` — opts in and strips any node's stale
-/// generated arrows it doesn't replace; omitting both leaves existing shapes
-/// untouched, matching the pre-#191 behavior.
-#[derive(Deserialize, Default)]
-struct AnalyseBody {
-    /// Per-position engine search depth (plies); capped server-side.
-    #[serde(default)]
-    depth: Option<u32>,
-    /// Pin engine "plan" arrows (top-N PV trajectories) on every node; capped
-    /// at [`MAX_PLAN_LINES`]. See [`crate::study_gen::plan_shapes`].
-    #[serde(default)]
-    plan_lines: Option<u8>,
-    /// Pin the static "threats" (hanging-piece) arrows on every node.
-    #[serde(default)]
-    threats: Option<bool>,
-}
-
-/// The response of `POST /api/studies/{id}/analyse`: the refreshed study plus
-/// the classification roll-up (issue #189), so the editor can render both from
-/// one response.
-#[derive(Serialize)]
-struct AnalyseView {
-    #[serde(flatten)]
-    study: StudyView,
-    stats: AnalyseStats,
-}
-
-/// Fill `[%eval]` on every non-terminal node of a study and classify each move
-/// (`review::classify`) — a `!`/`?!`/`?`/`??` NAG replaces any prior one; user
-/// comments, shapes and positional NAGs are left alone (`POST
-/// /api/studies/{id}/analyse`, #162, #189). Mirrors `generate`'s
-/// engine-from-state 503 guard.
-async fn analyse(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Path(id): Path<i32>,
-    body: Option<Json<AnalyseBody>>,
-) -> Result<Response, Response> {
-    // A missing engine is an operator-configuration gap, not a leaked internal —
-    // surface the guidance verbatim (like `generate`), not a 5xx.
-    let engine = state.engine_service.as_ref().ok_or_else(|| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "No engine configured: start chess-base with --engine / CHESS_BASE_ENGINE.",
-        )
-            .into_response()
-    })?;
-
-    let body = body.map(|Json(b)| b).unwrap_or_default();
-    let depth = body.depth.unwrap_or(DEFAULT_ANALYSE_DEPTH);
-    let svc = service(&state);
-    let (model, stats) = svc
-        .analyse_study(engine, &user, id, depth)
-        .await
-        .map_err(IntoResponse::into_response)?;
-
-    // Optionally regenerate plan/threat arrows in the same call (issue #191):
-    // opt in by sending either field, even `{plan_lines: 0, threats: false}` to
-    // strip the study's generated arrows without an engine detour.
-    let model = if body.plan_lines.is_some() || body.threats.is_some() {
-        let cfg = ShapeConfig {
-            plan_lines: body.plan_lines.unwrap_or(0).min(MAX_PLAN_LINES),
-            threats: body.threats.unwrap_or(false),
-        };
-        let analyzer = (cfg.plan_lines > 0).then(|| {
-            EnginePlanAnalyzer::new(
-                engine,
-                Limits::depth(depth).clamped(),
-                cfg.plan_lines as u16,
-            )
-        });
-        let plans = analyzer.as_ref().map(|a| a as &(dyn MultiAnalyzer + Sync));
-        svc.regenerate_shapes(plans, &user, id, &cfg)
-            .await
-            .map_err(IntoResponse::into_response)?
-    } else {
-        model
-    };
-
-    let study = StudyView::try_from(model).map_err(IntoResponse::into_response)?;
-    Ok((StatusCode::OK, Json(AnalyseView { study, stats })).into_response())
 }
 
 async fn rename(

@@ -11,12 +11,15 @@
 //!   performs the UCI handshake, configures options, and streams analysis.
 //! - [`service`] — the [`service::EngineService`] pooled facade: one engine pool
 //!   behind a direct `analyse` API (batch) and the MCP `engine_analyse` tool.
+//! - [`budget`] — the task-scoped whole-job deadline every pooled call honours
+//!   (ADR-0054).
 //!
 //! `command` and `analysis` are I/O-free and unit-tested; `manager` and
 //! `service` are thin async adapters, integration-tested behind an engine-path
 //! env var.
 
 pub mod analysis;
+pub mod budget;
 pub mod bundled;
 pub mod command;
 pub mod download;
@@ -29,6 +32,7 @@ use std::path::PathBuf;
 use vampirc_uci::{parse_one, UciMessage};
 
 pub use analysis::{AnalysisEvent, AnalysisInfo, Score};
+pub use budget::{JobBudget, JOB_BUDGET};
 pub use bundled::BUNDLED_ENGINE_NAME;
 pub use command::{Limits, MAX_DEPTH, MAX_MOVETIME_MS};
 pub use download::{

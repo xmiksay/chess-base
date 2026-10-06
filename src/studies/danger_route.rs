@@ -20,6 +20,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::engine::budget;
 use crate::pgn_tree::pgn::from_pgn_with_start;
 use crate::pgn_tree::Eval;
 use crate::position::{CastlingMode, STARTPOS_FEN};
@@ -102,6 +103,8 @@ struct DangerMapView {
     rejected: usize,
     /// Danger role tags carried into the study, most dangerous lines first.
     roles: Vec<RoleView>,
+    /// The 5-minute engine budget ran out (ADR-0054); the result is partial.
+    truncated: bool,
 }
 
 /// One engine-adjudicated danger role surfaced on the result.
@@ -126,6 +129,7 @@ impl From<&DangerStudyOutcome> for DangerMapView {
             global: outcome.study.owner_id.is_none(),
             node_count: outcome.node_count,
             rejected: outcome.rejected.len(),
+            truncated: outcome.truncated,
             roles: outcome
                 .roles
                 .iter()
@@ -252,6 +256,8 @@ struct DangerWalkBody {
 struct DangerWalkView {
     tree: DangerTree,
     roles: Vec<RoleView>,
+    /// The 5-minute engine budget ran out (ADR-0054); the result is partial.
+    truncated: bool,
 }
 
 /// Walk a repertoire spine for dangerous opponent replies and return the raw
@@ -284,7 +290,7 @@ async fn danger_map(
     let multipv = body.multipv.unwrap_or(DEFAULT_MULTIPV);
     let reports = PositionReportService::new(state.db.clone());
 
-    let tree = walk_danger_spine_live(
+    let walk = walk_danger_spine_live(
         engine,
         &reports,
         &user,
@@ -295,12 +301,17 @@ async fn danger_map(
         movetime_ms,
         multipv,
         body.database_id,
-    )
-    .await
-    .map_err(spine_error_response)?;
+    );
+    let (result, truncated) = budget::job(walk).await;
+    let tree = result.map_err(spine_error_response)?;
 
     let roles = roles_digest(&tree);
-    Ok((StatusCode::OK, Json(DangerWalkView { tree, roles })).into_response())
+    let view = DangerWalkView {
+        tree,
+        roles,
+        truncated,
+    };
+    Ok((StatusCode::OK, Json(view)).into_response())
 }
 
 /// Flatten a [`DangerTree`] to its tagged nodes (walk order = shallow, most
