@@ -11,7 +11,8 @@ AI-assisted studies.
 - Store games and **search by header *and* by board position** (Zobrist index).
 - **Studies**: commented PGN with variations (the move-tree editor).
 - **Engine analysis**: Stockfish and Lc0/**Maia** over UCI (auto-downloaded).
-- Optional **multi-user** server mode with logins and shared databases.
+- Optional **multi-user** server mode with logins and shared databases (users change
+  their password under Settings → Account; admins can reset others' under Settings → Users).
 - **MCP endpoint** so an AI agent can build and annotate studies.
 
 ## Run modes

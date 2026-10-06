@@ -8,12 +8,13 @@
 //! in `server::identity` (`scope`, `assert_admin`) — this module only decides
 //! *who* the caller is.
 
+mod account_routes;
 mod password;
 pub mod routes;
 mod service;
 
 pub use routes::router;
-pub use service::{AuthService, AuthServiceError, Authenticated};
+pub use service::{AuthService, AuthServiceError, Authenticated, UserSummary};
 
 use axum::http::{header, HeaderMap};
 

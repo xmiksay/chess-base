@@ -42,6 +42,14 @@ export interface User {
   username?: string
 }
 
+/** One account in the admin user listing (ADR-0055). */
+export interface UserSummary {
+  id: string
+  username: string
+  is_admin: boolean
+  created_at: string
+}
+
 export interface AuthResponse {
   token: string
   user: User

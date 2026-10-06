@@ -41,6 +41,20 @@ pub enum AuthServiceError {
     /// Password hashing/verification failed (never surfaced verbatim).
     #[error("password hashing failed")]
     Hash,
+    /// The current password given for a change did not match. `403` — not
+    /// `401`, which the SPA reads as "signed out".
+    #[error("current password is incorrect")]
+    WrongPassword,
+    /// A password change was attempted with something other than a live
+    /// login session (an OAuth/service token, or an expired session). `403`.
+    #[error("changing a password requires a signed-in browser session")]
+    NotASession,
+    /// The caller is not an admin. `403`.
+    #[error("admin access required")]
+    Forbidden,
+    /// The target account does not exist. `404`.
+    #[error("user not found")]
+    UserNotFound,
     /// Underlying database error (never surfaced verbatim to clients).
     #[error(transparent)]
     Db(#[from] DbErr),
@@ -218,6 +232,9 @@ fn validate_password(password: &str) -> Result<(), AuthServiceError> {
     }
     Ok(())
 }
+
+mod account;
+pub use account::UserSummary;
 
 #[cfg(test)]
 mod tests;
