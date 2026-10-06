@@ -1,0 +1,58 @@
+# chessbase.mmik.cz → the home desktop (ADR-0052). The app runs as a systemd
+# service on 192.168.1.2:3040 (deploy/chess-base.service); the cluster reaches
+# the home LAN through the Turris wg0 tunnel. Same pattern as agent.mmik.cz: a
+# headless selector-less Service plus a hand-written Endpoints object.
+#
+#   make deploy-k8s   # kubectl apply -f deploy/k8s.yml
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-base
+  namespace: services
+spec:
+  clusterIP: None
+  ports:
+    - name: http
+      port: 3040
+      targetPort: 3040
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: chess-base
+  namespace: services
+subsets:
+  - addresses:
+      - ip: 192.168.1.2
+    ports:
+      - name: http
+        port: 3040
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chess-base
+  namespace: services
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  tls:
+    - hosts:
+        - chessbase.mmik.cz
+      secretName: chessbase.mmik.cz
+  rules:
+    - host: chessbase.mmik.cz
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: chess-base
+                port:
+                  number: 3040

@@ -42,7 +42,7 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0034 | Position search gains a player/color/date filter |
 | 0035 | Annotate transpositions in merged repertoire trees (Zobrist) |
 | 0036 | The MCP tool surface is symmetrical to the HTTP API |
-| 0037 | k8s deployment: public GHCR image with bundled Stockfish |
+| 0037 | k8s deployment: public GHCR image with bundled Stockfish (deploy path superseded by 0052) |
 | 0038 | PGN import returns the created game ids; content-hash dedup on every import path |
 | 0039 | "Analyse study" does full review-grade classification, not just eval |
 | 0040 | Embed the entanglement agent engine (streaming WS assistant, per-user providers) |
@@ -53,3 +53,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0045 | Public sharing: per-object flags + anonymous HTTP read tier |
 | 0046 | Assistant: per-session model choice, switchable mid-session |
 | 0051 | Notation panel: flat rows, depth signals, context-menu node actions |
+| 0052 | Deploy as a systemd service on the home desktop, behind the k8s ingress |

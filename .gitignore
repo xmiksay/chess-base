@@ -27,5 +27,6 @@
 .env
 .DS_Store
 
-# k8s manifest with the real DB password lives only locally (copy of deploy.example.yml)
+
+# Legacy ADR-0037 manifest carrying the old cluster DB password — never commit
 deploy.yml

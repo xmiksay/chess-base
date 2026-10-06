@@ -948,6 +948,11 @@ rustfmt + clippy (`-D warnings`) + cargo build + tests.
   Debian image. `docker-compose.yml` runs that image against `postgres:16` with a
   named `pgdata` volume; the app reads `DATABASE_URL`, binds `0.0.0.0:3030`, and
   runs migrations on startup. Credentials/port come from `.env` (`.env.example`).
+- **Production** (ADR 0052) is not the container: `chess-base.service`
+  (`deploy/chess-base.service`) runs server mode on the home desktop against the
+  host PostgreSQL (unix socket, peer auth) on `:3040`, sandboxed and capped at
+  `CPUQuota=200%`; the k8s nginx ingress reaches it over the `wg0` tunnel via a
+  selector-less Service/Endpoints (`deploy/k8s.yml`).
 
 ## Roadmap
 

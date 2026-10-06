@@ -382,8 +382,11 @@ endpoint are both thin callers.
 - `make test` — Rust unit + integration + frontend tests.
 - `make coverage` — `cargo llvm-cov` + vitest coverage.
 - `make lint` — clippy (`-D warnings`) + `cargo fmt --check` + eslint.
-- `make deploy` / `make deploy-restart` — apply `../deploy.yml` (k8s `services`
-  ns) / re-roll pods; the image is pinned by tag in the manifest (ADR-0037).
+- `make deploy` — build with bundled Stockfish, install to `/usr/local/bin`,
+  restart `chess-base.service` (systemd on this desktop, host Postgres, :3040);
+  `make install-service` bootstraps it once, `make deploy-k8s` applies
+  `../deploy/k8s.yml` (ingress → selector-less Service/Endpoints → this host,
+  ADR-0052).
 
 Always `nvm use` (Node 22, see `frontend/.nvmrc`) before raw npm commands;
 set `CARGO_BUILD_JOBS=4` for cargo (the Makefile does both).
@@ -399,7 +402,8 @@ see it. Fallout from a new lint release is parked in `Cargo.toml`'s
 
 CI: `.github/workflows/ci.yml` (test/lint), `release.yml` (desktop binaries on
 `v*` tags), `docker.yml` (GPLv3 image with bundled Stockfish →
-`ghcr.io/xmiksay/chess-base` on `v*` tags, ADR-0037).
+`ghcr.io/xmiksay/chess-base` on `v*` tags, ADR-0037 — no longer the production
+deploy path, see ADR-0052).
 
 ## Engineering standards (project-specific)
 

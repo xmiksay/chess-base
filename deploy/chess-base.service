@@ -1,0 +1,36 @@
+# chess-base server mode as a systemd service on the home desktop (ADR-0052).
+# Install with `make install-service`; roll a new build with `make deploy`.
+# Runs as the dedicated `chessbase` system user against the host PostgreSQL
+# over the unix socket (peer auth, role `chessbase`). The k8s ingress reaches
+# it through a selector-less Service/Endpoints → 192.168.1.2:3040 (deploy/k8s.yml).
+[Unit]
+Description=chess-base
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=chessbase
+EnvironmentFile=/etc/chess-base.env
+# The bundled Stockfish extracts into $HOME/.cache, so HOME must be writable.
+Environment=HOME=/var/lib/chess-base
+StateDirectory=chess-base
+WorkingDirectory=/var/lib/chess-base
+ExecStart=/usr/local/bin/chess-base --server --host 0.0.0.0 --port 3040 --no-engine-download
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+# Engine-load guard (replaces the k8s pod's 2-CPU limit): this box is also the
+# dev desktop, so heavy Stockfish analysis must never starve it.
+CPUQuota=200%
+MemoryMax=2G
+
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
