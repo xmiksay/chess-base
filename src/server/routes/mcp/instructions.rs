@@ -34,7 +34,10 @@ service token) for your own databases plus write access.
 - **Database** — `list_databases` discovers the collections you can see (with \
   game counts) and the `database_id`s the study tools need; `db_list_games` / \
   `db_read_game` page through and read individual games; `db_position_report` / \
-  `db_reference_games` search by position (64-bit Zobrist hash).
+  `db_reference_games` search by position (64-bit Zobrist hash); \
+  `masters_position_report` (signed-in, when the server has a Lichess token) is \
+  the remote Lichess Masters reference for a position — over-the-board 2200+ \
+  stats and top games, separate from your own databases.
 - **Study preprocessing** — engine + DB grounded *data* for study building, \
   with no language model inside the tool (you are the model — annotate the \
   output yourself, then persist with the study tools): `opening_tree` builds a \

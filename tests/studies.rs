@@ -33,6 +33,7 @@ async fn server_app_with_db() -> (Router, DatabaseConnection) {
         engine_service: None,
         provider_store: None,
         agent: Default::default(),
+        masters: None,
     });
     (app, db)
 }
@@ -47,6 +48,7 @@ async fn server_app_with_engine(engine: Arc<EngineService>) -> Router {
         engine_service: Some(engine),
         provider_store: None,
         agent: Default::default(),
+        masters: None,
     })
 }
 

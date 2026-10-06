@@ -56,6 +56,7 @@ async fn seeded_app() -> (axum::Router, i32, i32) {
         engine_service: None,
         provider_store: None,
         agent: Default::default(),
+        masters: None,
     });
     (app, global.id, private.id)
 }

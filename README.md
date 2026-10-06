@@ -49,6 +49,11 @@ default from the Settings panel or the `/api/engines` API (each engine takes an
 optional `runner` wrapper, e.g. `wine`). A user-set engine always wins over an
 auto-downloaded one; with nothing configured at all the route returns `503`.
 
+The position explorer can also query the **Lichess Masters** database (a remote
+reference; nothing is bulk-imported). Set `LICHESS_TOKEN` (or `--lichess-token`)
+to a Lichess personal API token to enable the "Lichess Masters" tab. Its top games
+can be imported one at a time into a database you own.
+
 ## Quick start (local)
 
 ### Download a release (no toolchain needed)

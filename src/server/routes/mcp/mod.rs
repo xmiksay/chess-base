@@ -22,6 +22,7 @@
 mod analysis;
 mod db_export_tools;
 mod db_tools;
+mod explorer_tools;
 mod folder_tools;
 mod game_tools;
 mod import_tools;

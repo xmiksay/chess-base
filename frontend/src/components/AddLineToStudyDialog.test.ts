@@ -38,7 +38,7 @@ const database: Database = {
 
 const addedStudy: Study = { ...existingStudy, tree: { root: 0, nodes: [] } }
 
-async function setup(props: { sans: string[]; stat: MoveStat | null }) {
+async function setup(props: { sans: string[]; stat: MoveStat | null; statLabel?: string | null }) {
   const wrapper = mount(AddLineToStudyDialog, { props })
   await flushPromises()
   return wrapper
@@ -105,6 +105,16 @@ describe('AddLineToStudyDialog', () => {
       study_id: 3,
       comment: '4 games, 2W/1D/1L',
     })
+  })
+
+  it('prefixes the comment with a non-local source label', async () => {
+    const stat: MoveStat = { san: 'e5', count: 4, white: 2, draws: 1, black: 1 }
+    const wrapper = await setup({ sans: ['e4', 'e5'], stat, statLabel: 'Masters' })
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(api.studies.addLine).toHaveBeenCalledWith(
+      expect.objectContaining({ comment: 'Masters: 4 games, 2W/1D/1L' }),
+    )
   })
 
   it('omits the comment when the checkbox is unchecked', async () => {

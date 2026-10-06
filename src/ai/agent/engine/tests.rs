@@ -33,6 +33,7 @@ async fn dummy_app() -> AppState {
         engine_service: None,
         provider_store: Some(store),
         agent: Default::default(),
+        masters: None,
     }
 }
 
@@ -234,6 +235,7 @@ async fn llm_for_resolves_the_callers_default_provider_row() {
         engine_service: None,
         provider_store: Some(store),
         agent: Default::default(),
+        masters: None,
     };
     let engine = AgentEngine::start(app.clone()).await.expect("engine start");
     app.agent.set(engine.clone()).ok().expect("set agent once");

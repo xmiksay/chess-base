@@ -11,7 +11,9 @@ import { useFoldersStore } from '../stores/folders'
 import { formatMoveStat } from '../lib/openingTree'
 import type { Database, MoveStat, Study } from '../types'
 
-const props = defineProps<{ sans: string[]; stat: MoveStat | null }>()
+// `statLabel` names a non-local source (e.g. "Masters", ADR-0053) so the
+// attached comment says whose numbers it quotes.
+const props = defineProps<{ sans: string[]; stat: MoveStat | null; statLabel?: string | null }>()
 const emit = defineEmits<{ close: [] }>()
 
 const studies = useStudiesStore()
@@ -28,7 +30,11 @@ const saving = ref(false)
 const error = ref<string | null>(null)
 const result = ref<Study | null>(null)
 
-const statComment = computed(() => (props.stat ? formatMoveStat(props.stat) : null))
+const statComment = computed(() => {
+  if (!props.stat) return null
+  const text = formatMoveStat(props.stat)
+  return props.statLabel ? `${props.statLabel}: ${text}` : text
+})
 
 const canSubmit = computed(() => {
   if (saving.value || props.sans.length === 0) return false

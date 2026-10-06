@@ -5,11 +5,13 @@
 import { computed, onMounted, ref } from 'vue'
 import Board from './Board.vue'
 import AddLineToStudyDialog from './AddLineToStudyDialog.vue'
+import MastersTopGames from './MastersTopGames.vue'
+import { api } from '../api'
 import { useSearchStore } from '../stores/search'
 import { useSettingsStore } from '../stores/settings'
 import { frequency, scoreBar, totalCount } from '../lib/openingTree'
 import { isEmptyFilter } from '../lib/positionFilter'
-import type { BoardMove } from '../types'
+import type { BoardMove, ExplorerSource } from '../types'
 
 const search = useSearchStore()
 const settings = useSettingsStore()
@@ -17,6 +19,14 @@ const settings = useSettingsStore()
 const total = computed(() => totalCount(search.tree))
 const filterIsEmpty = computed(() => isEmptyFilter(search.filter))
 const showAddLine = ref(false)
+// The Masters tab only exists when the server has a Lichess token (ADR-0053).
+const mastersEnabled = ref(false)
+const isMasters = computed(() => search.source === 'masters')
+
+const SOURCES: { value: ExplorerSource; label: string }[] = [
+  { value: 'local', label: 'My databases' },
+  { value: 'masters', label: 'Lichess Masters' },
+]
 
 const COLORS = [
   { value: '', label: 'Either side' },
@@ -30,6 +40,13 @@ function onMove({ from, to }: BoardMove) {
 
 onMounted(() => {
   if (search.tree.length === 0 && search.games.length === 0) search.loadPosition()
+  api
+    .health()
+    .then((h) => {
+      mastersEnabled.value = h.masters === true
+      if (!mastersEnabled.value && isMasters.value) search.setSource('local')
+    })
+    .catch(() => {})
 })
 </script>
 
@@ -81,6 +98,24 @@ onMounted(() => {
     </section>
 
     <section class="flex-1">
+      <div
+        v-if="mastersEnabled"
+        data-test="explorer-source"
+        class="mb-3 inline-flex overflow-hidden rounded border border-border text-sm"
+      >
+        <button
+          v-for="s in SOURCES"
+          :key="s.value"
+          type="button"
+          :data-test="`source-${s.value}`"
+          class="px-3 py-1"
+          :class="search.source === s.value ? 'bg-accent text-surface' : 'hover:bg-surface-2'"
+          @click="search.setSource(s.value)"
+        >
+          {{ s.label }}
+        </button>
+      </div>
+
       <p
         v-if="search.explorerError"
         class="mb-2 text-sm text-bad"
@@ -89,6 +124,54 @@ onMounted(() => {
       </p>
 
       <form
+        v-if="isMasters"
+        data-test="masters-filter"
+        class="mb-3 flex flex-wrap items-end gap-2"
+        @submit.prevent="search.loadPosition()"
+      >
+        <label class="flex flex-col gap-1 text-xs">
+          <span class="text-muted">Year from</span>
+          <input
+            v-model="search.mastersYears.since"
+            type="text"
+            inputmode="numeric"
+            data-test="filter-year-since"
+            placeholder="YYYY"
+            class="w-20 rounded border border-border px-2 py-1 bg-surface text-sm"
+          >
+        </label>
+        <label class="flex flex-col gap-1 text-xs">
+          <span class="text-muted">Year to</span>
+          <input
+            v-model="search.mastersYears.until"
+            type="text"
+            inputmode="numeric"
+            data-test="filter-year-until"
+            placeholder="YYYY"
+            class="w-20 rounded border border-border px-2 py-1 bg-surface text-sm"
+          >
+        </label>
+        <button
+          type="submit"
+          data-test="masters-filter-apply"
+          :disabled="search.explorerLoading"
+          class="rounded bg-accent px-3 py-1 text-sm font-medium text-surface hover:opacity-90 disabled:opacity-50"
+        >
+          Apply
+        </button>
+        <button
+          v-if="search.mastersYears.since || search.mastersYears.until"
+          type="button"
+          data-test="masters-filter-clear"
+          class="rounded border border-border px-3 py-1 text-sm"
+          @click="search.resetMastersYears()"
+        >
+          Clear
+        </button>
+      </form>
+
+      <form
+        v-else
         data-test="position-filter"
         class="mb-3 flex flex-wrap items-end gap-2"
         @submit.prevent="search.loadPosition()"
@@ -160,13 +243,18 @@ onMounted(() => {
 
       <h3 class="mb-2 text-sm font-semibold text-muted">
         Moves <span v-if="total">({{ total }} games)</span>
+        <span
+          v-if="isMasters && search.opening"
+          data-test="masters-opening"
+          class="font-normal"
+        > · {{ search.opening.eco }} {{ search.opening.name }}</span>
       </h3>
 
       <p
         v-if="!search.explorerLoading && search.tree.length === 0"
         class="text-sm text-muted"
       >
-        No games reach this position.
+        {{ isMasters ? 'No master games reach this position.' : 'No games reach this position.' }}
       </p>
 
       <table
@@ -230,6 +318,11 @@ onMounted(() => {
         </tbody>
       </table>
 
+      <MastersTopGames
+        v-if="isMasters"
+        :games="search.mastersGames"
+      />
+
       <h3
         v-if="search.games.length"
         class="mb-2 mt-6 text-sm font-semibold text-muted"
@@ -259,6 +352,7 @@ onMounted(() => {
       v-if="showAddLine"
       :sans="search.line"
       :stat="search.lastMoveStat"
+      :stat-label="isMasters ? 'Masters' : null"
       @close="showAddLine = false"
     />
   </div>

@@ -54,3 +54,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0046 | Assistant: per-session model choice, switchable mid-session |
 | 0051 | Notation panel: flat rows, depth signals, context-menu node actions |
 | 0052 | Deploy as a systemd service on the home desktop, behind the k8s ingress |
+| 0053 | Lichess Masters as a remote explorer source |

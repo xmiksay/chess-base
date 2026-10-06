@@ -59,6 +59,10 @@ struct Cli {
     /// Disable first-run auto-download of Stockfish + Maia.
     #[arg(long)]
     no_engine_download: bool,
+
+    /// Lichess API token; enables the Masters opening explorer (ADR-0053).
+    #[arg(long, env = "LICHESS_TOKEN", hide_env_values = true)]
+    lichess_token: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -278,6 +282,7 @@ async fn main() -> Result<()> {
         engine,
         engines_dir: cli.engines_dir,
         download_engines: !cli.no_engine_download,
+        lichess_token: cli.lichess_token,
     };
 
     server::serve(cfg).await

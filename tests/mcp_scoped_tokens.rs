@@ -66,6 +66,7 @@ async fn read_only_token_can_list_but_not_call_a_mutating_tool() {
         engine_service: None,
         provider_store: None,
         agent: Default::default(),
+        masters: None,
     });
 
     // tools/list still works and reflects the reduced surface.
@@ -148,6 +149,7 @@ async fn global_read_token_cannot_see_another_owners_database() {
         engine_service: None,
         provider_store: None,
         agent: Default::default(),
+        masters: None,
     });
 
     let (status, v) = mcp_call(

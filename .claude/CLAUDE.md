@@ -34,6 +34,15 @@ src/
   plans.rs         pure: engine-PV → per-piece trajectories (ADR 0017)      ← unit-tested
   features.rs      pure: position feature tags (material/phase/check, #33)    ← unit-tested
   threats/         pure: hanging-piece scan → red threat arrows (#123); GET /api/threats ← unit-tested
+  explorer/        Lichess Masters explorer (ADR-0053): MastersClient over
+                   explorer.lichess.ovh/masters (Bearer LICHESS_TOKEN / --lichess-token;
+                   AppState.masters None ⇒ 503 + /api/health `masters: false`), 24h
+                   in-memory TTL cache (4096 entries, stale entry served on upstream
+                   failure, 60s back-off after a 429); GET /api/explorer/masters?fen&since&until
+                   + POST /api/explorer/masters/import {lichess_id, database_id}
+                   (PGN → ImportService::import_pgn, deduped); signed-in only; remote
+                   reference, never bulk-imported (slim local DB, ADR-0052). FE:
+                   PositionExplorer source toggle + MastersTopGames.vue ← unit-tested
   db/              SeaORM: config (SQLite/Postgres), entities, migrations
   ingest.rs        ingest_pgn: parse PGN → store game → replay → position_index;
                    dedups per-database by source_ref (permalink, else content
@@ -278,7 +287,7 @@ src/
                    lifetime regardless of rotation count; shared OAuth helpers
                    split into routes/oauth_shared.rs to keep oauth.rs under
                    the file-size cap).
-                   routes/mcp/ tools (40, #125 then #183/ADR-0036 — symmetrical to
+                   routes/mcp/ tools (41, #125 then #183/ADR-0036 — symmetrical to
                    the HTTP API, one carve-out list in symmetry.rs): engine_analyse +
                    analyse_position/analyse_game; study_tools.rs study_list/create/
                    get/import_pgn/add_move/annotate/export; study_node_tools.rs
@@ -290,7 +299,8 @@ src/
                    `annotated` flag, #120)/db_position_report/db_reference_games;
                    db_export_tools.rs db_export_games (bulk PGN, #171);
                    game_tools.rs save_as_study/studies/tree/delete; folder_tools.rs
-                   list/create/update/delete (#164); search_tools.rs search_headers/
+                   list/create/update/delete (#164); explorer_tools.rs
+                   masters_position_report (ADR-0053); search_tools.rs search_headers/
                    position_threats; import_tools.rs import_pgn/import_sync;
                    preprocess.rs data tools opening_tree/danger_map/position_concepts
                    (ADR-0027, no internal LLM); opening_tree/danger_map take an

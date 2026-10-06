@@ -36,6 +36,7 @@ async fn app_with(engine: Option<Arc<EngineService>>) -> (Router, DatabaseConnec
         engine_service: engine,
         provider_store: None,
         agent: Default::default(),
+        masters: None,
     });
     (app, db)
 }

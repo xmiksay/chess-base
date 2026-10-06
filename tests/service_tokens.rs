@@ -39,6 +39,7 @@ async fn admin_mints_lists_and_revokes_a_token() {
         engine_service: None,
         provider_store: None,
         agent: Default::default(),
+        masters: None,
     });
 
     let (status, minted) = send(
@@ -103,6 +104,7 @@ async fn non_admin_is_forbidden_on_every_route() {
         engine_service: None,
         provider_store: None,
         agent: Default::default(),
+        masters: None,
     });
 
     // First user is admin; register a second, non-admin one.

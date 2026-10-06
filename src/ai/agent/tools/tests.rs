@@ -23,6 +23,7 @@ async fn dummy_app(mode: Mode) -> AppState {
         engine_service: None,
         provider_store: None,
         agent: Default::default(),
+        masters: None,
     }
 }
 
