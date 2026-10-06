@@ -5,6 +5,7 @@
 // file cap. Drives the games/review stores directly: analysing grafts the
 // engine's better lines onto the board tree (#136), and the eval graph navigates
 // the board by mapping a clicked ply back to its mainline node.
+import { TRUNCATED_NOTE } from '../lib/truncated'
 import EvalGraph from './EvalGraph.vue'
 import SaveAsAnalysisForm from './SaveAsAnalysisForm.vue'
 import { useGamesStore } from '../stores/games'
@@ -100,6 +101,13 @@ function onGraphSelect(ply: number) {
       class="mt-4"
       data-test="review-panel"
     >
+      <p
+        v-if="review.review.truncated"
+        class="mb-2 text-xs text-warn"
+        data-test="review-truncated"
+      >
+        {{ TRUNCATED_NOTE }}
+      </p>
       <EvalGraph
         :moves="review.review.moves"
         :current-ply="games.plyOf(games.currentId) ?? 0"

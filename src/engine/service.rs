@@ -25,6 +25,7 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::time::timeout;
 
 use super::analysis::{AnalysisEvent, AnalysisInfo, Score};
+use super::budget;
 use super::command::Limits;
 use super::manager::Engine;
 use super::EngineConfig;
@@ -156,27 +157,32 @@ impl EngineService {
         limits: &Limits,
         options: &BTreeMap<String, String>,
     ) -> Result<Analysis> {
-        // Hold a permit for the whole search: the pool never spawns more than
-        // `pool_size` processes, and extra concurrent callers queue here.
-        let _permit = self
-            .permits
-            .acquire()
-            .await
-            .map_err(|_| anyhow!("engine pool is closed"))?;
+        // Inside a job budget (ADR-0054) an out-of-time call yields an empty
+        // analysis (no score/PV) instead of searching.
+        budget::bounded(Analysis::default(), async {
+            // Hold a permit for the whole search: the pool never spawns more than
+            // `pool_size` processes, and extra concurrent callers queue here.
+            let _permit = self
+                .permits
+                .acquire()
+                .await
+                .map_err(|_| anyhow!("engine pool is closed"))?;
 
-        let mut engine = self.checkout().await?;
-        match run_to_bestmove(&mut engine, fen, &bounded(limits), options).await {
-            Ok(analysis) => {
-                // Only a healthy, idle engine goes back into the pool.
-                self.idle.lock().await.push(engine);
-                Ok(analysis)
+            let mut engine = self.checkout().await?;
+            match run_to_bestmove(&mut engine, fen, &bounded(limits), options).await {
+                Ok(analysis) => {
+                    // Only a healthy, idle engine goes back into the pool.
+                    self.idle.lock().await.push(engine);
+                    Ok(analysis)
+                }
+                Err(e) => {
+                    // A failed search may leave the engine mid-state; discard it.
+                    let _ = engine.quit().await;
+                    Err(e)
+                }
             }
-            Err(e) => {
-                // A failed search may leave the engine mid-state; discard it.
-                let _ = engine.quit().await;
-                Err(e)
-            }
-        }
+        })
+        .await
     }
 
     /// Run a bounded search returning up to `multipv` principal variations, each
@@ -193,28 +199,32 @@ impl EngineService {
         limits: &Limits,
         multipv: u16,
     ) -> Result<Vec<Analysis>> {
-        let _permit = self
-            .permits
-            .acquire()
-            .await
-            .map_err(|_| anyhow!("engine pool is closed"))?;
+        // Out of job budget ⇒ no lines. A real search always yields at least one.
+        budget::bounded(Vec::new(), async {
+            let _permit = self
+                .permits
+                .acquire()
+                .await
+                .map_err(|_| anyhow!("engine pool is closed"))?;
 
-        let mut options = BTreeMap::new();
-        if multipv > 1 {
-            options.insert("MultiPV".to_string(), multipv.to_string());
-        }
+            let mut options = BTreeMap::new();
+            if multipv > 1 {
+                options.insert("MultiPV".to_string(), multipv.to_string());
+            }
 
-        let mut engine = self.checkout().await?;
-        match run_to_lines(&mut engine, fen, &bounded(limits), &options, multipv).await {
-            Ok(lines) => {
-                self.idle.lock().await.push(engine);
-                Ok(lines)
+            let mut engine = self.checkout().await?;
+            match run_to_lines(&mut engine, fen, &bounded(limits), &options, multipv).await {
+                Ok(lines) => {
+                    self.idle.lock().await.push(engine);
+                    Ok(lines)
+                }
+                Err(e) => {
+                    let _ = engine.quit().await;
+                    Err(e)
+                }
             }
-            Err(e) => {
-                let _ = engine.quit().await;
-                Err(e)
-            }
-        }
+        })
+        .await
     }
 
     /// Take an idle engine or spawn a fresh one. A permit is already held, so

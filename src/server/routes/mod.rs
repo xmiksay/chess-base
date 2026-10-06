@@ -46,6 +46,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::settings::routes::router(state.clone()))
         .merge(crate::threats::routes::router(state.clone()))
         .merge(crate::studies::routes::router(state.clone()))
+        .merge(crate::studies::analyse_route::router(state.clone()))
         .merge(crate::studies::danger_route::router(state.clone()))
         .merge(crate::studies::mark_transpositions_route::router(
             state.clone(),

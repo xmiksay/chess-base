@@ -240,6 +240,8 @@ export interface Study extends StudySummary {
 export interface AnalyseStats {
   nodes_analysed: number
   summary: ReviewSummary
+  /** The 5-minute engine job budget ran out; results are partial (ADR-0054). */
+  truncated?: boolean
 }
 
 /** Response of `POST /api/studies/{id}/analyse`: the refreshed study plus its
@@ -448,6 +450,8 @@ export interface GameReview {
   start_fen: string
   moves: MoveReview[]
   summary: ReviewSummary
+  /** The 5-minute engine job budget ran out; results are partial (ADR-0054). */
+  truncated?: boolean
 }
 
 // --- study generation (issue #119, Mode B) ----------------------------------
@@ -598,6 +602,8 @@ export interface DangerWalkBody {
 export interface DangerWalkResult {
   tree: DangerTree
   roles: DangerMapRole[]
+  /** The 5-minute engine job budget ran out; results are partial (ADR-0054). */
+  truncated?: boolean
 }
 
 /**

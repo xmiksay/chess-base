@@ -16,7 +16,7 @@
 
 use serde::Serialize;
 
-use crate::engine::{Analysis, EngineService, Limits, Score};
+use crate::engine::{budget, Analysis, EngineService, Limits, Score};
 use crate::features::features_of_fen;
 use crate::position::{self, black_to_move, san_to_uci, uci_to_san, CastlingMode, Ply};
 
@@ -111,12 +111,32 @@ pub struct GameReview {
     pub start_fen: String,
     pub moves: Vec<MoveReview>,
     pub summary: ReviewSummary,
+    /// The job budget ran out (ADR-0054): `moves` covers only the opening plies.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }
 
 /// Review a game: replay `sans` from `start_fen`, search every position at the
 /// given `depth`, and assemble the classified result. `variant` selects how
 /// castling rights are parsed (Chess960 vs standard).
+///
+/// Runs as a [`budget::job`] (ADR-0054): past the budget, the review stops and
+/// returns the plies it finished with `truncated` set.
 pub async fn review_game(
+    engine: &EngineService,
+    start_fen: &str,
+    variant: &str,
+    sans: &[String],
+    depth: u32,
+) -> Result<GameReview, ReviewError> {
+    budget::job(review_game_budgeted(
+        engine, start_fen, variant, sans, depth,
+    ))
+    .await
+    .0
+}
+
+async fn review_game_budgeted(
     engine: &EngineService,
     start_fen: &str,
     variant: &str,
@@ -140,6 +160,13 @@ pub async fn review_game(
             continue;
         }
         let lines = engine.analyse_multi(fen, &limits, REVIEW_MULTIPV).await?;
+        if budget::truncated() {
+            // Out of job budget: review only the plies whose both sides were searched.
+            let reviewed = evals.len().saturating_sub(1);
+            let mut review = assemble(start_fen, &plies[..reviewed], &evals, mode);
+            review.truncated = true;
+            return Ok(review);
+        }
         evals.push(PosEval {
             lines: lines.iter().map(LineEval::from).collect(),
         });
@@ -259,6 +286,7 @@ pub(crate) fn assemble(
         start_fen: start_fen.to_string(),
         moves,
         summary: summarize(&costs),
+        truncated: false,
     }
 }
 

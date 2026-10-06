@@ -4,6 +4,7 @@
 // and keeps the study-specific seam — pin an engine line's plan to the current
 // node (#61). The two analysis panels live on different routes, so they never
 // contend for the singleton engine socket.
+import { TRUNCATED_NOTE } from '../lib/truncated'
 import { ref } from 'vue'
 import { useEngineStore } from '../stores/engine'
 import { useStudyEditorStore } from '../stores/studyEditor'
@@ -220,6 +221,13 @@ async function pinLine(line: EngineLine) {
         data-test="analyse-error"
       >
         {{ analyseError }}
+      </p>
+      <p
+        v-if="analyseStats?.truncated"
+        class="text-xs text-warn"
+        data-test="analyse-truncated"
+      >
+        {{ TRUNCATED_NOTE }}
       </p>
       <div
         v-if="analyseStats"

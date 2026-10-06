@@ -36,6 +36,18 @@ const result: DangerWalkResult = {
 }
 
 describe('danger store', () => {
+  it('tracks the server truncation flag (ADR-0054)', async () => {
+    vi.mocked(api.studies.dangerMap).mockResolvedValue({ ...result, truncated: true })
+    const s = useDangerStore()
+    await s.load({ spine_pgn: '1. e4 c5 *' })
+    expect(s.truncated).toBe(true)
+    s.clear()
+    expect(s.truncated).toBe(false)
+    vi.mocked(api.studies.dangerMap).mockResolvedValue(result)
+    await s.load({ spine_pgn: '1. e4 c5 *' })
+    expect(s.truncated).toBe(false)
+  })
+
   it('load populates the tree and flattens the panel roles', async () => {
     vi.mocked(api.studies.dangerMap).mockResolvedValue(result)
     const s = useDangerStore()

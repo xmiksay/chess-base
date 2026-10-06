@@ -8,6 +8,7 @@
 //! ([`plan_to_shapes`] / [`node_shapes`]) are I/O-free and unit-tested; the only
 //! I/O is the optional engine search behind the injected [`MultiAnalyzer`] seam.
 
+use crate::engine::budget;
 use crate::pgn_tree::Shape;
 use crate::plans::{plan_from_pv, Plan, DEFAULT_MAX_MOVES};
 use crate::position::CastlingMode;
@@ -161,6 +162,10 @@ pub async fn apply_shapes(
         } else {
             Vec::new()
         };
+        // Out of job budget (ADR-0054): leave the rest of the tree untouched.
+        if budget::truncated() {
+            break;
+        }
         let generated = node_shapes(&node.fen, &pvs, cfg.plan_lines, cfg.threats, mode);
         node.shapes = merge_shapes(&node.shapes, generated);
     }

@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use super::db_tools::json_outcome;
 use super::study_tools::study_error;
 use super::{Tool, ToolOutcome, ToolRegistry};
-use crate::engine::{Limits, MAX_DEPTH};
+use crate::engine::{budget, Limits, MAX_DEPTH};
 use crate::server::identity::CurrentUser;
 use crate::server::state::AppState;
 use crate::studies::clear_shapes::ClearShapesScope;
@@ -252,38 +252,39 @@ async fn study_analyse(app: AppState, user: CurrentUser, args: Value) -> ToolOut
     };
 
     let service = StudyService::new(app.db.clone());
-    let (_, stats) = match service
-        .analyse_study(&engine, &user, study_id as i32, depth)
-        .await
-    {
-        Ok(result) => result,
-        Err(e) => return study_error(e),
-    };
-
-    if want_shapes {
-        let cfg = ShapeConfig {
-            plan_lines: plan_lines.unwrap_or(0),
-            threats: threats.unwrap_or(false),
-        };
-        let analyzer = (cfg.plan_lines > 0).then(|| {
-            EnginePlanAnalyzer::new(
-                &engine,
-                Limits::depth(depth).clamped(),
-                cfg.plan_lines as u16,
-            )
-        });
-        let plans = analyzer.as_ref().map(|a| a as &(dyn MultiAnalyzer + Sync));
-        if let Err(e) = service
-            .regenerate_shapes(plans, &user, study_id as i32, &cfg)
-            .await
-        {
-            return study_error(e);
+    // One job budget (ADR-0054) spans the analysis and the shape regeneration.
+    let job = async {
+        let (_, stats) = service
+            .analyse_study(&engine, &user, study_id as i32, depth)
+            .await?;
+        if want_shapes {
+            let cfg = ShapeConfig {
+                plan_lines: plan_lines.unwrap_or(0),
+                threats: threats.unwrap_or(false),
+            };
+            let analyzer = (cfg.plan_lines > 0).then(|| {
+                EnginePlanAnalyzer::new(
+                    &engine,
+                    Limits::depth(depth).clamped(),
+                    cfg.plan_lines as u16,
+                )
+            });
+            let plans = analyzer.as_ref().map(|a| a as &(dyn MultiAnalyzer + Sync));
+            service
+                .regenerate_shapes(plans, &user, study_id as i32, &cfg)
+                .await?;
         }
-    }
+        Ok(stats)
+    };
+    let (stats, truncated) = match budget::job(job).await {
+        (Ok(stats), truncated) => (stats, truncated),
+        (Err(e), _) => return study_error(e),
+    };
 
     json_outcome(&json!({
         "nodes_analysed": stats.nodes_analysed,
         "summary": stats.summary,
+        "truncated": stats.truncated || truncated,
     }))
 }
 
