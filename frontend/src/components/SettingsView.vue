@@ -7,14 +7,19 @@ import {
   BOARD_THEMES,
   PIECE_SETS,
 } from '../stores/settings'
+import { useAuthStore } from '../stores/auth'
 import type { Database } from '../types'
 import EnginesSettings from './EnginesSettings.vue'
 import ProvidersSettings from './ProvidersSettings.vue'
+import AccountSettings from './AccountSettings.vue'
+import UsersSettings from './UsersSettings.vue'
 
 // Per-user settings (issue #13): theme, board theme, piece set and default
 // database. Each control writes through the store, which mirrors to localStorage
 // for instant UI and persists to the backend.
 const settings = useSettingsStore()
+// Passwords exist only in server mode (ADR-0055); local mode has no login.
+const auth = useAuthStore()
 const databases = ref<Database[]>([])
 
 const themes = THEMES
@@ -204,5 +209,13 @@ const setEngineHash = (e: Event) =>
     <EnginesSettings />
 
     <ProvidersSettings />
+
+    <template v-if="auth.isServerMode && auth.user">
+      <AccountSettings />
+      <UsersSettings
+        v-if="auth.user.is_admin"
+        :self-id="auth.user.id"
+      />
+    </template>
   </div>
 </template>

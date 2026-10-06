@@ -246,7 +246,12 @@ src/
                    seed.rs (#155) LLM-free seed seam: convert a built tree to a
                    MoveTree (move_tree_from, carries start_fen) → create_with_tree;
                    backs the data tools' `save_as` (no LLM, no PGN round-trip)  ← unit-tested
-  auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015)
+  auth/            server-mode auth: users/sessions, Argon2, AuthService (ADR 0015);
+                   account (ADR-0055): PUT /api/auth/password (own, login session
+                   only, current pw required; keeps this session, drops the others,
+                   revokes OAuth tokens, keeps service tokens), admin GET
+                   /api/admin/users + PUT /api/admin/users/{id}/password (target
+                   signed out everywhere); SPA Settings → Account/Users ← unit-tested
   service_tokens/  ServiceTokenService (#193, ADR-0044): admin-only mint/list/
                    revoke over service_tokens — the only way to create a
                    scoped ("full" | "read_only" | "global_read") token besides

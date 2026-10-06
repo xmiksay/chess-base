@@ -39,6 +39,7 @@ import type {
   Study,
   StudySummary,
   User,
+  UserSummary,
 } from './types'
 
 // Server-mode session token. The browser also receives an HttpOnly `session`
@@ -153,6 +154,16 @@ export const api = {
     login: (username: string, password: string) =>
       send<AuthResponse>('POST', '/api/auth/login', { username, password }),
     logout: () => send<null>('POST', '/api/auth/logout'),
+    // ADR-0055: 204; other sessions of the caller are signed out.
+    changePassword: (current_password: string, new_password: string) =>
+      send<null>('PUT', '/api/auth/password', { current_password, new_password }),
+  },
+
+  // Admin account management (ADR-0055), server mode only.
+  users: {
+    list: () => getJson<UserSummary[]>('/api/admin/users'),
+    resetPassword: (id: string, new_password: string) =>
+      send<null>('PUT', `/api/admin/users/${encodeURIComponent(id)}/password`, { new_password }),
   },
 
   // Engine registry (issue #53): persisted multi-engine config + default.

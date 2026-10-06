@@ -28,7 +28,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/register", post(register))
         .route("/api/auth/login", post(login))
         .route("/api/auth/logout", post(logout))
-        .with_state(state)
+        .with_state(state.clone())
+        .merge(super::account_routes::router(state))
 }
 
 #[derive(Deserialize)]
@@ -102,7 +103,7 @@ fn clear_cookie() -> String {
 }
 
 /// Auth endpoints exist only in server mode; reject otherwise.
-fn require_server_mode(state: &AppState) -> Result<(), AuthApiError> {
+pub(super) fn require_server_mode(state: &AppState) -> Result<(), AuthApiError> {
     match state.mode {
         Mode::Server => Ok(()),
         Mode::Local => Err(AuthApiError::Disabled),
@@ -111,7 +112,7 @@ fn require_server_mode(state: &AppState) -> Result<(), AuthApiError> {
 
 /// Route-level error: a service failure, or the endpoint being unavailable in
 /// local mode. Maps each onto an HTTP status + JSON envelope.
-enum AuthApiError {
+pub(super) enum AuthApiError {
     Service(AuthServiceError),
     Disabled,
 }
@@ -134,6 +135,10 @@ impl IntoResponse for AuthApiError {
                     AuthServiceError::InvalidInput(_) => StatusCode::BAD_REQUEST,
                     AuthServiceError::UsernameTaken => StatusCode::CONFLICT,
                     AuthServiceError::InvalidCredentials => StatusCode::UNAUTHORIZED,
+                    AuthServiceError::WrongPassword
+                    | AuthServiceError::NotASession
+                    | AuthServiceError::Forbidden => StatusCode::FORBIDDEN,
+                    AuthServiceError::UserNotFound => StatusCode::NOT_FOUND,
                     AuthServiceError::Hash | AuthServiceError::Db(_) => {
                         StatusCode::INTERNAL_SERVER_ERROR
                     }

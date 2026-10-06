@@ -56,3 +56,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0052 | Deploy as a systemd service on the home desktop, behind the k8s ingress |
 | 0053 | Lichess Masters as a remote explorer source |
 | 0054 | Every engine call finishes by a deadline (30s live cap, 5-minute job budget) |
+| 0055 | Password change (self-service) and admin password reset |

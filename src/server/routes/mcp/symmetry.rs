@@ -239,6 +239,10 @@ const CARVE_OUTS: &[(&str, &str)] = &[
     ),
     ("GET /api/whoami", "session/infra"),
     (
+        "* /api/admin/users*",
+        "account admin is a human/UI action (ADR-0055)",
+    ),
+    (
         "* /api/settings",
         "per-user UI prefs, not shared/study data",
     ),
