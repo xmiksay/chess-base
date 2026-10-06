@@ -3,6 +3,7 @@
 // the mainline continuation, the rest are variations. Framework-free so the
 // tree-navigation + move-append logic is unit-testable without a board.
 
+import { indexOf } from './moveTreeIndex'
 import type { MoveNode, MoveToken, MoveTree } from '../types'
 
 /** A fresh tree holding only the root sentinel (san=null = the start position). */
@@ -96,16 +97,17 @@ export function deleteSubtree(tree: MoveTree, id: number): { tree: MoveTree; par
   return { tree: { root: tree.root, nodes }, parentId }
 }
 
-/** Index a tree's nodes by id (ids are dense but we never assume id === index). */
+/**
+ * Index a tree's nodes by id (ids are dense but we never assume id === index).
+ * Shared and cached per tree object — treat the returned Map as read-only.
+ */
 export function nodeMap(tree: MoveTree): Map<number, MoveNode> {
-  const m = new Map<number, MoveNode>()
-  for (const n of tree.nodes) m.set(n.id, n)
-  return m
+  return indexOf(tree).byId
 }
 
 /** The node with `id`, or null when it is absent. */
 export function getNode(tree: MoveTree, id: number): MoveNode | null {
-  return tree.nodes.find((n) => n.id === id) ?? null
+  return indexOf(tree).byId.get(id) ?? null
 }
 
 /** Mainline child of `id` (`children[0]`), or null at a leaf / missing node. */
@@ -153,15 +155,11 @@ export function sanPath(tree: MoveTree, id: number): string[] {
  * the leaf. The array index is the ply (index 0 = root = the start position),
  * which is why grafting variations — appended as later children, never as
  * `children[0]` — leaves this mapping stable.
+ *
+ * Shared and cached per tree object — treat the returned array as read-only.
  */
 export function mainlinePath(tree: MoveTree): number[] {
-  const path: number[] = []
-  let cur: number | null = tree.root
-  while (cur != null) {
-    path.push(cur)
-    cur = firstChild(tree, cur)
-  }
-  return path
+  return indexOf(tree).mainline
 }
 
 /** Follow the mainline from `id` to its leaf, returning the leaf node id. */

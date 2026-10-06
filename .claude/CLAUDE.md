@@ -310,11 +310,24 @@ frontend/          Vue 3 + TypeScript + Vite + Pinia + Tailwind v4 + chessground
                    Semantic design tokens + class-based dark mode in src/style.css
                    (ADR 0031): bg-surface/text-fg/border-border auto-flip under
                    `.dark`; accents good/warn/bad (green/orange/red) carry move
-                   quality (lib/moveTree nagClass). MoveTree renders variations as
-                   depth-indented blocks (MoveTreeLine) with per-node promote/demote
-                   /delete actions; a node's stored [%eval] (issue #189) renders next
-                   to its NAG glyph via lib/dangerShapes' formatEval. Engine options
-                   (MultiPV/Threads/Hash) persist
+                   quality (lib/moveTree nagClass), and depth-1..5 rails colour
+                   variation nesting. MoveTreePanel (replaces MoveTree/MoveTreeLine)
+                   renders lib/moveTreeRows' flat MoveRow[] one row per line, each
+                   row v-memo'd so a cursor step re-renders two rows instead of the
+                   tree; it bounds its own height and scrolls, auto-revealing the
+                   current move via lib/useScrollIntoView over the pure
+                   lib/scrollSync (suppressed when the selection came from a click
+                   in the panel). MoveTreeRow separates depth by indent + colour
+                   rail + type scale, renders comments INLINE (prop inlineComments
+                   falls back to a dot marker) and badges branch points; node actions
+                   are NodeContextMenu on right-click — never inline in the move
+                   flow, whose reflow used to turn the next click into a delete —
+                   with delete armed only after 250ms. lib/moveTreeIndex memoizes
+                   byId/mainline/plyOf/depthOf per tree object (safe because every
+                   moveTree mutator returns a new tree), making getNode O(1) and
+                   mainlinePath one pass. A node's stored [%eval] (issue #189)
+                   renders next to its NAG glyph via lib/dangerShapes' formatEval.
+                   Engine options (MultiPV/Threads/Hash) persist
                    per user via settings (lib/useEnginePrefs); analysis on by default.
                    StudyAnalysis.vue: "Remove generated arrows"/"Remove all arrows"
                    (#191, ADR-0042) call studyEditor's clearShapes action
@@ -360,6 +373,11 @@ endpoint are both thin callers.
 
 - `make build` — build frontend then release binary (embeds SPA).
 - `make run` — local mode, opens browser.
+- `make run-bundled` — local mode with Stockfish embedded in the binary
+  (fetches it into `engines-bundled/` once, then builds with
+  `--features bundled-stockfish`). Both run targets rebuild the SPA only when
+  a frontend source is newer than `frontend/dist/index.html`; `make frontend`
+  always forces a build.
 - `make dev` — backend on `:3030` + Vite hot-reload (proxies `/api`).
 - `make test` — Rust unit + integration + frontend tests.
 - `make coverage` — `cargo llvm-cov` + vitest coverage.

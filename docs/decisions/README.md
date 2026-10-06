@@ -52,3 +52,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0044 | OAuth consent screen + CSRF, refresh-token reuse detection, scoped service tokens |
 | 0045 | Public sharing: per-object flags + anonymous HTTP read tier |
 | 0046 | Assistant: per-session model choice, switchable mid-session |
+| 0051 | Notation panel: flat rows, depth signals, context-menu node actions |

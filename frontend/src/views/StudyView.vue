@@ -7,7 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 import Board from '../components/Board.vue'
 import BoardControls from '../components/BoardControls.vue'
 import BoardEvalBar from '../components/BoardEvalBar.vue'
-import MoveTree from '../components/MoveTree.vue'
+import MoveTreePanel from '../components/MoveTreePanel.vue'
 import MoveComment from '../components/MoveComment.vue'
 import AnnotationEditor from '../components/AnnotationEditor.vue'
 import StudyAnalysis from '../components/StudyAnalysis.vue'
@@ -441,19 +441,18 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
               From game #{{ studies.current.origin_game_id }}
             </RouterLink>
           </p>
-          <!-- Cap the notation to ~board height and scroll in place; the
-               annotation editor below stays visible. -->
-          <div class="max-h-[360px] overflow-y-auto">
-            <MoveTree
-              :tree="editor.tree"
-              :current-id="editor.nodeId"
-              :editable="!auth.isAnonymous"
-              @select="editor.select($event)"
-              @promote="editor.promote($event)"
-              @demote="editor.demote($event)"
-              @remove="onRemoveNode($event)"
-            />
-          </div>
+          <!-- Cap the notation to ~board height; the panel scrolls in place
+               so the annotation editor below stays visible. -->
+          <MoveTreePanel
+            class="max-h-[360px]"
+            :tree="editor.tree"
+            :current-id="editor.nodeId"
+            :editable="!auth.isAnonymous"
+            @select="editor.select($event)"
+            @promote="editor.promote($event)"
+            @demote="editor.demote($event)"
+            @remove="onRemoveNode($event)"
+          />
           <template v-if="!auth.isAnonymous">
             <hr class="my-3 border-border">
             <AnnotationEditor
