@@ -7,6 +7,7 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use super::position_arg::{position_schema, require_position, with_fen};
 use super::{Tool, ToolOutcome, ToolRegistry};
 use crate::databases::{DatabaseError, DatabaseService};
 use crate::engine::{Limits, MAX_DEPTH, MAX_MOVETIME_MS};
@@ -277,27 +278,22 @@ fn position_report_tool() -> Tool {
          and White's score — and the transpositions (distinct move orders that \
          reach it). Scoped to your databases and the global ones. Use it as ground \
          truth for opening/structure facts; do not recompute the figures.",
-        json!({
-            "type": "object",
-            "properties": {
-                "fen": { "type": "string", "description": "Position to report on, in FEN." }
-            },
-            "required": ["fen"]
-        }),
+        position_schema("Position to report on", json!({})),
         |app, user, args| async move { position_report(app, user, args).await },
     )
 }
 
 async fn position_report(app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
-    let Some(fen) = fen_arg(&args) else {
-        return ToolOutcome::error("Invalid arguments: missing string field `fen`.");
+    let fen = match require_position(&args) {
+        Ok(fen) => fen,
+        Err(msg) => return ToolOutcome::error(msg),
     };
     let service = PositionReportService::new(app.db.clone());
     match service
         .position_report(&user, &fen, &PositionFilter::default())
         .await
     {
-        Ok(report) => json_outcome(&report),
+        Ok(report) => json_outcome(&with_fen(&report, &fen)),
         Err(e) => report_error(e),
     }
 }
@@ -310,24 +306,23 @@ fn reference_games_tool() -> Tool {
          databases and the global ones. Returns game headers (players, result, \
          ECO, Elo) oldest-first, capped by `limit` (default 20). Use these as \
          concrete examples of a line or structure.",
-        json!({
-            "type": "object",
-            "properties": {
-                "fen": { "type": "string", "description": "Position to look up, in FEN." },
+        position_schema(
+            "Position to look up",
+            json!({
                 "limit": {
                     "type": "integer", "minimum": 1, "maximum": MAX_REFERENCE_LIMIT,
                     "description": "Max games to return (default 20); capped server-side."
                 }
-            },
-            "required": ["fen"]
-        }),
+            }),
+        ),
         |app, user, args| async move { reference_games(app, user, args).await },
     )
 }
 
 async fn reference_games(app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
-    let Some(fen) = fen_arg(&args) else {
-        return ToolOutcome::error("Invalid arguments: missing string field `fen`.");
+    let fen = match require_position(&args) {
+        Ok(fen) => fen,
+        Err(msg) => return ToolOutcome::error(msg),
     };
     let limit = match opt_bounded_u64(&args, "limit", MAX_REFERENCE_LIMIT) {
         Ok(limit) => limit.unwrap_or(DEFAULT_REFERENCE_LIMIT),
@@ -338,17 +333,8 @@ async fn reference_games(app: AppState, user: CurrentUser, args: Value) -> ToolO
         .references(&user, &fen, Some(limit), &PositionFilter::default())
         .await
     {
-        Ok(games) => json_outcome(&games),
+        Ok(games) => json_outcome(&json!({ "fen": fen, "games": games })),
         Err(e) => report_error(e),
-    }
-}
-
-/// Extract a non-empty `fen` string argument. Shared by the analysis/engine
-/// tools, which turn a `None` into their own "missing `fen`" tool error.
-pub(super) fn fen_arg(args: &Value) -> Option<String> {
-    match args.get("fen").and_then(Value::as_str) {
-        Some(fen) if !fen.trim().is_empty() => Some(fen.to_string()),
-        _ => None,
     }
 }
 
@@ -421,14 +407,6 @@ mod tests {
                 "missing tool {expected}"
             );
         }
-    }
-
-    #[test]
-    fn missing_fen_is_rejected_before_any_query() {
-        let outcome = fen_arg(&json!({})).map(|_| ()).is_none();
-        assert!(outcome, "empty arguments must yield no FEN");
-        assert!(fen_arg(&json!({ "fen": "  " })).is_none());
-        assert_eq!(fen_arg(&json!({ "fen": "x" })).as_deref(), Some("x"));
     }
 
     #[test]

@@ -310,7 +310,11 @@ src/
                    db_export_tools.rs db_export_games (bulk PGN, #171);
                    game_tools.rs save_as_study/studies/tree/delete; folder_tools.rs
                    list/create/update/delete (#164); explorer_tools.rs
-                   masters_position_report (ADR-0053); search_tools.rs search_headers/
+                   masters_position_report (ADR-0053; its description carries the
+                   Masters → study workflow); position_arg.rs (ADR-0056): every
+                   position tool takes `moves` (SAN) as an alternative to `fen`,
+                   replayed server-side, illegal move named, resolved `fen`
+                   echoed; search_tools.rs search_headers/
                    position_threats; import_tools.rs import_pgn/import_sync;
                    preprocess.rs data tools opening_tree/danger_map/position_concepts
                    (ADR-0027, no internal LLM); opening_tree/danger_map take an

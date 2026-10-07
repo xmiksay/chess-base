@@ -35,15 +35,17 @@ async fn db_reference_games_tool_returns_scoped_games() {
         &[SICILIAN_PGN],
         json!({
             "jsonrpc": "2.0", "id": 21, "method": "tools/call",
-            "params": { "name": "db_reference_games", "arguments": { "fen": AFTER_E4_C5 } }
+            "params": { "name": "db_reference_games", "arguments": { "moves": ["e4", "c5"] } }
         }),
     )
     .await;
 
     assert_eq!(status, StatusCode::OK);
     assert!(v["result"].get("isError").is_none(), "body: {v}");
-    let games = tool_json(&v["result"]);
-    let games = games.as_array().unwrap();
+    // `moves` resolves server-side (ADR-0056) to the same position as the FEN.
+    let out = tool_json(&v["result"]);
+    assert_eq!(out["fen"], AFTER_E4_C5);
+    let games = out["games"].as_array().unwrap();
     assert_eq!(games.len(), 1);
     assert_eq!(games[0]["white"], "Tal");
     assert_eq!(games[0]["result"], "1-0");

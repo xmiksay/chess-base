@@ -26,6 +26,7 @@ const MASTERS_PGN: &str = "[Event \"Linares\"]\n[Site \"https://lichess.org/abcd
 #[derive(Clone, Default)]
 struct Fake {
     hits: Arc<AtomicUsize>,
+    last_fen: Arc<std::sync::Mutex<String>>,
 }
 
 fn authorized(headers: &HeaderMap) -> bool {
@@ -44,6 +45,9 @@ async fn fake_masters(
         return Err(StatusCode::UNAUTHORIZED);
     }
     fake.hits.fetch_add(1, Ordering::SeqCst);
+    if let (Some(fen), Ok(mut last)) = (q.get("fen"), fake.last_fen.lock()) {
+        last.clone_from(fen);
+    }
     // Echo the year window back through the opening name so the test can see it.
     let name = format!(
         "since={} until={}",
@@ -289,4 +293,67 @@ async fn import_of_an_unknown_game_is_a_404() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// The MCP tool resolves a `moves` list server-side (ADR-0056): the upstream
+/// sees the replayed FEN, and the reply echoes it back.
+#[tokio::test]
+async fn mcp_masters_report_accepts_moves() {
+    use chess_base::db::entities::service_tokens;
+    use sea_orm::{ActiveModelTrait, Set};
+
+    let (base, fake) = spawn_fake().await;
+    let client = MastersClient::new(base, "secret").unwrap();
+    let db = connect(&DbConfig::in_memory()).await.unwrap();
+    service_tokens::ActiveModel {
+        token: Set("svc-token".to_string()),
+        id: Set("svc".to_string()),
+        owner_id: Set("alice".to_string()),
+        is_admin: Set(false),
+        scope: Set("full".to_string()),
+        label: Set("test".to_string()),
+        created_at: Set(chrono::Utc::now().naive_utc()),
+        expires_at: Set(None),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    let app = build_router(AppState {
+        db,
+        mode: Mode::Server,
+        engine_service: None,
+        provider_store: None,
+        agent: Default::default(),
+        masters: Some(Arc::new(client)),
+    });
+
+    let call = |args: Value| {
+        req(
+            "POST",
+            "/mcp",
+            Some("svc-token"),
+            Some(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "masters_position_report", "arguments": args}})),
+        )
+    };
+    let (status, body) = send(&app, call(json!({"moves": ["d4", "Nf6", "c4"]}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let result = &body["result"];
+    assert_ne!(result["isError"], true, "{body}");
+    let report: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    let expected = "rnbqkb1r/pppppppp/5n2/8/2PP4/8/PP2PPPP/RNBQKBNR b KQkq";
+    assert!(
+        report["fen"].as_str().unwrap().starts_with(expected),
+        "{report}"
+    );
+    assert!(fake.last_fen.lock().unwrap().starts_with(expected));
+
+    // An illegal move is named, and Lichess is never asked.
+    let hits = fake.hits.load(Ordering::SeqCst);
+    let (_, body) = send(&app, call(json!({"moves": ["d4", "Ke3"]}))).await;
+    assert_eq!(body["result"]["isError"], true, "{body}");
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("move 2 (`Ke3`)"), "{text}");
+    assert_eq!(fake.hits.load(Ordering::SeqCst), hits);
 }

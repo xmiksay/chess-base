@@ -27,6 +27,7 @@ mod folder_tools;
 mod game_tools;
 mod import_tools;
 mod instructions;
+mod position_arg;
 mod preprocess;
 mod registry;
 mod rpc;

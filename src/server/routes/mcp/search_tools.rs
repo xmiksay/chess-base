@@ -116,23 +116,18 @@ fn position_threats_tool() -> Tool {
          attacker. Returns board shapes (red arrows from attacker to target). A \
          cheap static scan — no engine search, so it ignores pins/X-rays by \
          design.",
-        json!({
-            "type": "object",
-            "properties": {
-                "fen": { "type": "string", "description": "Position to scan, in FEN." }
-            },
-            "required": ["fen"]
-        }),
+        super::position_arg::position_schema("Position to scan", json!({})),
         |_app, _user, args| async move { position_threats(args) },
     )
 }
 
 fn position_threats(args: Value) -> ToolOutcome {
-    let Some(fen) = super::db_tools::fen_arg(&args) else {
-        return ToolOutcome::error("Invalid arguments: missing string field `fen`.");
+    let fen = match super::position_arg::require_position(&args) {
+        Ok(fen) => fen,
+        Err(msg) => return ToolOutcome::error(msg),
     };
     match threats_standard(&fen) {
-        Ok(shapes) => json_outcome(&shapes),
+        Ok(shapes) => json_outcome(&json!({ "fen": fen, "shapes": shapes })),
         Err(e) => ToolOutcome::error(format!("invalid FEN: {e}")),
     }
 }
@@ -163,7 +158,7 @@ mod tests {
     fn missing_fen_is_rejected() {
         let outcome = position_threats(json!({}));
         assert!(outcome.is_error);
-        assert!(outcome.text.contains("missing string field `fen`"));
+        assert!(outcome.text.contains("`fen` or `moves`"));
     }
 
     #[test]
@@ -174,6 +169,19 @@ mod tests {
         }));
         assert!(!outcome.is_error, "got error: {}", outcome.text);
         let shapes: Value = serde_json::from_str(&outcome.text).expect("json");
-        assert!(shapes.as_array().is_some());
+        assert!(shapes["shapes"].as_array().is_some());
+        assert_eq!(shapes["fen"], "4k3/8/8/8/b7/8/8/3QK3 w - - 0 1");
+    }
+
+    #[test]
+    fn threats_accept_moves_instead_of_a_fen() {
+        let outcome = position_threats(json!({ "moves": ["e4", "d5"] }));
+        assert!(!outcome.is_error, "got error: {}", outcome.text);
+        let out: Value = serde_json::from_str(&outcome.text).expect("json");
+        let fen = out["fen"].as_str().unwrap();
+        assert!(
+            fen.starts_with("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w "),
+            "{fen}"
+        );
     }
 }

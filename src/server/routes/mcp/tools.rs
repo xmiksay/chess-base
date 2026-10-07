@@ -77,10 +77,9 @@ fn engine_analyse_tool() -> Tool {
          Returns the evaluation (centipawns or mate), the principal variation and \
          the best move — use it as ground truth when annotating positions. \
          Requires the server to be started with an engine configured.",
-        json!({
-            "type": "object",
-            "properties": {
-                "fen": { "type": "string", "description": "Position to analyse, in FEN." },
+        super::position_arg::position_schema(
+            "Position to analyse",
+            json!({
                 "depth": {
                     "type": "integer", "minimum": 1, "maximum": MAX_DEPTH,
                     "description": format!(
@@ -92,9 +91,8 @@ fn engine_analyse_tool() -> Tool {
                     "type": "integer", "minimum": 1, "maximum": MAX_MOVETIME_MS,
                     "description": "Search time budget in milliseconds (optional); capped server-side."
                 }
-            },
-            "required": ["fen"]
-        }),
+            }),
+        ),
         |app, _user, args| async move { engine_analyse(app, args).await },
     )
 }
@@ -114,9 +112,9 @@ async fn engine_analyse(app: AppState, args: Value) -> ToolOutcome {
         }
     };
 
-    let fen = match super::db_tools::fen_arg(&args) {
-        Some(fen) => fen,
-        None => return ToolOutcome::error("Invalid arguments: missing string field `fen`."),
+    let fen = match super::position_arg::require_position(&args) {
+        Ok(fen) => fen,
+        Err(msg) => return ToolOutcome::error(msg),
     };
 
     let limits = match super::db_tools::limits_arg(&args) {
@@ -125,10 +123,12 @@ async fn engine_analyse(app: AppState, args: Value) -> ToolOutcome {
     };
 
     match service.analyse(&fen, &limits, &BTreeMap::new()).await {
-        Ok(analysis) => match serde_json::to_string_pretty(&analysis) {
-            Ok(text) => ToolOutcome::ok(text),
-            Err(e) => ToolOutcome::error(format!("failed to serialise analysis: {e}")),
-        },
+        Ok(analysis) => {
+            match serde_json::to_string_pretty(&super::position_arg::with_fen(&analysis, &fen)) {
+                Ok(text) => ToolOutcome::ok(text),
+                Err(e) => ToolOutcome::error(format!("failed to serialise analysis: {e}")),
+            }
+        }
         Err(e) => ToolOutcome::error(format!("engine analysis failed: {e}")),
     }
 }
@@ -198,6 +198,6 @@ mod tests {
             .iter()
             .find(|t| t["name"] == "engine_analyse")
             .expect("engine_analyse tool");
-        assert_eq!(engine["inputSchema"]["required"][0], "fen");
+        assert!(engine["inputSchema"]["properties"]["moves"].is_object());
     }
 }
