@@ -1,5 +1,6 @@
 // Pinia store for the game-import view (issue #70): list the databases the
-// caller may import into, run Lichess/Chess.com syncs and PGN uploads, and track
+// caller may import into, run Lichess/Chess.com syncs, single Lichess game
+// imports and PGN uploads, and track
 // each as a job whose status the UI folds into an overall summary.
 //
 // `foldStatus` is pure and exported so the status-folding rule is unit-tested
@@ -121,5 +122,21 @@ export const useImportStore = defineStore('import', () => {
     return _track('pgn', name || 'PGN upload', () => api.import.uploadPgn(databaseId, pgn))
   }
 
-  return { databases, jobs, error, summary, loadDatabases, syncSource, uploadPgn }
+  /** Import one Lichess game (`game`: id or URL; regular or Masters) into `databaseId`. */
+  function importLichessGame({ databaseId, game }: { databaseId: number; game: string }) {
+    return _track('lichess-game', `lichess game · ${game}`, () =>
+      api.import.lichessGame(databaseId, game),
+    )
+  }
+
+  return {
+    databases,
+    jobs,
+    error,
+    summary,
+    loadDatabases,
+    syncSource,
+    uploadPgn,
+    importLichessGame,
+  }
 })

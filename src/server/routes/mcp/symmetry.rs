@@ -216,6 +216,11 @@ const ROUTE_MANIFEST: &[RouteEntry] = &[
         path: "/api/import/sync",
         tool: "import_sync",
     },
+    RouteEntry {
+        method: "POST",
+        path: "/api/import/lichess-game",
+        tool: "import_lichess_game",
+    },
 ];
 
 /// Routes that stay HTTP-only by design (ADR-0027 / ADR-0036), with the reason
@@ -264,7 +269,7 @@ const CARVE_OUTS: &[(&str, &str)] = &[
     ),
     (
         "POST /api/explorer/masters/import",
-        "pulling a remote game into the slim local DB is a deliberate UI action (ADR-0053)",
+        "Masters-only twin of POST /api/import/lichess-game, which `import_lichess_game` mirrors (ADR-0057)",
     ),
 ];
 

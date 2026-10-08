@@ -297,7 +297,7 @@ src/
                    lifetime regardless of rotation count; shared OAuth helpers
                    split into routes/oauth_shared.rs to keep oauth.rs under
                    the file-size cap).
-                   routes/mcp/ tools (41, #125 then #183/ADR-0036 — symmetrical to
+                   routes/mcp/ tools (42, #125 then #183/ADR-0036 — symmetrical to
                    the HTTP API, one carve-out list in symmetry.rs): engine_analyse +
                    analyse_position/analyse_game; study_tools.rs study_list/create/
                    get/import_pgn/add_move/annotate/export; study_node_tools.rs
@@ -315,7 +315,9 @@ src/
                    position tool takes `moves` (SAN) as an alternative to `fen`,
                    replayed server-side, illegal move named, resolved `fen`
                    echoed; search_tools.rs search_headers/
-                   position_threats; import_tools.rs import_pgn/import_sync;
+                   position_threats; import_tools.rs import_pgn/import_sync/
+                   import_lichess_game (ADR-0057: one game by id/URL, lichess.org
+                   then a 404 → Masters fallback; imports/lichess_game.rs, gated);
                    preprocess.rs data tools opening_tree/danger_map/position_concepts
                    (ADR-0027, no internal LLM); opening_tree/danger_map take an
                    optional `save_as` to seed a study server-side (#155, study_gen::seed,

@@ -43,6 +43,9 @@ service token) for your own databases plus write access.
   start, or from `fen` when both are given) instead of `fen`; the server replays \
   them and names an illegal move. Prefer it to hand-written FEN, and reuse the \
   `fen` the tools echo back.
+- **Import** — `import_lichess_game` pulls one Lichess game (regular or \
+  Masters, by id or URL) into a database; `import_pgn` ingests PGN text you \
+  already have; `import_sync` pulls a player's whole Lichess/Chess.com history.
 - **Study preprocessing** — engine + DB grounded *data* for study building, \
   with no language model inside the tool (you are the model — annotate the \
   output yourself, then persist with the study tools): `opening_tree` builds a \
