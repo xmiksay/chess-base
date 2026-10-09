@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // Game-import view (issue #70): pick a target database, then either sync from
-// Lichess / Chess.com (username + optional token) or upload a `.pgn` file. Each
+// Lichess / Chess.com (username + optional token), import one Lichess game by
+// id/URL, or upload a `.pgn` file. Each
 // import runs as a tracked job; the store folds their statuses into a summary.
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useImportStore } from '../stores/import'
@@ -20,10 +21,12 @@ const sync = reactive<{ source: ImportSource; username: string; token: string; f
   full: false,
 })
 const pgnFile = ref<File | null>(null)
+const lichessGame = ref('')
 
 // Lichess accepts a personal token to raise rate limits; Chess.com is tokenless.
 const supportsToken = computed(() => sync.source === 'lichess')
 const canSync = computed(() => !!targetId.value && sync.username.trim().length > 0)
+const canImportGame = computed(() => !!targetId.value && lichessGame.value.trim().length > 0)
 const canUpload = computed(() => !!targetId.value && !!pgnFile.value)
 
 const summaryText = computed(() => {
@@ -49,6 +52,13 @@ function startSync() {
     token: supportsToken.value ? sync.token.trim() : '',
     full: sync.full,
   })
+}
+
+function importGame() {
+  const databaseId = targetId.value
+  if (!canImportGame.value || databaseId == null) return
+  store.importLichessGame({ databaseId, game: lichessGame.value.trim() })
+  lichessGame.value = ''
 }
 
 function onFileChange(event: Event) {
@@ -86,8 +96,8 @@ onMounted(async () => {
       Import games
     </h2>
     <p class="mt-1 text-sm text-muted">
-      Sync from Lichess or Chess.com, or upload a PGN file, into one of your
-      collections.
+      Sync from Lichess or Chess.com, import a single Lichess game, or upload a
+      PGN file, into one of your collections.
     </p>
 
     <p
@@ -187,6 +197,37 @@ onMounted(async () => {
         >
         Full re-sync (ignore the saved cursor and re-fetch the whole history)
       </label>
+    </form>
+
+    <!-- Single Lichess game (regular or Masters) -->
+    <form
+      class="mt-4 rounded border border-border p-4"
+      data-test="lichess-game-form"
+      @submit.prevent="importGame"
+    >
+      <h3 class="text-sm font-semibold">
+        Import a Lichess game
+      </h3>
+      <p class="mt-1 text-xs text-muted">
+        Game id or URL — regular Lichess games and Masters games both work.
+      </p>
+      <div class="mt-3 flex flex-wrap items-center gap-2">
+        <input
+          v-model="lichessGame"
+          aria-label="Lichess game id or URL"
+          class="min-w-64 flex-1 rounded border border-border px-2 py-1 text-sm"
+          placeholder="https://lichess.org/AbCd1234"
+          data-test="lichess-game"
+        >
+        <button
+          type="submit"
+          :disabled="!canImportGame"
+          class="rounded bg-accent px-3 py-1 text-sm font-medium text-surface hover:opacity-90 disabled:opacity-50"
+          data-test="lichess-game-submit"
+        >
+          Import
+        </button>
+      </div>
     </form>
 
     <!-- PGN upload -->

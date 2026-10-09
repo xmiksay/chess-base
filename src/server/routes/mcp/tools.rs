@@ -179,6 +179,7 @@ mod tests {
             "position_threats",
             "import_pgn",
             "import_sync",
+            "import_lichess_game",
             "analyse_position",
             "analyse_game",
         ] {

@@ -1,5 +1,6 @@
-//! MCP collection-import tools (issue #183): ingest a PGN upload or trigger a
-//! Lichess/Chess.com sync into a database. Thin wrappers over
+//! MCP collection-import tools (issue #183): ingest a PGN upload, import one
+//! Lichess game by id (ADR-0057) or trigger a Lichess/Chess.com sync into a
+//! database. Thin wrappers over
 //! [`ImportService`], mirroring `imports/routes.rs`.
 
 use serde_json::{json, Value};
@@ -13,6 +14,7 @@ use crate::server::state::AppState;
 /// Register the import tools into `registry`.
 pub fn register(registry: &mut ToolRegistry) {
     registry.register(import_pgn_tool());
+    registry.register(import_lichess_game_tool());
     registry.register(import_sync_tool());
 }
 
@@ -50,6 +52,48 @@ async fn import_pgn(app: AppState, user: CurrentUser, args: Value) -> ToolOutcom
     };
     let service = ImportService::new(app.db.clone());
     match service.import_pgn(&user, database_id as i32, pgn).await {
+        Ok(summary) => json_outcome(&summary_view(&summary)),
+        Err(e) => import_error(e),
+    }
+}
+
+/// Fetch one Lichess game (lichess.org or Masters) by id/URL and ingest it.
+fn import_lichess_game_tool() -> Tool {
+    Tool::new(
+        "import_lichess_game",
+        "Import one Lichess game into a database you may write, by game id or URL \
+         (`AbCd1234`, `https://lichess.org/AbCd1234/black`). Works for regular \
+         lichess.org games and for Masters games — e.g. a `top_games` id from \
+         `masters_position_report` — without saying which: lichess.org is tried \
+         first, then the Masters database. Same response as `import_pgn`: \
+         `game_ids` for chaining into `db_read_game`, `analyse_game` or \
+         `game_save_as_study`; `imported: 0, duplicates: 1` means it was already \
+         there. Use this instead of `import_sync` when you want one game, not a \
+         player's whole history. Discover a `database_id` via `list_databases`.",
+        json!({
+            "type": "object",
+            "properties": {
+                "database_id": { "type": "integer", "description": "Database to import into." },
+                "game": { "type": "string", "description": "Lichess game id or URL." }
+            },
+            "required": ["database_id", "game"]
+        }),
+        |app, user, args| async move { import_lichess_game(app, user, args).await },
+    )
+}
+
+async fn import_lichess_game(app: AppState, user: CurrentUser, args: Value) -> ToolOutcome {
+    let Some(database_id) = args.get("database_id").and_then(Value::as_i64) else {
+        return ToolOutcome::error("Invalid arguments: missing integer field `database_id`.");
+    };
+    let Some(game) = args.get("game").and_then(Value::as_str) else {
+        return ToolOutcome::error("Invalid arguments: missing string field `game`.");
+    };
+    let service = ImportService::new(app.db.clone());
+    match service
+        .import_lichess_game(&user, database_id as i32, game, app.masters.as_deref())
+        .await
+    {
         Ok(summary) => json_outcome(&summary_view(&summary)),
         Err(e) => import_error(e),
     }
@@ -109,7 +153,7 @@ async fn import_sync(app: AppState, user: CurrentUser, args: Value) -> ToolOutco
     }
 }
 
-/// Wire shape shared by both import tools:
+/// Wire shape shared by every import tool:
 /// `{ imported, skipped, duplicates, game_ids[], errors[], synced_at }`.
 fn summary_view(summary: &ImportSummary) -> Value {
     json!({
@@ -144,7 +188,7 @@ mod tests {
     fn registers_the_import_tools() {
         let list = registry().list();
         let tools = list["tools"].as_array().expect("tools array");
-        for expected in ["import_pgn", "import_sync"] {
+        for expected in ["import_pgn", "import_lichess_game", "import_sync"] {
             assert!(
                 tools.iter().any(|t| t["name"] == expected),
                 "missing tool {expected}"
@@ -186,6 +230,32 @@ mod tests {
         assert_eq!(body["imported"], 0);
         assert_eq!(body["duplicates"], 1);
         assert!(body["game_ids"].as_array().expect("array").is_empty());
+    }
+
+    #[tokio::test]
+    async fn import_lichess_game_rejects_a_bad_id_before_any_fetch() {
+        let app = dummy_app().await;
+        let db = crate::db::entities::databases::ActiveModel {
+            owner_id: sea_orm::Set(None),
+            name: sea_orm::Set("Games".to_string()),
+            kind: sea_orm::Set("own".to_string()),
+            ..Default::default()
+        };
+        let db = sea_orm::ActiveModelTrait::insert(db, &app.db)
+            .await
+            .expect("create database");
+        let outcome = import_lichess_game(
+            app,
+            CurrentUser::local_admin(),
+            json!({ "database_id": db.id, "game": "https://chess.com/game/1" }),
+        )
+        .await;
+        assert!(outcome.is_error);
+        assert!(
+            outcome.text.contains("not a Lichess game"),
+            "{}",
+            outcome.text
+        );
     }
 
     #[tokio::test]

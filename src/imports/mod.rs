@@ -1,7 +1,7 @@
 //! Transport-agnostic import service: trigger a provider sync (Lichess /
 //! Chess.com) or ingest an uploaded PGN into a target database. Thin
 //! orchestration over the [`collectors`](crate::collectors) and the shared
-//! [`ingest`](crate::ingest) pipeline, so the HTTP routes (and a future MCP tool)
+//! [`ingest`](crate::ingest) pipeline, so the HTTP routes and the MCP tools
 //! are thin callers — the write guard and provider dispatch live here.
 //!
 //! Ownership follows ADR 0007 / 0011: a sync/upload may only target a database
@@ -15,7 +15,10 @@ use crate::ingest::ingest_pgn_all;
 use crate::server::identity::{assert_can_write, CurrentUser};
 
 mod cursor;
+mod lichess_game;
 pub mod routes;
+
+pub use lichess_game::parse_game_ref;
 
 /// Why an import failed. Transport-agnostic — the HTTP / MCP layer maps each
 /// variant onto its own status / error envelope.
@@ -95,6 +98,9 @@ pub struct ImportService {
     /// cursor-persistence paths (#197) exercisable without network access.
     #[cfg(test)]
     chesscom_base_url: Option<String>,
+    /// Test-only override of the lichess.org host for single-game imports.
+    #[cfg(test)]
+    lichess_base_url: Option<String>,
 }
 
 impl ImportService {
@@ -103,6 +109,8 @@ impl ImportService {
             db,
             #[cfg(test)]
             chesscom_base_url: None,
+            #[cfg(test)]
+            lichess_base_url: None,
         }
     }
 

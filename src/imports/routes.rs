@@ -22,6 +22,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/import/pgn", post(import_pgn))
         .route("/api/import/sync", post(sync))
+        .route("/api/import/lichess-game", post(import_lichess_game))
         .with_state(state)
 }
 
@@ -30,6 +31,13 @@ struct PgnBody {
     database_id: i32,
     /// PGN text — one or many games — to ingest into the target database.
     pgn: String,
+}
+
+#[derive(Deserialize)]
+struct LichessGameBody {
+    database_id: i32,
+    /// Lichess game id or URL — a lichess.org game or a Masters game.
+    game: String,
 }
 
 #[derive(Deserialize)]
@@ -55,6 +63,23 @@ async fn import_pgn(
 ) -> Result<Response, ImportError> {
     let summary = service(&state)
         .import_pgn(&user, body.database_id, &body.pgn)
+        .await?;
+    Ok((StatusCode::OK, Json(summary_body(&summary))).into_response())
+}
+
+/// Import one Lichess game by id/URL (`POST /api/import/lichess-game`, ADR-0057).
+async fn import_lichess_game(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(body): Json<LichessGameBody>,
+) -> Result<Response, ImportError> {
+    let summary = service(&state)
+        .import_lichess_game(
+            &user,
+            body.database_id,
+            &body.game,
+            state.masters.as_deref(),
+        )
         .await?;
     Ok((StatusCode::OK, Json(summary_body(&summary))).into_response())
 }
@@ -88,7 +113,7 @@ fn service(state: &AppState) -> ImportService {
     ImportService::new(state.db.clone())
 }
 
-/// Wire shape shared by both import endpoints:
+/// Wire shape shared by every import endpoint:
 /// `{ imported, skipped, duplicates, game_ids[], errors[], synced_at }`.
 /// `synced_at` (RFC 3339) is set for a provider sync, `null` for a PGN upload.
 pub(crate) fn summary_body(summary: &ImportSummary) -> serde_json::Value {

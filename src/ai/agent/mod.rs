@@ -50,6 +50,7 @@ pub const GATED_TOOLS: &[&str] = &[
     "folder_delete",
     "import_pgn",
     "import_sync",
+    "import_lichess_game",
 ];
 
 /// Does running this tool need explicit user approval? (mutating tools do).
@@ -112,6 +113,6 @@ mod tests {
 
     #[test]
     fn gated_list_covers_the_mutating_surface() {
-        assert_eq!(GATED_TOOLS.len(), 19);
+        assert_eq!(GATED_TOOLS.len(), 20);
     }
 }

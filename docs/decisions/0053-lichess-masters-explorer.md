@@ -48,6 +48,9 @@ request.
 8. **MCP.** A read-only `masters_position_report` tool mirrors the GET route. The
    import is on the symmetry carve-out list: pulling a remote game into the local
    DB is a deliberate UI action.
+   *Update (ADR-0057):* the agent now imports a single game, Masters or
+   lichess.org, through the gated `import_lichess_game` tool
+   (`POST /api/import/lichess-game`). This route stays as its Masters-only twin.
 
 ## Consequences
 

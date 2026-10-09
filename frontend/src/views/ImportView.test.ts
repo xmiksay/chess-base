@@ -7,7 +7,7 @@ import { api } from '../api'
 vi.mock('../api', () => ({
   api: {
     databases: { list: vi.fn() },
-    import: { sync: vi.fn(), uploadPgn: vi.fn() },
+    import: { sync: vi.fn(), uploadPgn: vi.fn(), lichessGame: vi.fn() },
   },
 }))
 
@@ -129,5 +129,22 @@ describe('ImportView', () => {
 
     expect(api.import.uploadPgn).toHaveBeenCalledWith(1, '[Event "x"]\n\n1. e4 *')
     expect(wrapper.find('[data-test="job-imported"]').text()).toContain('2')
+  })
+
+  it('imports one Lichess game by id or URL into the chosen collection', async () => {
+    vi.mocked(api.import.lichessGame).mockResolvedValue({ imported: 1, duplicates: 0 })
+    const wrapper = mount(ImportView)
+    await flushPromises()
+
+    const button = wrapper.find('[data-test="lichess-game-submit"]')
+    expect(button.attributes('disabled')).toBeDefined()
+    await wrapper.find('[data-test="lichess-game"]').setValue('  https://lichess.org/AbCd1234  ')
+    expect(button.attributes('disabled')).toBeUndefined()
+    await wrapper.find('[data-test="lichess-game-form"]').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(api.import.lichessGame).toHaveBeenCalledWith(1, 'https://lichess.org/AbCd1234')
+    expect(wrapper.find('[data-test="job-status"]').text()).toBe('success')
+    expect((wrapper.find('[data-test="lichess-game"]').element as HTMLInputElement).value).toBe('')
   })
 })

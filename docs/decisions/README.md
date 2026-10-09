@@ -58,3 +58,4 @@ Short records of the architectural choices behind chess-base. Add a new file
 | 0054 | Every engine call finishes by a deadline (30s live cap, 5-minute job budget) |
 | 0055 | Password change (self-service) and admin password reset |
 | 0056 | MCP position tools accept `moves` (SAN) and echo the resolved FEN |
+| 0057 | Import one Lichess game by id or URL (lichess.org, then Masters) |

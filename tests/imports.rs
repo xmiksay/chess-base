@@ -1,7 +1,8 @@
 //! Integration tests for the game-import HTTP surface in server mode: PGN upload
-//! into a target database and the sync trigger's validation/authorization, all
-//! exercised end-to-end through real auth tokens. (Provider syncs hit the network
-//! and so are not driven here; only their pre-network validation is.)
+//! into a target database plus the single Lichess game import's and the sync
+//! trigger's validation/authorization, all exercised end-to-end through real
+//! auth tokens. (Provider fetches hit the network and so are not driven here;
+//! only their pre-network validation is — the fetch paths are unit-tested.)
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
@@ -324,6 +325,73 @@ async fn import_requires_authentication() {
             "POST",
             "/api/import/pgn",
             json!({"database_id": 1, "pgn": TWO_GAMES}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn lichess_game_import_rejects_a_non_lichess_reference() {
+    let app = server_app().await;
+    let alice = register(&app, "alice").await;
+    let id = create_db(&app, &alice, json!({"name": "Mine", "kind": "own"})).await;
+
+    let (status, body) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/import/lichess-game",
+            &alice,
+            json!({"database_id": id, "game": "https://www.chess.com/game/live/123456789012"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"]
+        .as_str()
+        .unwrap()
+        .contains("not a Lichess game"));
+}
+
+#[tokio::test]
+async fn lichess_game_import_guards_the_database_before_any_network() {
+    let app = server_app().await;
+    let _alice = register(&app, "alice").await;
+    let bob = register(&app, "bob").await;
+    let carol = register(&app, "carol").await;
+    let bobs = create_db(&app, &bob, json!({"name": "Bob's", "kind": "own"})).await;
+
+    let (status, _) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/import/lichess-game",
+            &carol,
+            json!({"database_id": bobs, "game": "AbCd1234"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = send(
+        &app,
+        json_req(
+            "POST",
+            "/api/import/lichess-game",
+            &carol,
+            json!({"database_id": 9999, "game": "AbCd1234"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, _) = send(
+        &app,
+        json_req_anon(
+            "POST",
+            "/api/import/lichess-game",
+            json!({"database_id": bobs, "game": "AbCd1234"}),
         ),
     )
     .await;

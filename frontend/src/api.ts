@@ -414,6 +414,9 @@ export const api = {
       }),
     uploadPgn: (databaseId: number, pgn: string) =>
       send<ImportResult>('POST', '/api/import/pgn', { database_id: databaseId, pgn }),
+    // One Lichess game by id or URL — lichess.org, else Masters (ADR-0057).
+    lichessGame: (databaseId: number, game: string) =>
+      send<ImportResult>('POST', '/api/import/lichess-game', { database_id: databaseId, game }),
   },
 
   // LLM provider registry for the AI assistant (issue #20, per-user since

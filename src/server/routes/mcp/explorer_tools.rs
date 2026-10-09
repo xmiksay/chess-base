@@ -1,6 +1,7 @@
 //! MCP twin of `GET /api/explorer/masters` (ADR-0053): Lichess Masters stats for
 //! a position, read-only. Off the anonymous allowlist (signed-in only, like the
-//! HTTP route); the import route stays HTTP-only (see `symmetry.rs`).
+//! HTTP route). Importing a top game goes through `import_lichess_game`
+//! (ADR-0057), not a Masters-specific tool.
 
 use serde_json::{json, Value};
 
@@ -35,7 +36,8 @@ fn masters_position_report_tool() -> Tool {
          branch only where it matters and follow the main line deeper). Write the \
          result as one PGN with RAV variations, putting each branch's stats in its \
          comment (\"1,234 games, White 38% / draw 41% / Black 21%\") and naming \
-         model games from `top_games` (players, year). Persist with \
+         model games from `top_games` (players, year); `import_lichess_game` pulls one \
+         into a database by its id. Persist with \
          `study_import_pgn` into a `database_id` from `list_databases`, then \
          `study_analyse` for engine evals and move-quality NAGs, then \
          `study_annotate` for your prose. Quote the figures, never invent them.",
